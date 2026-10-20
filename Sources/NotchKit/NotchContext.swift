@@ -14,12 +14,16 @@ public final class NotchContext {
     private let attentionHandler: (NotchAttention) -> Void
     private let openSettingsHandler: () -> Void
     private let sendHandler: (NotchMessage, String) -> Void
+    private let visibleHandler: () -> Bool
+    private let notifyHandler: (String, String, [String: String]) -> Void
 
     public init(
         appID: String,
         attention: @escaping (NotchAttention) -> Void,
         openSettings: @escaping () -> Void,
-        send: @escaping (NotchMessage, String) -> Void = { _, _ in }
+        send: @escaping (NotchMessage, String) -> Void = { _, _ in },
+        isVisible: @escaping () -> Bool = { false },
+        notify: @escaping (String, String, [String: String]) -> Void = { _, _, _ in }
     ) {
         self.appID = appID
         self.defaults = UserDefaults(suiteName: "com.notchman.app.\(appID)") ?? .standard
@@ -28,6 +32,17 @@ public final class NotchContext {
         self.attentionHandler = attention
         self.openSettingsHandler = openSettings
         self.sendHandler = send
+        self.visibleHandler = isVisible
+        self.notifyHandler = notify
+    }
+
+    /// Whether this app is on screen right now (selected in an expanded notch).
+    public var isVisible: Bool { visibleHandler() }
+
+    /// Posts a macOS notification (asking for permission the first time). Clicking it brings this app up in
+    /// the notch and calls `receive(_:)` with `NotchMessage.notificationOpened` carrying `payload`.
+    public func notify(title: String, body: String, payload: [String: String] = [:]) {
+        notifyHandler(title, body, payload)
     }
 
     /// Delivers `message` to the app with id `appID` and shows that app in the notch.

@@ -34,7 +34,8 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
 
 `activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
-`openSettings()`, and `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`). Apps keep running when not selected.
+`openSettings()`, `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`),
+`notify(title:body:payload:)` for macOS notifications, and `isVisible`. Apps keep running when not selected.
 
 ## Calendar setup (free)
 
@@ -70,6 +71,10 @@ also copied to the clipboard as a fallback. To keep these chats in a ChatGPT pro
 The real chatgpt.com, claude.ai and muse.ai, embedded in the notch with a toggle. Sign in once with your own accounts
 (you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless
 you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading.
+
+When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
+✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
+Detection watches only for the site's Stop button — it never reads the conversation.
 
 ## Now Playing
 

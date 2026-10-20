@@ -25,6 +25,7 @@ public final class NotchEngine {
     private var settings: SettingsWindowController
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
+    private var notifications: NotificationRouter?
 
     public init(apps: [any NotchApp]) {
         self.apps = apps
@@ -32,13 +33,22 @@ public final class NotchEngine {
     }
 
     public func start() {
+        notifications = NotificationRouter { [weak self] appID, payload in
+            self?.deliver(NotchMessage(name: NotchMessage.notificationOpenedName, payload: payload), to: appID)
+        }
         for app in apps {
             let appID = app.id
             let context = NotchContext(
                 appID: appID,
                 attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
                 openSettings: { [weak self] in self?.settings.show(appID: appID) },
-                send: { [weak self] message, target in self?.deliver(message, to: target) }
+                send: { [weak self] message, target in self?.deliver(message, to: target) },
+                isVisible: { [weak self] in
+                    self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
+                },
+                notify: { [weak self] title, body, payload in
+                    self?.notifications?.post(appID: appID, title: title, body: body, payload: payload)
+                }
             )
             app.activate(context: context)
         }

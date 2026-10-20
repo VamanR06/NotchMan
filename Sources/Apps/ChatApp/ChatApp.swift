@@ -19,6 +19,17 @@ public final class ChatApp: NotchApp {
         didSet { context?.defaults.set(service.rawValue, forKey: "service") }
     }
     private(set) var loading: Set<ChatService> = []
+    /// Services currently generating a reply, and since when.
+    private(set) var busySince: [ChatService: Date] = [:]
+    /// Services with a finished reply the user hasn't looked at yet.
+    private(set) var unread: Set<ChatService> = []
+    /// Post a macOS notification when a reply finishes while you're not looking.
+    var notifyWhenDone = true {
+        didSet { context?.defaults.set(notifyWhenDone, forKey: "notifyWhenDone") }
+    }
+
+    /// Replies quicker than this don't notify.
+    private static let notableReplyDuration: TimeInterval = 3
 
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var webViews: [ChatService: WKWebView] = [:]
@@ -40,6 +51,7 @@ public final class ChatApp: NotchApp {
         if let saved = context.defaults.string(forKey: "service").flatMap(ChatService.init(rawValue:)) {
             service = saved
         }
+        notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
     }
 
     /// Created (and loaded) lazily, then kept for the app's lifetime so conversations survive collapsing.
@@ -49,6 +61,9 @@ public final class ChatApp: NotchApp {
         // Persistent store: you stay signed in across launches.
         config.websiteDataStore = .default()
         config.preferences.isElementFullscreenEnabled = false
+        ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] busy, title in
+            self?.replyStateChanged(service, busy: busy, pageTitle: title)
+        })
         let view = NotchWebView(frame: .zero, configuration: config)
         view.customUserAgent = Self.userAgent
         view.navigationDelegate = coordinator
@@ -69,6 +84,10 @@ public final class ChatApp: NotchApp {
     // MARK: - Prompts from other apps
 
     public func receive(_ message: NotchMessage) {
+        if message.name == NotchMessage.notificationOpenedName {
+            if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) { service = opened }
+            return
+        }
         guard message.name == NotchMessage.chatPromptName, let text = message.payload["text"] else { return }
         let target = message.payload["service"].flatMap(ChatService.init(rawValue:)) ?? .chatgpt
         service = target
@@ -126,6 +145,76 @@ public final class ChatApp: NotchApp {
     return false;
     """
 
+    // MARK: - Reply notifications
+
+    private func replyStateChanged(_ service: ChatService, busy: Bool, pageTitle: String) {
+        if busy {
+            busySince[service] = busySince[service] ?? Date()
+            return
+        }
+        guard let started = busySince.removeValue(forKey: service) else { return }
+        guard Date().timeIntervalSince(started) >= Self.notableReplyDuration, !isLooking(at: service) else { return }
+        unread.insert(service)
+        context?.requestAttention(.pulse)
+        if notifyWhenDone {
+            let title = pageTitle.replacingOccurrences(of: " - Claude", with: "").trimmingCharacters(in: .whitespaces)
+            let generic = ["", "ChatGPT", "Claude", "muse.ai"].contains(title)
+            context?.notify(title: "\(service.name) replied",
+                            body: generic ? "Your response is ready." : title,
+                            payload: ["service": service.rawValue])
+        }
+    }
+
+    /// The Chat app is open in the notch on this service.
+    private func isLooking(at service: ChatService) -> Bool {
+        (context?.isVisible ?? false) && self.service == service
+    }
+
+    /// Called by the view when a service is on screen.
+    func markSeen(_ service: ChatService) {
+        unread.remove(service)
+    }
+
+    public var activity: NotchActivity? {
+        if let done = ChatService.allCases.first(where: unread.contains) {
+            return NotchActivity(priority: 12) {
+                Image(systemName: "checkmark.bubble.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.green)
+            } trailing: {
+                Text(done.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+            }
+        }
+        if let working = ChatService.allCases.first(where: { busySince[$0] != nil }), !isLooking(at: working) {
+            return NotchActivity(priority: 6) {
+                ProgressView().controlSize(.mini).tint(.white)
+            } trailing: {
+                Text(working.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+            }
+        }
+        return nil
+    }
+
+    public func makeSettingsView() -> AnyView? {
+        AnyView(Form {
+            Section {
+                Toggle(isOn: Binding(get: { self.notifyWhenDone }, set: { self.notifyWhenDone = $0 })) {
+                    Text("Notify when a reply finishes")
+                    Text("A macOS notification when ChatGPT, Claude or Muse finishes a reply (3 seconds or longer) while the chat isn't on screen. The notch always shows a ✓ until you look.")
+                }
+            } header: {
+                Text("Notifications")
+            }
+        }
+        .formStyle(.grouped))
+    }
+
     func goHome() {
         webViews[service]?.load(URLRequest(url: service.home))
     }
@@ -182,6 +271,8 @@ struct ChatView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+        .onAppear { app.markSeen(app.service) }
+        .onChange(of: app.service) { _, service in app.markSeen(service) }
     }
 
     private func button(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {

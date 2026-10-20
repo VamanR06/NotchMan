@@ -15,6 +15,9 @@ public struct NotchMessage: Sendable, Equatable {
 // MARK: - Well-known messages
 
 public extension NotchMessage {
+    /// Delivered to an app when the user clicks one of its notifications; payload is what it posted with.
+    static let notificationOpenedName = "notification.opened"
+
     /// Handled by the Chat app (id "chat"): open a new chat on `service` ("chatgpt", "claude", …) with
     /// `text` typed into the message box, not sent. `url` optionally starts the chat on a page of that
     /// service instead of its home page — e.g. a ChatGPT project, so the chat is saved in that project.
