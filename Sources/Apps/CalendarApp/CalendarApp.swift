@@ -21,6 +21,7 @@ public final class CalendarApp: NotchApp {
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var timers: [Task<Void, Never>] = []
     @ObservationIgnored private var alertedEventIDs: Set<String> = []
+    @ObservationIgnored private var refreshQueued = false
 
     /// How far ahead the timeline looks.
     private let horizonDays = 7
@@ -56,9 +57,19 @@ public final class CalendarApp: NotchApp {
     }
 
     func refresh() async {
-        guard !isLoading else { return }
+        // A refresh requested mid-flight (e.g. after changing settings) runs again once this one ends.
+        guard !isLoading else {
+            refreshQueued = true
+            return
+        }
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            if refreshQueued {
+                refreshQueued = false
+                Task { await refresh() }
+            }
+        }
 
         let start = Calendar.current.startOfDay(for: Date())
         let end = Calendar.current.date(byAdding: .day, value: horizonDays, to: start)!
