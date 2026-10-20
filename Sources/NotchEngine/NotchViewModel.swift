@@ -69,14 +69,22 @@ final class NotchViewModel {
         geometry.rect(hanging: shapeSize)
     }
 
+    /// Whether `point` is over the notch. The rect is extended above the screen's top edge: a cursor
+    /// pushed against the top (as it is under the physical notch) reports y == maxY, which
+    /// `CGRect.contains` treats as outside.
+    func contains(_ point: CGPoint, slack: CGFloat = 0) -> Bool {
+        var rect = hitRect.insetBy(dx: -slack, dy: -slack)
+        rect.size.height += 4
+        return rect.contains(point)
+    }
+
     // MARK: - Mouse
 
     func mouseMoved(to point: CGPoint) {
         switch state {
         case .collapsed:
             // Slightly generous hover target so the notch is easy to hit.
-            let hover = hitRect.insetBy(dx: -6, dy: -4)
-            if hover.contains(point) {
+            if contains(point, slack: 4) {
                 guard pendingExpand == nil else { return }
                 pendingExpand = Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(120))
@@ -89,7 +97,8 @@ final class NotchViewModel {
                 pendingExpand = nil
             }
         case .expanded:
-            if hitRect.contains(point) {
+            // Same slack as the collapsed hover target, so the two states can't fight over the edge.
+            if contains(point, slack: 4) {
                 attentionExpansion = false
                 pendingCollapse?.cancel()
                 pendingCollapse = nil

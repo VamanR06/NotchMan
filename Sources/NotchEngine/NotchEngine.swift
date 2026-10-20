@@ -2,16 +2,29 @@ import AppKit
 import SwiftUI
 import NotchKit
 
-/// Owns the notch window and hosts the registered apps.
+/// Owns the notch windows (one per display) and hosts the registered apps.
 @MainActor
 public final class NotchEngine {
     public let apps: [any NotchApp]
 
-    private var model: NotchViewModel?
-    private var panel: NotchPanel?
+    /// When on, every display gets a notch (a virtual one where there's no hardware notch).
+    static let allDisplaysKey = "showNotchOnAllDisplays"
+
+    /// One notch window per display.
+    private final class ScreenNotch {
+        let model: NotchViewModel
+        let panel: NotchPanel
+
+        init(model: NotchViewModel, panel: NotchPanel) {
+            self.model = model
+            self.panel = panel
+        }
+    }
+
+    private var notches: [CGDirectDisplayID: ScreenNotch] = [:]
     private var settings: SettingsWindowController
     private var monitors: [Any] = []
-    private var screenObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
 
     public init(apps: [any NotchApp]) {
         self.apps = apps
@@ -19,53 +32,96 @@ public final class NotchEngine {
     }
 
     public func start() {
-        guard let (_, geometry) = NotchGeometry.current() else { return }
-        let model = NotchViewModel(apps: apps, geometry: geometry)
-        self.model = model
-
         for app in apps {
             let appID = app.id
             let context = NotchContext(
                 appID: appID,
-                attention: { [weak self] attention in self?.model?.handleAttention(attention, from: appID) },
+                attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
                 openSettings: { [weak self] in self?.settings.show(appID: appID) }
             )
             app.activate(context: context)
         }
 
-        let panel = NotchPanel(contentRect: .zero)
-        let root = NotchRootView(model: model, openSettings: { [weak self] in self?.settings.show() })
-        panel.contentView = FirstMouseHostingView(rootView: root)
-        panel.ignoresMouseEvents = true
-        self.panel = panel
-        layoutPanel()
-        panel.orderFrontRegardless()
-
+        rebuildNotches()
         installMouseMonitors()
-        screenObserver = NotificationCenter.default.addObserver(
+
+        observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screensChanged() }
-        }
+            MainActor.assumeIsolated { self?.rebuildNotches() }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildNotches() }
+        })
     }
 
     public func stop() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
-        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
         apps.forEach { $0.deactivate() }
     }
 
-    private func screensChanged() {
-        guard let model, let (_, geometry) = NotchGeometry.current() else { return }
-        model.geometry = geometry
-        layoutPanel()
+    private var showsOnAllDisplays: Bool {
+        UserDefaults.standard.object(forKey: Self.allDisplaysKey) as? Bool ?? true
     }
 
-    /// Pins the (fixed-size, mostly transparent) panel to the top of the screen, centered on the notch.
-    private func layoutPanel() {
-        guard let model, let panel else { return }
-        panel.setFrame(model.geometry.rect(hanging: model.windowSize), display: true)
+    /// Creates, updates or removes notch windows to match the connected displays.
+    private func rebuildNotches() {
+        let screens: [NSScreen]
+        if showsOnAllDisplays {
+            screens = NSScreen.screens
+        } else {
+            screens = NotchGeometry.current().map { [$0.0] } ?? []
+        }
+
+        var wanted: Set<CGDirectDisplayID> = []
+        for screen in screens {
+            guard let id = screen.displayID else { continue }
+            wanted.insert(id)
+            let geometry = NotchGeometry(screen: screen)
+            if let existing = notches[id] {
+                if existing.model.geometry != geometry {
+                    existing.model.geometry = geometry
+                    layout(existing)
+                }
+            } else {
+                notches[id] = makeNotch(geometry: geometry)
+            }
+        }
+        for (id, notch) in notches where !wanted.contains(id) {
+            notch.panel.orderOut(nil)
+            notches[id] = nil
+        }
+    }
+
+    private func makeNotch(geometry: NotchGeometry) -> ScreenNotch {
+        let model = NotchViewModel(apps: apps, geometry: geometry)
+        let panel = NotchPanel(contentRect: .zero)
+        let root = NotchRootView(model: model, openSettings: { [weak self] in self?.settings.show() })
+        panel.contentView = FirstMouseHostingView(rootView: root)
+        panel.ignoresMouseEvents = true
+        let notch = ScreenNotch(model: model, panel: panel)
+        layout(notch)
+        panel.orderFrontRegardless()
+        return notch
+    }
+
+    /// Pins the (fixed-size, mostly transparent) panel to the top of its screen, centered on the notch.
+    private func layout(_ notch: ScreenNotch) {
+        notch.panel.setFrame(notch.model.geometry.rect(hanging: notch.model.windowSize), display: true)
+    }
+
+    /// Attention goes to the notch on the display the cursor is on, else the hardware notch.
+    private var attentionTarget: NotchViewModel? {
+        let point = NSEvent.mouseLocation
+        let models = notches.values.map(\.model)
+        return models.first { $0.geometry.screenFrame.insetBy(dx: 0, dy: -1).contains(point) }
+            ?? models.first { $0.geometry.hasNotch }
+            ?? models.first
     }
 
     private func installMouseMonitors() {
@@ -84,10 +140,17 @@ public final class NotchEngine {
     }
 
     private func handleMouse() {
-        guard let model, let panel else { return }
         let point = NSEvent.mouseLocation
-        model.mouseMoved(to: point)
-        // Only capture clicks inside the visible notch shape; pass everything else through.
-        panel.ignoresMouseEvents = !model.hitRect.contains(point)
+        for notch in notches.values {
+            notch.model.mouseMoved(to: point)
+            // Only capture clicks inside the visible notch shape; pass everything else through.
+            notch.panel.ignoresMouseEvents = !notch.model.contains(point)
+        }
+    }
+}
+
+private extension NSScreen {
+    var displayID: CGDirectDisplayID? {
+        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 }

@@ -82,6 +82,7 @@ private struct SettingsView: View {
 }
 
 private struct GeneralSettingsView: View {
+    @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var error: String?
 
@@ -98,6 +99,10 @@ private struct GeneralSettingsView: View {
                 }
             if let error {
                 Text(error).foregroundStyle(.red).font(.caption)
+            }
+            Toggle(isOn: $allDisplays) {
+                Text("Show notch on all displays")
+                Text("Displays without a hardware notch get a virtual one at the top center.")
             }
         }
         .formStyle(.grouped)
