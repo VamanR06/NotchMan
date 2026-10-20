@@ -87,6 +87,19 @@ enum SpotifyClient {
         """)
     }
 
+    /// Plays a track, optionally within a playlist/album context so next/previous stay in it.
+    /// With only a context URI (e.g. a playlist), plays it from the start. Launches Spotify if needed.
+    static func play(_ uri: String, context: String? = nil) async throws {
+        // URIs are interpolated into AppleScript, so only allow the plain `spotify:…` form.
+        guard isSafeURI(uri), context.map(isSafeURI) ?? true else { throw ClientError.script("Invalid Spotify URI") }
+        let inContext = context.map { " in context \"\($0)\"" } ?? ""
+        _ = try await run("tell application \"Spotify\" to play track \"\(uri)\"\(inContext)")
+    }
+
+    static func isSafeURI(_ uri: String) -> Bool {
+        uri.range(of: #"^spotify:[A-Za-z0-9:]+$"#, options: .regularExpression) != nil
+    }
+
     /// AppleScript formats reals with the user's decimal separator.
     private static func number(_ string: String) -> Double {
         Double(string.replacingOccurrences(of: ",", with: ".")) ?? 0

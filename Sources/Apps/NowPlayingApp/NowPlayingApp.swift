@@ -8,7 +8,12 @@ public final class NowPlayingApp: NotchApp {
     public let id = "nowplaying"
     public let name = "Now Playing"
     public let iconSystemName = "music.note"
-    public var expandedHeight: CGFloat { 150 }
+    public var expandedHeight: CGFloat { 200 }
+
+    enum Tab: Hashable { case player, playlists }
+    var tab: Tab = .player
+    var selectedPlaylistID: String?
+    private(set) var libraryError: String?
 
     private(set) var isRunning = false
     private(set) var snapshot: PlayerSnapshot?
@@ -19,11 +24,13 @@ public final class NowPlayingApp: NotchApp {
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     @ObservationIgnored private var poller: Task<Void, Never>?
+    @ObservationIgnored private(set) var library: SpotifyLibrary!
 
     public init() {}
 
     public func activate(context: NotchContext) {
         self.context = context
+        library = SpotifyLibrary(keychain: context.keychain, defaults: context.defaults)
         isRunning = SpotifyClient.isRunning
 
         // Spotify broadcasts this on every play/pause/track change.
@@ -113,6 +120,61 @@ public final class NowPlayingApp: NotchApp {
         } trailing: {
             PlayingBars()
         }
+    }
+
+    // MARK: - Playlists
+
+    var selectedPlaylist: SpotifyLibrary.Playlist? {
+        library.playlists.first { $0.id == selectedPlaylistID }
+    }
+
+    func loadPlaylistsIfNeeded() async {
+        guard library.isSignedIn, library.playlists.isEmpty else { return }
+        await loadPlaylists()
+    }
+
+    func loadPlaylists() async {
+        do {
+            try await library.loadPlaylists()
+            libraryError = nil
+            if selectedPlaylistID == nil { selectedPlaylistID = library.playlists.first?.id }
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    func select(_ playlist: SpotifyLibrary.Playlist) {
+        selectedPlaylistID = playlist.id
+        guard library.songs[playlist.id] == nil else { return }
+        Task {
+            do { try await library.loadSongs(for: playlist); libraryError = nil } catch { libraryError = error.localizedDescription }
+        }
+    }
+
+    /// Plays a song within its playlist, or the whole playlist from the top when `song` is nil.
+    func play(_ song: SpotifyLibrary.Song?, in playlist: SpotifyLibrary.Playlist) {
+        Task {
+            do {
+                if let song {
+                    try await SpotifyClient.play(song.uri, context: playlist.uri)
+                } else {
+                    try await SpotifyClient.play(playlist.uri)
+                }
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+            await refresh()
+        }
+    }
+
+    func openSettings() {
+        context?.openSettings()
+    }
+
+    public func makeSettingsView() -> AnyView? {
+        AnyView(NowPlayingSettingsView(app: self, library: library))
     }
 
     public func makeExpandedView() -> AnyView {

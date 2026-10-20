@@ -69,3 +69,9 @@ you send it. Links to other sites open in your browser. Use the pin button to ke
 
 Controls Spotify via AppleScript. The first time, macOS asks to let NotchMan control Spotify — allow it
 (or enable it in System Settings → Privacy & Security → Automation).
+
+**Playlists tab** (needs Spotify Premium — Spotify's rule for developer apps since Feb 2026): at
+developer.spotify.com/dashboard create an app, add the redirect URI `http://127.0.0.1:43821/callback`, tick
+*Web API*, and paste the Client ID in Settings → Now Playing (no secret needed). Browse your playlists, click a
+song to play it within its playlist, or press Play to start a playlist. Spotify only returns the songs of
+playlists you own or collaborate on; others can still be played from the top. Liked Songs can't be listed.

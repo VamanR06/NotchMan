@@ -28,5 +28,6 @@ let package = Package(
         .testTarget(name: "TasksAppTests", dependencies: ["TasksApp"]),
         .testTarget(name: "JobsAppTests", dependencies: ["JobsApp"]),
         .testTarget(name: "ChatAppTests", dependencies: ["ChatApp"]),
+        .testTarget(name: "NowPlayingAppTests", dependencies: ["NowPlayingApp"]),
     ]
 )

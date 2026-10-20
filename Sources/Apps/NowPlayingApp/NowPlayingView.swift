@@ -1,9 +1,27 @@
 import SwiftUI
 
 struct NowPlayingView: View {
-    let app: NowPlayingApp
+    @Bindable var app: NowPlayingApp
 
     var body: some View {
+        VStack(spacing: 6) {
+            Picker("", selection: $app.tab) {
+                Image(systemName: "play.circle").help("Now Playing").tag(NowPlayingApp.Tab.player)
+                Image(systemName: "music.note.list").help("Playlists").tag(NowPlayingApp.Tab.playlists)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            switch app.tab {
+            case .player: playerTab
+            case .playlists: PlaylistsView(app: app, library: app.library)
+            }
+        }
+    }
+
+    private var playerTab: some View {
         Group {
             if let track = app.snapshot?.track {
                 player(track)
