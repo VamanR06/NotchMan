@@ -14,7 +14,8 @@ final class NotchViewModel {
 
     // Layout constants.
     let expandedWidth: CGFloat = 620
-    let activitySideWidth: CGFloat = 76
+    let activitySideWidth: CGFloat = 84
+    let activityEdgeInset: CGFloat = 14
     let expandedBottomPadding: CGFloat = 14
 
     @ObservationIgnored private var pendingCollapse: Task<Void, Never>?

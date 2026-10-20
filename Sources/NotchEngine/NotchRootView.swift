@@ -42,14 +42,16 @@ struct NotchRootView: View {
     @ViewBuilder
     private var collapsedContent: some View {
         if let activity = model.topActivity {
+            // Each side area is `activitySideWidth` wide; content keeps `activityEdgeInset` clear of
+            // the outer edge so it doesn't crowd the rounded corners.
             HStack(spacing: 0) {
                 (activity.leading ?? AnyView(EmptyView()))
-                    .frame(width: model.activitySideWidth, alignment: .leading)
-                    .padding(.leading, 8)
+                    .frame(width: model.activitySideWidth - model.activityEdgeInset, alignment: .leading)
+                    .padding(.leading, model.activityEdgeInset)
                 Spacer(minLength: model.geometry.notchSize.width)
                 (activity.trailing ?? AnyView(EmptyView()))
-                    .frame(width: model.activitySideWidth, alignment: .trailing)
-                    .padding(.trailing, 8)
+                    .frame(width: model.activitySideWidth - model.activityEdgeInset, alignment: .trailing)
+                    .padding(.trailing, model.activityEdgeInset)
             }
             .padding(.horizontal, model.topCornerRadius)
             .frame(maxHeight: .infinity)
