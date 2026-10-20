@@ -57,6 +57,10 @@ public final class NotchEngine {
         })
     }
 
+    public func showSettings() {
+        settings.show()
+    }
+
     public func stop() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()

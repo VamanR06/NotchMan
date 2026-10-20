@@ -1,6 +1,6 @@
 import AppKit
+import os
 import SwiftUI
-import UniformTypeIdentifiers
 import WebKit
 
 /// The chat services, each loaded as its real website so usage is exactly like using the site.
@@ -38,6 +38,10 @@ final class NotchWebView: WKWebView {
 /// sends every other link to the default browser, and handles file uploads.
 @MainActor
 final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    var logger = Logger(subsystem: "com.notchman", category: "chat")
+    /// Sign-in popups, shown in their own windows so `window.opener` keeps working.
+    private var popups: [ObjectIdentifier: NSWindow] = [:]
+
     /// Hosts that stay inside the notch: the chat sites plus the sign-in providers they redirect through.
     private static let inAppHosts = [
         "chatgpt.com", "openai.com", "claude.ai", "anthropic.com",
@@ -52,6 +56,10 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         let url = navigationAction.request.url
+        if navigationAction.targetFrame?.isMainFrame == true {
+            // Host and path only: query strings can carry sign-in tokens.
+            logger.notice("Navigate \(url?.host() ?? "-", privacy: .public)\(url?.path() ?? "", privacy: .public)")
+        }
         if url?.scheme == "about" || url?.scheme == "blob" || url?.scheme == "data" { return .allow }
         // Only user-clicked links leave the app; redirects during sign-in must stay.
         if navigationAction.navigationType == .linkActivated, !Self.staysInApp(url), let url {
@@ -61,17 +69,52 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         return .allow
     }
 
-    /// `window.open` (sign-in popups, "open in new tab"): load sign-in in place, open others in the browser.
+    /// `window.open`: sign-in popups get a real window (with the opener link intact, so the popup can hand
+    /// the session back to the page); anything else opens in the default browser.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url {
-            if Self.staysInApp(url) {
-                webView.load(navigationAction.request)
-            } else {
-                NSWorkspace.shared.open(url)
-            }
+        let url = navigationAction.request.url
+        let blank = url == nil || url?.absoluteString.isEmpty == true || url?.scheme == "about"
+        if !blank, !Self.staysInApp(url), let url {
+            NSWorkspace.shared.open(url)
+            return nil
         }
-        return nil
+        logger.notice("Popup \(url?.host() ?? "blank", privacy: .public)")
+        let popup = NotchWebView(frame: CGRect(x: 0, y: 0, width: 520, height: 680), configuration: configuration)
+        popup.customUserAgent = webView.customUserAgent
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+
+        let window = NSWindow(contentRect: popup.frame, styleMask: [.titled, .closable, .resizable],
+                              backing: .buffered, defer: false)
+        window.title = "Sign in"
+        window.contentView = popup
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.center()
+        popups[ObjectIdentifier(popup)] = window
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        return popup
+    }
+
+    /// The popup called `window.close()` (e.g. sign-in finished).
+    func webViewDidClose(_ webView: WKWebView) {
+        popups.removeValue(forKey: ObjectIdentifier(webView))?.close()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        logger.error("Load failed: \(error.localizedDescription, privacy: .public)")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        logger.error("Navigation failed: \(error.localizedDescription, privacy: .public)")
+    }
+
+    /// A crashed or killed page leaves a blank view; bring it back.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        logger.error("Web content process terminated; reloading")
+        webView.reload()
     }
 
     /// File attachments.

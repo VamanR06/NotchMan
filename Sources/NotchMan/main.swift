@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let engine = NotchEngine(apps: AppRegistry.makeApps())
         engine.start()
         self.engine = engine
+        NSApp.mainMenu = MainMenu.make(openSettings: #selector(openSettings), target: self)
+    }
+
+    @objc private func openSettings() {
+        engine?.showSettings()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -33,6 +33,7 @@ public final class ChatApp: NotchApp {
 
     public func activate(context: NotchContext) {
         self.context = context
+        coordinator.logger = context.logger
         if let saved = context.defaults.string(forKey: "service").flatMap(ChatService.init(rawValue:)) {
             service = saved
         }
