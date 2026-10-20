@@ -37,7 +37,8 @@ public final class NotchEngine {
             let context = NotchContext(
                 appID: appID,
                 attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
-                openSettings: { [weak self] in self?.settings.show(appID: appID) }
+                openSettings: { [weak self] in self?.settings.show(appID: appID) },
+                send: { [weak self] message, target in self?.deliver(message, to: target) }
             )
             app.activate(context: context)
         }
@@ -117,6 +118,16 @@ public final class NotchEngine {
     /// Pins the (fixed-size, mostly transparent) panel to the top of its screen, centered on the notch.
     private func layout(_ notch: ScreenNotch) {
         notch.panel.setFrame(notch.model.geometry.rect(hanging: notch.model.windowSize), display: true)
+    }
+
+    /// Switches the notch to `appID` first so its view is on screen, then hands it the message.
+    private func deliver(_ message: NotchMessage, to appID: String) {
+        guard let app = apps.first(where: { $0.id == appID }) else { return }
+        if let model = attentionTarget {
+            model.select(appID)
+            if model.state == .collapsed { model.expand() }
+        }
+        app.receive(message)
     }
 
     /// Attention goes to the notch on the display the cursor is on, else the hardware notch.

@@ -41,6 +41,8 @@ final class NotchWebView: WKWebView {
 @MainActor
 final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     var logger = Logger(subsystem: "com.notchman", category: "chat")
+    /// Called when a page finishes loading (used to type in a pending prompt).
+    var onFinish: ((WKWebView) -> Void)?
     /// Sign-in popups, shown in their own windows so `window.opener` keeps working.
     private var popups: [ObjectIdentifier: NSWindow] = [:]
 
@@ -104,6 +106,10 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// The popup called `window.close()` (e.g. sign-in finished).
     func webViewDidClose(_ webView: WKWebView) {
         popups.removeValue(forKey: ObjectIdentifier(webView))?.close()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        onFinish?(webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

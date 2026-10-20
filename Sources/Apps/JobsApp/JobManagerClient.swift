@@ -99,23 +99,35 @@ final class JobManagerClient {
     }
 
     func jobs() async throws -> [TrackedJob] {
+        let data = try await authorizedGet("api/jobs")
+        return try JSONDecoder().decode([JobRecord].self, from: data).map(TrackedJob.init)
+    }
+
+    /// The saved posting snapshot for a job, or nil if none was saved.
+    func posting(for job: TrackedJob) async throws -> JobPosting? {
+        let data = try await authorizedGet("api/jobs/\(job.id)/posting")
+        return try JSONDecoder().decode(JobPosting?.self, from: data)
+    }
+
+    /// GET with the session cookie, signing in again once if the session expired.
+    private func authorizedGet(_ path: String) async throws -> Data {
         let base = try Self.validate(serverURL)
         guard isSignedIn else { throw ClientError.notSignedIn }
 
-        var (data, status) = try await getJobs(base: base)
+        var (data, status) = try await get(path, base: base)
         if status == 401, let password = keychain.string(for: "password") {
             // Session expired or the password changed on the server: sign in again once.
             let cookie = try await login(base: base, password: password)
             keychain.set(cookie, for: "session")
-            (data, status) = try await getJobs(base: base)
+            (data, status) = try await get(path, base: base)
         }
         if status == 401 { throw ClientError.notSignedIn }
         guard status == 200 else { throw ClientError.http(status) }
-        return try JSONDecoder().decode([JobRecord].self, from: data).map(TrackedJob.init)
+        return data
     }
 
-    private func getJobs(base: URL) async throws -> (Data, Int) {
-        var request = URLRequest(url: base.appending(path: "api/jobs"))
+    private func get(_ path: String, base: URL) async throws -> (Data, Int) {
+        var request = URLRequest(url: base.appending(path: path))
         if let cookie = keychain.string(for: "session"), !cookie.isEmpty {
             request.setValue("\(Self.cookieName)=\(cookie)", forHTTPHeaderField: "Cookie")
         }

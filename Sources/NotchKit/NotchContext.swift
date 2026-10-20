@@ -13,11 +13,13 @@ public final class NotchContext {
 
     private let attentionHandler: (NotchAttention) -> Void
     private let openSettingsHandler: () -> Void
+    private let sendHandler: (NotchMessage, String) -> Void
 
     public init(
         appID: String,
         attention: @escaping (NotchAttention) -> Void,
-        openSettings: @escaping () -> Void
+        openSettings: @escaping () -> Void,
+        send: @escaping (NotchMessage, String) -> Void = { _, _ in }
     ) {
         self.appID = appID
         self.defaults = UserDefaults(suiteName: "com.notchman.app.\(appID)") ?? .standard
@@ -25,6 +27,12 @@ public final class NotchContext {
         self.logger = Logger(subsystem: "com.notchman", category: appID)
         self.attentionHandler = attention
         self.openSettingsHandler = openSettings
+        self.sendHandler = send
+    }
+
+    /// Delivers `message` to the app with id `appID` and shows that app in the notch.
+    public func send(_ message: NotchMessage, to appID: String) {
+        sendHandler(message, appID)
     }
 
     public func requestAttention(_ attention: NotchAttention = .pulse) {

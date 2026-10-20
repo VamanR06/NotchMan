@@ -228,6 +228,30 @@ private struct FilterBar: View {
     }
 }
 
+/// ✨ menu: open ChatGPT with one of the prompt presets filled in for this job.
+private struct AskMenu: View {
+    let app: JobsApp
+    let job: TrackedJob
+
+    var body: some View {
+        Menu {
+            Section("Ask ChatGPT") {
+                ForEach(app.templates) { template in
+                    Button(template.name) { app.ask(template, about: job) }
+                }
+            }
+        } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.75))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Ask ChatGPT about this job")
+    }
+}
+
 private struct JobRow: View {
     let app: JobsApp
     let job: TrackedJob
@@ -255,6 +279,9 @@ private struct JobRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if job.status == .toApply && !app.templates.isEmpty {
+                AskMenu(app: app, job: job)
+            }
             if let link = actionLink {
                 Button { NSWorkspace.shared.open(link.url) } label: {
                     Text(link.label)

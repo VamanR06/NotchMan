@@ -140,3 +140,42 @@ private let now = Date(timeIntervalSince1970: 1_792_497_600)
         #expect(board.all.first?.company == "Acme")
     }
 }
+
+@Suite struct PromptTemplateTests {
+    private func hooli() throws -> TrackedJob {
+        try #require(try jobs().first { $0.company == "Hooli" })
+    }
+
+    @Test func fillsPlaceholders() throws {
+        let template = PromptTemplate(name: "t", text: "{title} @ {company} ({location}) {url}\n{posting}")
+        let posting = JobPosting(description: "Build ML things.", location: "Ann Arbor, MI")
+        let text = template.render(job: try hooli(), url: "https://jobs.example/1", posting: posting)
+        #expect(text == "ML Intern @ Hooli (Ann Arbor, MI) https://jobs.example/1\nBuild ML things.")
+    }
+
+    @Test func fallsBackWhenNoPostingSaved() throws {
+        let template = PromptTemplate(name: "t", text: "{posting}|{location}")
+        #expect(template.render(job: try hooli(), url: "https://x.example", posting: nil)
+                == "(No description saved — see https://x.example)|location not listed")
+        #expect(template.render(job: try hooli(), url: nil, posting: nil) == "(No description saved.)|location not listed")
+    }
+
+    @Test func truncatesLongPostings() throws {
+        let long = JobPosting(description: String(repeating: "a", count: PromptTemplate.maxPostingLength + 500), location: nil)
+        let text = PromptTemplate(name: "t", text: "{posting}").render(job: try hooli(), url: nil, posting: long)
+        #expect(text.hasSuffix("[…truncated]"))
+        #expect(text.count < PromptTemplate.maxPostingLength + 50)
+    }
+
+    @Test func defaultsUseThePosting() {
+        #expect(PromptTemplate.defaults.count == 3)
+        #expect(PromptTemplate.defaults.allSatisfy { $0.text.contains("{posting}") })
+    }
+
+    @Test func decodesPostingOrNull() throws {
+        let json = ##"{"job_id": 4, "title": null, "company": null, "location": "Remote", "description_md": "# Role", "source": "parsed", "fetch_status": "ok", "fetched_at": "2026-10-04T10:00:00.000Z"}"##
+        let posting = try JSONDecoder().decode(JobPosting?.self, from: Data(json.utf8))
+        #expect(posting?.description == "# Role" && posting?.location == "Remote")
+        #expect(try JSONDecoder().decode(JobPosting?.self, from: Data("null".utf8)) == nil)
+    }
+}

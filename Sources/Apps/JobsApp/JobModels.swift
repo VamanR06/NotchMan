@@ -60,6 +60,8 @@ struct TrackedJob: Identifiable, Hashable {
     let id: Int
     let company: String
     let title: String
+    /// The posting's URL, if the job has one.
+    let url: String?
     let status: JobStatus
     let round: Int?
     /// For a pending job: the stage it's pending after.
@@ -90,6 +92,7 @@ struct TrackedJob: Identifiable, Hashable {
         id = record.id
         company = record.company
         title = record.title
+        url = record.url.flatMap { $0.isEmpty ? nil : $0 }
         // A job with no status events is one still being considered.
         status = event.flatMap { JobStatus(rawValue: $0.status) } ?? .toApply
         round = event?.interview_round

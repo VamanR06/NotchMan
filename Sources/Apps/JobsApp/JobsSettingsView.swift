@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct JobsSettingsView: View {
-    let app: JobsApp
+    @Bindable var app: JobsApp
     @State private var server = ""
     @State private var password = ""
     @State private var signingIn = false
@@ -43,6 +43,38 @@ struct JobsSettingsView: View {
                 http://localhost:3000 and leave the password empty.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                ForEach($app.templates) { $template in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            TextField("Name", text: $template.name).fontWeight(.medium)
+                            Button(role: .destructive) {
+                                app.templates.removeAll { $0.id == template.id }
+                            } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless)
+                        }
+                        TextEditor(text: $template.text)
+                            .font(.system(size: 12))
+                            .frame(minHeight: 90)
+                            .scrollContentBackground(.hidden)
+                            .padding(4)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+                    }
+                    .padding(.vertical, 4)
+                }
+                HStack {
+                    Button("Add Prompt") {
+                        app.templates.append(PromptTemplate(name: "New prompt", text: "Help me apply to {title} at {company}.\n\n{posting}"))
+                    }
+                    Button("Restore Defaults") { app.templates = PromptTemplate.defaults }
+                }
+            } header: {
+                Text("ChatGPT Prompts")
+            } footer: {
+                Text("Shown in the ✨ menu on jobs you haven't applied to yet. Picking one opens a new ChatGPT chat in the notch with the prompt typed in (not sent). Placeholders: \(PromptTemplate.placeholders.joined(separator: " ")). {posting} is the job description saved in JobManager.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

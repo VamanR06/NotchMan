@@ -19,6 +19,10 @@ public final class JobsApp: NotchApp {
     /// List filter and search; kept here so they survive the notch collapsing.
     var filter: JobFilter = .active
     var query = ""
+    /// ChatGPT prompt presets for jobs, editable in settings.
+    var templates: [PromptTemplate] = PromptTemplate.defaults {
+        didSet { saveTemplates() }
+    }
 
     @ObservationIgnored private(set) var client: JobManagerClient!
     @ObservationIgnored private var context: NotchContext?
@@ -32,6 +36,10 @@ public final class JobsApp: NotchApp {
         self.context = context
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
+        if let data = context.defaults.data(forKey: "promptTemplates"),
+           let saved = try? JSONDecoder().decode([PromptTemplate].self, from: data) {
+            templates = saved
+        }
 
         timers.append(Task { [weak self] in
             while !Task.isCancelled {
@@ -109,6 +117,20 @@ public final class JobsApp: NotchApp {
 
     func open(_ job: TrackedJob) {
         if let url = client.pageURL(for: job) { NSWorkspace.shared.open(url) }
+    }
+
+    /// Opens a new ChatGPT chat in the notch with the template filled in for this job (not sent).
+    func ask(_ template: PromptTemplate, about job: TrackedJob) {
+        Task {
+            // The posting is best-effort: without it the prompt falls back to the job's link.
+            let posting = try? await client.posting(for: job)
+            let text = template.render(job: job, url: job.url, posting: posting)
+            context?.send(.chatPrompt(text), to: "chat")
+        }
+    }
+
+    private func saveTemplates() {
+        if let data = try? JSONEncoder().encode(templates) { context?.defaults.set(data, forKey: "promptTemplates") }
     }
 
     func openDashboard() {

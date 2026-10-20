@@ -24,6 +24,8 @@ public final class ChatApp: NotchApp {
     @ObservationIgnored private var webViews: [ChatService: WKWebView] = [:]
     @ObservationIgnored private let coordinator = ChatWebCoordinator()
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
+    /// Prompts waiting for their service's new-chat page to finish loading.
+    @ObservationIgnored private var pendingPrompts: [ChatService: String] = [:]
 
     /// Desktop Safari's user agent: Google sign-in refuses embedded browsers that don't look like one.
     private static let userAgent =
@@ -34,6 +36,7 @@ public final class ChatApp: NotchApp {
     public func activate(context: NotchContext) {
         self.context = context
         coordinator.logger = context.logger
+        coordinator.onFinish = { [weak self] view in self?.typePendingPrompt(into: view) }
         if let saved = context.defaults.string(forKey: "service").flatMap(ChatService.init(rawValue:)) {
             service = saved
         }
@@ -62,6 +65,64 @@ public final class ChatApp: NotchApp {
         webViews[service] = view
         return view
     }
+
+    // MARK: - Prompts from other apps
+
+    public func receive(_ message: NotchMessage) {
+        guard message.name == NotchMessage.chatPromptName, let text = message.payload["text"] else { return }
+        let target = message.payload["service"].flatMap(ChatService.init(rawValue:)) ?? .chatgpt
+        service = target
+        // Backup in case the site's message box can't be filled: just paste.
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        pendingPrompts[target] = text
+        let isNew = webViews[target] == nil
+        let view = webView(for: target)  // creating it already loads the home (new chat) page
+        if !isNew { view.load(URLRequest(url: target.home)) }
+    }
+
+    /// Types the prompt into the site's message box without sending it.
+    private func typePendingPrompt(into view: WKWebView) {
+        guard let service = webViews.first(where: { $0.value === view })?.key,
+              let text = pendingPrompts.removeValue(forKey: service) else { return }
+        Task {
+            do {
+                let filled = try await view.callAsyncJavaScript(
+                    Self.fillComposerScript, arguments: ["text": text], in: nil, contentWorld: .defaultClient)
+                if filled as? Bool != true {
+                    context?.logger.notice("Couldn't find the message box; prompt is on the clipboard")
+                }
+            } catch {
+                context?.logger.error("Prompt fill failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Waits for the chat composer (a ProseMirror editor on ChatGPT and Claude, or a textarea) and inserts
+    /// `text` as if typed, so the site's editor state updates. Never presses send.
+    private static let fillComposerScript = """
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+        const el = document.querySelector('#prompt-textarea')
+            || document.querySelector('div.ProseMirror[contenteditable="true"]')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('textarea');
+        if (el) {
+            el.focus();
+            if (el.tagName === 'TEXTAREA') {
+                const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+                setter.call(el, text);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+                document.execCommand('selectAll', false);
+                document.execCommand('insertText', false, text);
+            }
+            return true;
+        }
+        await new Promise(r => setTimeout(r, 250));
+    }
+    return false;
+    """
 
     func goHome() {
         webViews[service]?.load(URLRequest(url: service.home))

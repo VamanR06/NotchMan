@@ -33,8 +33,8 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
 
-`activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`
-and `openSettings()`. Apps keep running when not selected.
+`activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
+`openSettings()`, and `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`). Apps keep running when not selected.
 
 ## Calendar setup (free)
 
@@ -58,6 +58,11 @@ the server URL and password; NotchMan signs in like the web app and keeps the pa
 the 30-day session. Shows upcoming OA deadlines and interviews (with Open OA / Join links), applications in
 progress, and ones still to apply to; click a row to open it in JobManager. A local server without a password
 works too (`http://localhost:3000`, empty password). Plain `http://` is refused for anything but localhost.
+
+Jobs you haven't applied to have a ✨ menu of ChatGPT prompts (fit & tailoring, cover letter, interview prep, or
+your own in Settings → Jobs). Picking one switches to the Chat app and types the prompt — filled with the job's
+title, company, link, location and saved description — into a new ChatGPT chat without sending it. The prompt is
+also copied to the clipboard as a fallback.
 
 ## Chat (ChatGPT / Claude / Muse)
 

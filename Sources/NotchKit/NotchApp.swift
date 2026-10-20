@@ -31,6 +31,9 @@ public protocol NotchApp: AnyObject {
     func makeExpandedView() -> AnyView
     /// Optional settings pane shown in the NotchMan settings window.
     func makeSettingsView() -> AnyView?
+
+    /// Handles a message sent by another app via `NotchContext.send(_:to:)`.
+    func receive(_ message: NotchMessage)
 }
 
 public extension NotchApp {
@@ -39,4 +42,5 @@ public extension NotchApp {
     var activity: NotchActivity? { nil }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
+    func receive(_ message: NotchMessage) {}
 }
