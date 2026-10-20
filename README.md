@@ -33,6 +33,10 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
 
+Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`
+so icon and label stay together), optionally with a split `leading`/`trailing` layout for media. Up to three
+show at once, sized to their content.
+
 `activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
 `openSettings()`, `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`),
 `notify(title:body:payload:)` for macOS notifications, and `isVisible`. Apps keep running when not selected.

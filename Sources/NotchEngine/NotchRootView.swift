@@ -31,6 +31,9 @@ struct NotchRootView: View {
                     .fill(.black)
                     .shadow(color: .black.opacity(model.state == .expanded ? 0.45 : 0), radius: 14, y: 6)
             )
+            .offset(x: model.shapeOffsetX)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.shapeSize)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.shapeOffsetX)
             .scaleEffect(model.pulsing ? 1.08 : 1, anchor: .top)
 
             Spacer(minLength: 0)
@@ -41,37 +44,58 @@ struct NotchRootView: View {
 
     @ViewBuilder
     private var collapsedContent: some View {
-        if let activity = model.topActivity {
-            // The top activity sits next to the notch; runner-ups go on the outer edges, the first on the
-            // right and the second on the left. Content keeps `activityEdgeInset` clear of the outer edge
-            // so it doesn't crowd the rounded corners.
-            let extras = model.extraActivities
-            let width = model.collapsedSideWidth - model.activityEdgeInset
+        let layout = model.collapsedLayout
+        if !layout.isEmpty {
             HStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    if extras.count > 1 { compactSlot(extras[1]) }
-                    (activity.leading ?? AnyView(EmptyView()))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // Left side, outer edge → notch. Chips hug the notch side of their slot so gaps stay even.
+                HStack(spacing: model.activitySpacing) {
+                    ForEach(layout.left.reversed(), id: \.id) { entry in
+                        chipSlot(entry)
+                    }
+                    if let split = layout.split?.activity {
+                        (split.leading ?? AnyView(EmptyView()))
+                            .frame(width: model.splitSideWidth, alignment: .leading)
+                    }
                 }
-                .frame(width: width, alignment: .leading)
-                .padding(.leading, model.activityEdgeInset)
-                Spacer(minLength: model.geometry.notchSize.width)
-                HStack(spacing: 0) {
-                    (activity.trailing ?? AnyView(EmptyView()))
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                    if let first = extras.first { compactSlot(first) }
+                .padding(.leading, layout.leftWidth > 0 ? model.activityEdgeInset : 0)
+                .frame(width: layout.leftWidth, alignment: .trailing)
+
+                Color.clear.frame(width: model.geometry.notchSize.width)
+
+                // Right side, notch → outer edge.
+                HStack(spacing: model.activitySpacing) {
+                    if let split = layout.split?.activity {
+                        (split.trailing ?? AnyView(EmptyView()))
+                            .frame(width: model.splitSideWidth, alignment: .trailing)
+                    }
+                    ForEach(layout.right, id: \.id) { entry in
+                        chipSlot(entry)
+                    }
                 }
-                .frame(width: width, alignment: .trailing)
-                .padding(.trailing, model.activityEdgeInset)
+                .padding(.trailing, layout.rightWidth > 0 ? model.activityEdgeInset : 0)
+                .frame(width: layout.rightWidth, alignment: .leading)
             }
             .padding(.horizontal, model.topCornerRadius)
             .frame(maxHeight: .infinity)
+            .onPreferenceChange(ChipWidthKey.self) { widths in
+                MainActor.assumeIsolated {
+                    for (id, width) in widths where abs((model.chipWidths[id] ?? 0) - width) > 0.5 {
+                        model.chipWidths[id] = width
+                    }
+                }
+            }
         }
     }
 
-    private func compactSlot(_ activity: NotchActivity) -> some View {
-        (activity.compact ?? AnyView(EmptyView()))
-            .frame(width: model.extraSlotWidth, height: model.geometry.notchSize.height)
+    /// A chip at its natural width (reported up so the notch can fit it exactly).
+    private func chipSlot(_ entry: NotchViewModel.ActivityEntry) -> some View {
+        entry.activity.chip
+            .fixedSize()
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: ChipWidthKey.self, value: [entry.id: proxy.size.width])
+            })
+            .frame(width: model.chipWidth(entry.id), height: model.geometry.notchSize.height)
+            .clipped()
     }
 
     private var expandedContent: some View {
@@ -138,5 +162,12 @@ private struct EngineMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+}
+
+private struct ChipWidthKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { $1 }
     }
 }

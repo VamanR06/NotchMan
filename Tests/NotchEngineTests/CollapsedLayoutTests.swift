@@ -26,38 +26,63 @@ private final class FakeApp: NotchApp {
         screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
         notchSize: CGSize(width: 185, height: 32), centerX: 756, hasNotch: true)
 
-    private func activity(_ priority: Int, _ label: String, _ color: Color) -> NotchActivity {
+    private func chip(_ priority: Int, _ text: String, _ symbol: String, _ tint: Color = .white) -> NotchActivity {
+        NotchActivity(priority: priority) { NotchChip(text, systemImage: symbol, tint: tint) }
+    }
+
+    private func music(_ priority: Int) -> NotchActivity {
         NotchActivity(priority: priority) {
-            Circle().fill(color).frame(width: 18, height: 18)
+            RoundedRectangle(cornerRadius: 5).fill(.purple).frame(width: 20, height: 20)
         } trailing: {
-            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(color)
-        } compact: {
-            RoundedRectangle(cornerRadius: 4).fill(color).frame(width: 18, height: 18)
+            HStack(spacing: 2) { ForEach(0..<4) { i in Capsule().fill(.green).frame(width: 2.5, height: CGFloat(5 + i * 3)) } }
+        } chip: {
+            RoundedRectangle(cornerRadius: 4).fill(.purple).frame(width: 16, height: 16)
         }
     }
 
-    @Test func topActivityPlusTwoCompactExtras() throws {
-        let model = NotchViewModel(apps: [
-            FakeApp("music", activity: activity(10, "♪♪", .green)),
-            FakeApp("chat", activity: activity(14, "GPT", .white)),
-            FakeApp("calendar", activity: activity(5, "5m", .orange)),
-            FakeApp("idle", activity: nil),
-        ], geometry: geometry)
-
-        #expect(model.topActivity?.priority == 14)
-        #expect(model.extraActivities.map(\.priority) == [10, 5])
-        // Both sides grow by one slot so the shape stays centered on the notch.
-        #expect(model.collapsedSideWidth == model.activitySideWidth + model.extraSlotWidth)
-        #expect(model.shapeSize.width == 185 + 2 * model.topCornerRadius + 2 * model.collapsedSideWidth)
-
-        try render(model, to: "collapsed-3-activities.png")
+    @Test func singleChipExtendsOneSideOnly() throws {
+        let model = NotchViewModel(apps: [FakeApp("tasks", activity: chip(3, "2 late", "checklist", .red))], geometry: geometry)
+        let layout = model.collapsedLayout
+        #expect(layout.right.count == 1 && layout.left.isEmpty && layout.split == nil)
+        #expect(layout.leftWidth == 0)
+        #expect(model.shapeOffsetX == layout.rightWidth / 2)
+        // The hit area follows the shifted shape.
+        #expect(model.hitRect.midX == geometry.centerX + model.shapeOffsetX)
+        try render(model, to: "collapsed-one-chip.png")
     }
 
-    @Test func singleActivityKeepsOriginalWidth() throws {
-        let model = NotchViewModel(apps: [FakeApp("music", activity: activity(10, "♪♪", .green))], geometry: geometry)
-        #expect(model.extraActivities.isEmpty)
-        #expect(model.collapsedSideWidth == model.activitySideWidth)
-        try render(model, to: "collapsed-1-activity.png")
+    @Test func musicOnTopWithChipsOnTheOutside() throws {
+        let model = NotchViewModel(apps: [
+            FakeApp("music", activity: music(10)),
+            FakeApp("chat", activity: chip(14, "GPT", "circle.dotted")),
+            FakeApp("tasks", activity: chip(3, "2 late", "checklist", .red)),
+            FakeApp("calendar", activity: chip(5, "25m", "calendar")),
+        ], geometry: geometry)
+        let layout = model.collapsedLayout
+        // Chat outranks music, so music isn't split: chips right, left, right.
+        #expect(layout.split == nil)
+        #expect(layout.right.map(\.priority) == [14, 5] && layout.left.map(\.priority) == [10])
+        try render(model, to: "collapsed-three-chips.png")
+    }
+
+    @Test func musicSplitWhenOnTop() throws {
+        let model = NotchViewModel(apps: [
+            FakeApp("music", activity: music(10)),
+            FakeApp("tasks", activity: chip(3, "3 today", "checklist")),
+            FakeApp("calendar", activity: chip(5, "25m", "calendar")),
+        ], geometry: geometry)
+        let layout = model.collapsedLayout
+        #expect(layout.split?.priority == 10)
+        #expect(layout.right.map(\.priority) == [5] && layout.left.map(\.priority) == [3])
+        #expect(model.shapeOffsetX == 0)
+        try render(model, to: "collapsed-music-split.png")
+    }
+
+    @Test func atMostThreeActivities() {
+        let model = NotchViewModel(apps: (0..<5).map { FakeApp("a\($0)", activity: chip($0, "\($0)", "circle")) },
+                                   geometry: geometry)
+        let layout = model.collapsedLayout
+        #expect(layout.left.count + layout.right.count == 3)
     }
 
     @Test func spinnerIsVisibleOnBlack() throws {
@@ -76,8 +101,10 @@ private final class FakeApp: NotchApp {
     /// Writes a PNG of the collapsed notch for eyeballing (into the package's build/dev).
     private func render(_ model: NotchViewModel, to name: String) throws {
         let view = NotchRootView(model: model, openSettings: {})
-            .frame(width: model.windowSize.width, height: 60)
+            .frame(width: 700, height: 60)
             .background(Color(white: 0.85))
+        // First pass measures the chips (they size to their content); the second draws with those widths.
+        _ = ImageRenderer(content: view).nsImage
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         let tiff = try #require(renderer.nsImage?.tiffRepresentation)

@@ -113,14 +113,18 @@ public final class NowPlayingApp: NotchApp {
         return min(snapshot.position + elapsed, track.duration)
     }
 
+    /// On top: artwork left of the notch, playing bars right of it. Otherwise a chip with both.
     public var activity: NotchActivity? {
         guard let snapshot, snapshot.isPlaying, let track = snapshot.track else { return nil }
         return NotchActivity(priority: 10) {
             Artwork(url: track.artworkURL, size: 20, cornerRadius: 5)
         } trailing: {
             PlayingBars()
-        } compact: {
-            Artwork(url: track.artworkURL, size: 18, cornerRadius: 4)
+        } chip: {
+            HStack(spacing: 5) {
+                Artwork(url: track.artworkURL, size: 16, cornerRadius: 4)
+                PlayingBars()
+            }
         }
     }
 

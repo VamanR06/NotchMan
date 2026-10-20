@@ -113,29 +113,18 @@ public final class CalendarApp: NotchApp {
         }
     }
 
+    /// Chip: calendar icon in the event's color, then "now" or the minutes until it starts.
     public var activity: NotchActivity? {
         guard let event = nextEvent else { return nil }
         let ongoing = event.isOngoing(at: now)
         let minutes = Int(ceil(event.start.timeIntervalSince(now) / 60))
         let soon = ongoing || minutes <= 10
         return NotchActivity(priority: soon ? 20 : 5) {
-            HStack(spacing: 5) {
-                Circle().fill(event.color).frame(width: 6, height: 6)
-                Text(event.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
+            NotchChip(ongoing ? "now" : "\(minutes)m", tint: soon ? .orange : .white) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(event.color)
             }
-        } trailing: {
-            Text(ongoing ? "now" : "in \(minutes)m")
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(soon ? .orange : .white.opacity(0.7))
-        } compact: {
-            Text(ongoing ? "now" : "\(minutes)m")
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
-                .foregroundStyle(soon ? .orange : .white.opacity(0.75))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
         }
     }
 

@@ -1,35 +1,70 @@
 import SwiftUI
 
-/// Compact live content shown on either side of the notch while collapsed,
-/// e.g. album art + a playing indicator, or "Standup in 5m".
+/// Live status shown beside the collapsed notch.
 ///
-/// The highest-`priority` activity gets both sides of the notch. Up to two more appear beside it as
-/// their `compact` view (an icon-sized mark); activities without one are only shown when they're on top.
+/// Every activity has a `chip`: one self-contained mark, icon and label together (see `NotchChip`), e.g.
+/// "☑ 2 late" or "⟳ GPT". The notch shows up to three, highest `priority` first, filling the right side and
+/// then the left. Media can also offer a split presentation (`leading`/`trailing` hugging the notch, like
+/// artwork on one side and a playing indicator on the other), used when it's the top activity.
 public struct NotchActivity {
+    public var priority: Int
+    public var chip: AnyView
     public var leading: AnyView?
     public var trailing: AnyView?
-    /// Icon-sized (about 20pt) version shown when another app's activity is on top.
-    public var compact: AnyView?
-    public var priority: Int
 
-    public init<L: View, T: View>(
-        priority: Int = 0,
-        @ViewBuilder leading: () -> L,
-        @ViewBuilder trailing: () -> T
-    ) {
+    /// Uses the split presentation when on top.
+    public var isSplit: Bool { leading != nil || trailing != nil }
+
+    public init<C: View>(priority: Int = 0, @ViewBuilder chip: () -> C) {
         self.priority = priority
-        self.leading = AnyView(leading())
-        self.trailing = AnyView(trailing())
+        self.chip = AnyView(chip())
     }
 
     public init<L: View, T: View, C: View>(
         priority: Int = 0,
         @ViewBuilder leading: () -> L,
         @ViewBuilder trailing: () -> T,
-        @ViewBuilder compact: () -> C
+        @ViewBuilder chip: () -> C
     ) {
-        self.init(priority: priority, leading: leading, trailing: trailing)
-        self.compact = AnyView(compact())
+        self.priority = priority
+        self.chip = AnyView(chip())
+        self.leading = AnyView(leading())
+        self.trailing = AnyView(trailing())
+    }
+}
+
+/// The standard notch chip: a small icon next to a short label ("2 late", "5m", "GPT").
+public struct NotchChip<Icon: View>: View {
+    private let text: String
+    private let tint: Color
+    private let icon: Icon
+
+    public init(_ text: String, tint: Color = .white, @ViewBuilder icon: () -> Icon) {
+        self.text = text
+        self.tint = tint
+        self.icon = icon()
+    }
+
+    public var body: some View {
+        HStack(spacing: 4) {
+            icon.frame(height: 12)
+            Text(text)
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+    }
+}
+
+public extension NotchChip where Icon == AnyView {
+    /// Chip with an SF Symbol icon in the same tint as the label.
+    init(_ text: String, systemImage: String, tint: Color = .white) {
+        self.init(text, tint: tint) {
+            AnyView(Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(tint))
+        }
     }
 }
 

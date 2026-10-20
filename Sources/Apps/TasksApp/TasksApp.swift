@@ -243,27 +243,16 @@ public final class TasksApp: NotchApp {
         }.count
     }
 
+    /// Chip: "2 late" in red when anything is overdue, otherwise "3 today".
     public var activity: NotchActivity? {
         let overdue = overdueCount, today = dueTodayCount
         guard overdue + today > 0 else { return nil }
         return NotchActivity(priority: 3) {
-            Image(systemName: "checklist")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.8))
-        } trailing: {
-            HStack(spacing: 4) {
-                if overdue > 0 {
-                    Text("\(overdue)").foregroundStyle(.red)
-                }
-                if today > 0 {
-                    Text("\(today)").foregroundStyle(.white.opacity(0.8))
-                }
+            if overdue > 0 {
+                NotchChip("\(overdue) late", systemImage: "checklist", tint: .red)
+            } else {
+                NotchChip("\(today) today", systemImage: "checklist")
             }
-            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-        } compact: {
-            Image(systemName: "checklist")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(overdue > 0 ? .red : .white.opacity(0.8))
         }
     }
 

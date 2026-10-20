@@ -151,28 +151,19 @@ public final class JobsApp: NotchApp {
 
     // MARK: - Notch
 
+    /// Chip: "OA 1d" for an OA deadline, or the interview icon and time until the interview.
     public var activity: NotchActivity? {
         guard let action = board.urgent(now: now) else { return nil }
         let until = action.date.timeIntervalSince(now)
         let imminent = until <= 3600
+        let time = until <= 0 ? "now" : relativeTime(action.date, now: now).replacingOccurrences(of: "in ", with: "")
         return NotchActivity(priority: imminent ? 15 : 4) {
-            HStack(spacing: 5) {
-                Image(systemName: action.kind == .interview ? "person.2.fill" : "doc.text.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(action.job.status.color)
-                Text(action.job.company)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
+            switch action.kind {
+            case .oaDeadline:
+                NotchChip("OA \(time)", systemImage: "briefcase.fill", tint: imminent ? .orange : .white)
+            case .interview:
+                NotchChip(time, systemImage: "person.2.fill", tint: imminent ? .orange : .white)
             }
-        } trailing: {
-            Text(until <= 0 ? "now" : relativeTime(action.date, now: now).replacingOccurrences(of: "in ", with: ""))
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(imminent ? .orange : .white.opacity(0.7))
-        } compact: {
-            Image(systemName: action.kind == .interview ? "person.2.fill" : "briefcase.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(imminent ? .orange : action.job.status.color)
         }
     }
 

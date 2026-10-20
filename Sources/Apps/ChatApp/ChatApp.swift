@@ -197,36 +197,23 @@ public final class ChatApp: NotchApp {
 
     /// Collapsed notch: a spinner while any service is writing, plus each busy (white) or finished (green) service.
     /// Outranks music so a pending reply isn't hidden by what's playing.
+    /// Chip: a spinner and the service still writing (e.g. "GPT", or "GPT +1" if several), or a green check
+    /// and the service whose reply is waiting. Outranks music so a pending reply isn't hidden.
     public var activity: NotchActivity? {
-        let shown = ChatService.allCases.filter { isBusy($0) || unread.contains($0) }
-        guard !shown.isEmpty else { return nil }
-        let busy = Set(shown.filter(isBusy))
-        let anyBusy = !busy.isEmpty
-        return NotchActivity(priority: anyBusy ? 14 : 12) {
-            if anyBusy {
-                NotchSpinner(size: 13)
-            } else {
-                Image(systemName: "checkmark.bubble.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.green)
-            }
-        } trailing: {
-            HStack(spacing: 4) {
-                ForEach(Array(shown.enumerated()), id: \.element) { index, service in
-                    if index > 0 { Text("·").foregroundStyle(.white.opacity(0.4)) }
-                    Text(service.shortName)
-                        .foregroundStyle(busy.contains(service) ? .white.opacity(0.75) : .green)
+        let busy = ChatService.allCases.filter(isBusy)
+        let done = ChatService.allCases.filter { unread.contains($0) && !isBusy($0) }
+        guard let first = busy.first ?? done.first else { return nil }
+        let others = busy.count + done.count - 1
+        let label = first.shortName + (others > 0 ? " +\(others)" : "")
+        return NotchActivity(priority: busy.isEmpty ? 12 : 14) {
+            if busy.isEmpty {
+                NotchChip(label, tint: .green) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
                 }
-            }
-            .font(.system(size: 10, weight: .semibold))
-            .lineLimit(1)
-        } compact: {
-            if anyBusy {
-                NotchSpinner(size: 13)
             } else {
-                Image(systemName: "checkmark.bubble.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.green)
+                NotchChip(label) { NotchSpinner(size: 11, lineWidth: 1.8) }
             }
         }
     }
