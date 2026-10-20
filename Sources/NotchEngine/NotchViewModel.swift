@@ -12,8 +12,10 @@ final class NotchViewModel {
 
     let apps: [any NotchApp]
 
+    /// While pinned, the expanded notch stays open when the mouse leaves.
+    var isPinned = false
+
     // Layout constants.
-    let expandedWidth: CGFloat = 620
     let activitySideWidth: CGFloat = 84
     let activityEdgeInset: CGFloat = 14
     let expandedBottomPadding: CGFloat = 14
@@ -55,13 +57,15 @@ final class NotchViewModel {
     /// Size of the shape when expanded with the selected app.
     var expandedSize: CGSize {
         let content = selectedApp?.expandedHeight ?? 120
-        return CGSize(width: expandedWidth, height: geometry.notchSize.height + content + expandedBottomPadding)
+        let width = selectedApp?.expandedWidth ?? 620
+        return CGSize(width: width, height: geometry.notchSize.height + content + expandedBottomPadding)
     }
 
     /// Size the window must have to contain any state (plus room for the shadow).
     var windowSize: CGSize {
         let tallest = apps.map(\.expandedHeight).max() ?? 120
-        return CGSize(width: expandedWidth + 60,
+        let widest = apps.map(\.expandedWidth).max() ?? 620
+        return CGSize(width: widest + 60,
                       height: geometry.notchSize.height + tallest + expandedBottomPadding + 40)
     }
 
@@ -103,7 +107,7 @@ final class NotchViewModel {
                 attentionExpansion = false
                 pendingCollapse?.cancel()
                 pendingCollapse = nil
-            } else if !attentionExpansion, pendingCollapse == nil {
+            } else if !attentionExpansion, !isPinned, pendingCollapse == nil {
                 scheduleCollapse(after: .milliseconds(250))
             }
         }

@@ -16,6 +16,8 @@ public protocol NotchApp: AnyObject {
 
     /// Height of the app's expanded content area (below the notch row).
     var expandedHeight: CGFloat { get }
+    /// Width of the expanded notch while this app is selected.
+    var expandedWidth: CGFloat { get }
 
     /// Optional compact indicator shown beside the notch while collapsed.
     var activity: NotchActivity? { get }
@@ -33,6 +35,7 @@ public protocol NotchApp: AnyObject {
 
 public extension NotchApp {
     var expandedHeight: CGFloat { 180 }
+    var expandedWidth: CGFloat { 620 }
     var activity: NotchActivity? { nil }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }

@@ -1,6 +1,6 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Now Playing) switchable from a dock.
+A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Chat, Now Playing) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
@@ -22,13 +22,13 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 | --- | --- |
 | `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
 | `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Now Playing) |
+| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Chat, Now Playing) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
 
 ## Writing a notch app
 
 1. Add `Sources/Apps/MyApp/MyApp.swift` with an `@Observable` class conforming to `NotchApp`
-   (id, name, SF Symbol icon, `makeExpandedView()`, optionally `activity`, `makeSettingsView()`, `expandedHeight`).
+   (id, name, SF Symbol icon, `makeExpandedView()`, optionally `activity`, `makeSettingsView()`, `expandedHeight`, `expandedWidth`).
 2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
@@ -58,6 +58,12 @@ the server URL and password; NotchMan signs in like the web app and keeps the pa
 the 30-day session. Shows upcoming OA deadlines and interviews (with Open OA / Join links), applications in
 progress, and ones still to apply to; click a row to open it in JobManager. A local server without a password
 works too (`http://localhost:3000`, empty password). Plain `http://` is refused for anything but localhost.
+
+## Chat (ChatGPT / Claude)
+
+The real chatgpt.com and claude.ai, embedded in the notch with a toggle. Sign in once with your own accounts
+(you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless
+you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading.
 
 ## Now Playing
 

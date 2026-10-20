@@ -69,6 +69,7 @@ struct NotchRootView: View {
                     Text(model.selectedApp?.name ?? "")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.7))
+                    PinButton(model: model)
                     EngineMenu(openSettings: openSettings)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -86,6 +87,22 @@ struct NotchRootView: View {
         .padding(.horizontal, model.topCornerRadius + 16)
         .padding(.bottom, model.expandedBottomPadding)
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Keeps the notch open while the mouse is elsewhere (e.g. reading a long reply).
+private struct PinButton: View {
+    @Bindable var model: NotchViewModel
+
+    var body: some View {
+        Button { model.isPinned.toggle() } label: {
+            Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 12))
+                .foregroundStyle(model.isPinned ? .orange : .white.opacity(0.7))
+                .rotationEffect(.degrees(45))
+        }
+        .buttonStyle(.plain)
+        .help(model.isPinned ? "Unpin (collapse when the mouse leaves)" : "Pin open")
     }
 }
 
