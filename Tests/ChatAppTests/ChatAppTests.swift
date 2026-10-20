@@ -23,3 +23,14 @@ import Testing
         #expect(!stays("https://claude.ai.example.com/"))
     }
 }
+
+@Suite struct ServicePageTests {
+    @Test func onlyOpensPagesOnTheServicesOwnSite() {
+        #expect(ChatService.chatgpt.page("https://chatgpt.com/g/g-p-1-jobs/project") != nil)
+        #expect(ChatService.chatgpt.page("https://claude.ai/project/1") == nil)
+        #expect(ChatService.chatgpt.page("https://chatgpt.com.evil.example/") == nil)
+        #expect(ChatService.chatgpt.page("http://chatgpt.com/") == nil)
+        #expect(ChatService.chatgpt.page(nil) == nil)
+        #expect(ChatService.claude.page("https://claude.ai/project/abc") != nil)
+    }
+}

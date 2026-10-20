@@ -46,6 +46,19 @@ struct JobsSettingsView: View {
             }
 
             Section {
+                TextField("Default ChatGPT project", text: $app.defaultProjectURL, prompt: Text("https://chatgpt.com/g/g-p-…/project"))
+                if !app.defaultProjectURL.isEmpty && !PromptTemplate.isChatGPTLink(app.defaultProjectURL) {
+                    Text("That isn't a chatgpt.com link, so chats will start as normal new chats.")
+                        .foregroundStyle(.orange).font(.caption)
+                }
+            } header: {
+                Text("ChatGPT Project")
+            } footer: {
+                Text("Chats from the ✨ menu start in this project, so they're saved there. Open the project in ChatGPT and copy its URL from the address bar. Leave empty for normal new chats.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
                 ForEach($app.templates) { $template in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -55,6 +68,11 @@ struct JobsSettingsView: View {
                             } label: { Image(systemName: "trash") }
                             .buttonStyle(.borderless)
                         }
+                        TextField("Project (optional)", text: Binding(
+                            get: { template.projectURL ?? "" },
+                            set: { template.projectURL = $0.isEmpty ? nil : $0 }
+                        ), prompt: Text("Uses the default project"))
+                        .font(.system(size: 11))
                         TextEditor(text: $template.text)
                             .font(.system(size: 12))
                             .frame(minHeight: 90)

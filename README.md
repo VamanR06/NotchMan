@@ -62,7 +62,8 @@ works too (`http://localhost:3000`, empty password). Plain `http://` is refused 
 Jobs you haven't applied to have a ✨ menu of ChatGPT prompts (fit & tailoring, cover letter, interview prep, or
 your own in Settings → Jobs). Picking one switches to the Chat app and types the prompt — filled with the job's
 title, company, link, location and saved description — into a new ChatGPT chat without sending it. The prompt is
-also copied to the clipboard as a fallback.
+also copied to the clipboard as a fallback. To keep these chats in a ChatGPT project, paste the project's link
+(`https://chatgpt.com/g/g-p-…/project`) under Settings → Jobs → ChatGPT Project; each prompt can override it.
 
 ## Chat (ChatGPT / Claude / Muse)
 

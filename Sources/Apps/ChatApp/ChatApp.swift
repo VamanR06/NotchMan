@@ -76,9 +76,11 @@ public final class ChatApp: NotchApp {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         pendingPrompts[target] = text
+        // A page on the service's own site (e.g. a ChatGPT project) starts the chat there; else a new chat.
+        let start = target.page(message.payload["url"]) ?? target.home
         let isNew = webViews[target] == nil
         let view = webView(for: target)  // creating it already loads the home (new chat) page
-        if !isNew { view.load(URLRequest(url: target.home)) }
+        if !isNew || start != target.home { view.load(URLRequest(url: start)) }
     }
 
     /// Types the prompt into the site's message box without sending it.

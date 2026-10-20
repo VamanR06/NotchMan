@@ -23,6 +23,10 @@ public final class JobsApp: NotchApp {
     var templates: [PromptTemplate] = PromptTemplate.defaults {
         didSet { saveTemplates() }
     }
+    /// ChatGPT project that job chats start in unless a prompt names its own ("" = a normal new chat).
+    var defaultProjectURL = "" {
+        didSet { context?.defaults.set(defaultProjectURL, forKey: "defaultProjectURL") }
+    }
 
     @ObservationIgnored private(set) var client: JobManagerClient!
     @ObservationIgnored private var context: NotchContext?
@@ -36,6 +40,7 @@ public final class JobsApp: NotchApp {
         self.context = context
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
+        defaultProjectURL = context.defaults.string(forKey: "defaultProjectURL") ?? ""
         if let data = context.defaults.data(forKey: "promptTemplates"),
            let saved = try? JSONDecoder().decode([PromptTemplate].self, from: data) {
             templates = saved
@@ -125,7 +130,10 @@ public final class JobsApp: NotchApp {
             // The posting is best-effort: without it the prompt falls back to the job's link.
             let posting = try? await client.posting(for: job)
             let text = template.render(job: job, url: job.url, posting: posting)
-            context?.send(.chatPrompt(text), to: "chat")
+            let project = [template.projectURL ?? "", defaultProjectURL]
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty }
+            context?.send(.chatPrompt(text, url: project), to: "chat")
         }
     }
 

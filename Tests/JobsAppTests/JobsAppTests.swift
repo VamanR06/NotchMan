@@ -179,3 +179,17 @@ private let now = Date(timeIntervalSince1970: 1_792_497_600)
         #expect(try JSONDecoder().decode(JobPosting?.self, from: Data("null".utf8)) == nil)
     }
 }
+
+@Suite struct ProjectLinkTests {
+    @Test func acceptsChatGPTLinksOnly() {
+        #expect(PromptTemplate.isChatGPTLink("https://chatgpt.com/g/g-p-67c8abc-job-search/project"))
+        #expect(!PromptTemplate.isChatGPTLink("http://chatgpt.com/g/g-p-1/project"))
+        #expect(!PromptTemplate.isChatGPTLink("https://evil.example/chatgpt.com"))
+    }
+
+    @Test func oldSavedTemplatesStillDecode() throws {
+        let json = #"[{"id": "6F9619FF-8B86-D011-B42D-00C04FC964FF", "name": "Old", "text": "{title}"}]"#
+        let templates = try JSONDecoder().decode([PromptTemplate].self, from: Data(json.utf8))
+        #expect(templates.first?.projectURL == nil)
+    }
+}

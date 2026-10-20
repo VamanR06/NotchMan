@@ -17,6 +17,14 @@ enum ChatService: String, CaseIterable, Identifiable {
         }
     }
 
+    /// `string` if it's an https page on this service's own site (e.g. a ChatGPT project), else nil.
+    func page(_ string: String?) -> URL? {
+        guard let string, let url = URL(string: string.trimmingCharacters(in: .whitespaces)),
+              url.scheme == "https", let host = url.host()?.lowercased(),
+              let site = home.host()?.lowercased() else { return nil }
+        return host == site || host.hasSuffix("." + site) ? url : nil
+    }
+
     var home: URL {
         switch self {
         case .chatgpt: URL(string: "https://chatgpt.com/")!

@@ -16,10 +16,13 @@ public struct NotchMessage: Sendable, Equatable {
 
 public extension NotchMessage {
     /// Handled by the Chat app (id "chat"): open a new chat on `service` ("chatgpt", "claude", …) with
-    /// `text` typed into the message box, not sent.
+    /// `text` typed into the message box, not sent. `url` optionally starts the chat on a page of that
+    /// service instead of its home page — e.g. a ChatGPT project, so the chat is saved in that project.
     static let chatPromptName = "chat.prompt"
 
-    static func chatPrompt(_ text: String, service: String = "chatgpt") -> NotchMessage {
-        NotchMessage(name: chatPromptName, payload: ["text": text, "service": service])
+    static func chatPrompt(_ text: String, service: String = "chatgpt", url: String? = nil) -> NotchMessage {
+        var payload = ["text": text, "service": service]
+        payload["url"] = url
+        return NotchMessage(name: chatPromptName, payload: payload)
     }
 }

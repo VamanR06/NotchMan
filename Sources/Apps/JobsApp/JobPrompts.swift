@@ -6,6 +6,15 @@ struct PromptTemplate: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
     var text: String
+    /// ChatGPT project to start the chat in; nil/empty uses the default project from settings.
+    var projectURL: String?
+
+    /// Whether `string` looks like a ChatGPT page link (projects live at chatgpt.com/g/g-p-…/project).
+    static func isChatGPTLink(_ string: String) -> Bool {
+        guard let url = URL(string: string.trimmingCharacters(in: .whitespaces)),
+              url.scheme == "https", let host = url.host()?.lowercased() else { return false }
+        return host == "chatgpt.com" || host.hasSuffix(".chatgpt.com")
+    }
 
     static let placeholders = ["{title}", "{company}", "{url}", "{location}", "{posting}"]
 
