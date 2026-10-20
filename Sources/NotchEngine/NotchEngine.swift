@@ -180,6 +180,14 @@ public final class NotchEngine {
         }) {
             monitors.append(local)
         }
+        // Shared text shortcuts (⇧↩ = new line in multi-line fields) for every NotchMan window.
+        if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+            nonisolated(unsafe) let event = event
+            let handled = MainActor.assumeIsolated { TextShortcuts.handle(event) }
+            return handled ? nil : event
+        }) {
+            monitors.append(keys)
+        }
     }
 
     private func handleMouse() {
