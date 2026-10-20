@@ -153,6 +153,9 @@ public final class NowPlayingApp: NotchApp {
 
     /// Plays a song within its playlist, or the whole playlist from the top when `song` is nil.
     func play(_ song: SpotifyLibrary.Song?, in playlist: SpotifyLibrary.Playlist) {
+        let previous = NSWorkspace.shared.frontmostApplication
+        let spotifyBefore = NSRunningApplication.runningApplications(withBundleIdentifier: SpotifyClient.bundleID).first
+        let spotifyWasHidden = spotifyBefore?.isHidden ?? true
         Task {
             do {
                 if let song {
@@ -161,11 +164,27 @@ public final class NowPlayingApp: NotchApp {
                     try await SpotifyClient.play(playlist.uri)
                 }
                 error = nil
+                await Self.restoreFocus(to: previous, hideSpotify: spotifyWasHidden)
             } catch {
                 self.error = error.localizedDescription
             }
             try? await Task.sleep(for: .milliseconds(400))
             await refresh()
+        }
+    }
+
+    /// Spotify's `play track` brings its window to the front. Undo that: give focus back to the app the user
+    /// was in, and re-hide Spotify if it was hidden (or not running) before.
+    private static func restoreFocus(to previous: NSRunningApplication?, hideSpotify: Bool) async {
+        guard previous?.bundleIdentifier != SpotifyClient.bundleID else { return }
+        // Spotify activates asynchronously; watch for it for a moment.
+        for _ in 0..<12 {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let spotify = NSWorkspace.shared.frontmostApplication,
+                  spotify.bundleIdentifier == SpotifyClient.bundleID else { continue }
+            if hideSpotify { spotify.hide() }
+            previous?.activate()
+            return
         }
     }
 
