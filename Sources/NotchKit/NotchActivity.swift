@@ -20,6 +20,14 @@ public struct NotchActivity {
     }
 }
 
+/// A small status mark on an app's dock icon.
+public enum NotchBadge: Equatable {
+    /// Something is in progress (pulsing dot).
+    case busy
+    /// Something is waiting to be seen.
+    case dot(Color)
+}
+
 /// Ways an app can ask for the user's attention.
 public enum NotchAttention: Sendable {
     /// Briefly pulse the collapsed notch.

@@ -180,30 +180,39 @@ public final class ChatApp: NotchApp {
         unread.remove(service)
     }
 
+    func isBusy(_ service: ChatService) -> Bool { busySince[service] != nil }
+
+    /// Collapsed notch: a spinner while any service is writing, plus each busy (white) or finished (green) service.
+    /// Outranks music so a pending reply isn't hidden by what's playing.
     public var activity: NotchActivity? {
-        if let done = ChatService.allCases.first(where: unread.contains) {
-            return NotchActivity(priority: 12) {
+        let shown = ChatService.allCases.filter { isBusy($0) || unread.contains($0) }
+        guard !shown.isEmpty else { return nil }
+        let busy = Set(shown.filter(isBusy))
+        let anyBusy = !busy.isEmpty
+        return NotchActivity(priority: anyBusy ? 14 : 12) {
+            if anyBusy {
+                ProgressView().controlSize(.mini).tint(.white)
+            } else {
                 Image(systemName: "checkmark.bubble.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(.green)
-            } trailing: {
-                Text(done.name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(1)
             }
-        }
-        if let working = ChatService.allCases.first(where: { busySince[$0] != nil }), !isLooking(at: working) {
-            return NotchActivity(priority: 6) {
-                ProgressView().controlSize(.mini).tint(.white)
-            } trailing: {
-                Text(working.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
+        } trailing: {
+            HStack(spacing: 4) {
+                ForEach(Array(shown.enumerated()), id: \.element) { index, service in
+                    if index > 0 { Text("·").foregroundStyle(.white.opacity(0.4)) }
+                    Text(service.shortName)
+                        .foregroundStyle(busy.contains(service) ? .white.opacity(0.75) : .green)
+                }
             }
+            .font(.system(size: 10, weight: .semibold))
+            .lineLimit(1)
         }
-        return nil
+    }
+
+    public var dockBadge: NotchBadge? {
+        if ChatService.allCases.contains(where: isBusy) { return .busy }
+        return unread.isEmpty ? nil : .dot(.green)
     }
 
     public func makeSettingsView() -> AnyView? {
@@ -302,12 +311,7 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 10) {
-                Picker("", selection: $app.service) {
-                    ForEach(ChatService.allCases) { Text($0.name).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                ServiceTabs(app: app)
 
                 if app.loading.contains(app.service) {
                     ProgressView().controlSize(.mini)
@@ -360,5 +364,38 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// ChatGPT | Claude | Muse switcher showing each service's reply state.
+private struct ServiceTabs: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(ChatService.allCases) { service in
+                let selected = service == app.service
+                Button { app.service = service } label: {
+                    HStack(spacing: 5) {
+                        Text(service.name)
+                        if app.isBusy(service) {
+                            ProgressView().controlSize(.mini).tint(.white)
+                        } else if app.unread.contains(service) {
+                            Circle().fill(.green).frame(width: 6, height: 6)
+                        }
+                    }
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? .white : .white.opacity(0.65))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(selected ? 0.2 : 0)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(app.isBusy(service) ? "\(service.name) is writing a reply" : service.name)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
     }
 }

@@ -34,7 +34,29 @@ private struct DockItem: View {
                 )
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            if let badge = app.dockBadge { BadgeMark(badge: badge).offset(x: 1, y: -1) }
+        }
         .help(app.name)
         .onHover { hovering = $0 }
+    }
+}
+
+private struct BadgeMark: View {
+    let badge: NotchBadge
+    @State private var pulse = false
+
+    var body: some View {
+        switch badge {
+        case .dot(let color):
+            Circle().fill(color).frame(width: 6, height: 6)
+        case .busy:
+            Circle()
+                .fill(.white)
+                .frame(width: 6, height: 6)
+                .opacity(pulse ? 0.25 : 1)
+                .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+                .onAppear { pulse = true }
+        }
     }
 }

@@ -25,6 +25,15 @@ enum ChatService: String, CaseIterable, Identifiable {
         return host == site || host.hasSuffix("." + site) ? url : nil
     }
 
+    /// Compact label for the collapsed notch.
+    var shortName: String {
+        switch self {
+        case .chatgpt: "GPT"
+        case .claude: "Claude"
+        case .muse: "Muse"
+        }
+    }
+
     var home: URL {
         switch self {
         case .chatgpt: URL(string: "https://chatgpt.com/")!

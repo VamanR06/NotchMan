@@ -21,6 +21,8 @@ public protocol NotchApp: AnyObject {
 
     /// Optional compact indicator shown beside the notch while collapsed.
     var activity: NotchActivity? { get }
+    /// Optional status mark on the app's dock icon.
+    var dockBadge: NotchBadge? { get }
 
     /// Called once at launch. Start services, timers and observers here.
     func activate(context: NotchContext)
@@ -40,6 +42,7 @@ public extension NotchApp {
     var expandedHeight: CGFloat { 180 }
     var expandedWidth: CGFloat { 620 }
     var activity: NotchActivity? { nil }
+    var dockBadge: NotchBadge? { nil }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}
