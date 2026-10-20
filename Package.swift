@@ -21,5 +21,6 @@ let package = Package(
             name: "NotchMan",
             dependencies: ["NotchKit", "NotchEngine", "CalendarApp", "NowPlayingApp"]
         ),
+        .testTarget(name: "CalendarAppTests", dependencies: ["CalendarApp"]),
     ]
 )
