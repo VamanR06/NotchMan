@@ -36,6 +36,8 @@ public final class NotchEngine {
         notifications = NotificationRouter { [weak self] appID, payload in
             self?.deliver(NotchMessage(name: NotchMessage.notificationOpenedName, payload: payload), to: appID)
         }
+        // "Ask ChatGPT / Claude / Muse" menus anywhere in the notch go to the Chat app.
+        AskAI.shared.deliver = { [weak self] message in self?.deliver(message, to: "chat") }
         for app in apps {
             let appID = app.id
             let context = NotchContext(
@@ -61,6 +63,12 @@ public final class NotchEngine {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.rebuildNotches() }
         })
+        // Keep the notch open while one of its menus is showing.
+        for (name, open) in [(NSMenu.didBeginTrackingNotification, true), (NSMenu.didEndTrackingNotification, false)] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.notches.values.forEach { $0.model.isMenuOpen = open } }
+            })
+        }
         observers.append(NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in

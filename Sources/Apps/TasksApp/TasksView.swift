@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 struct TasksView: View {
@@ -183,6 +184,19 @@ private struct TaskRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { app.open(task) }
+        .askable { askText }
+    }
+
+    /// What "Ask ChatGPT/Claude/Muse" sends about this task.
+    private var askText: String {
+        var lines = ["Task: \(task.title)"]
+        if let due = task.due {
+            lines.append("Due: " + (task.dueIsAllDay ? due.formatted(date: .complete, time: .omitted)
+                                                       : due.formatted(date: .complete, time: .shortened)))
+        }
+        lines.append("From: \(task.databaseTitle) (Notion)")
+        if let url = task.url { lines.append("Link: \(url.absoluteString)") }
+        return lines.joined(separator: "\n")
     }
 
     private func dueText(_ due: Date) -> String {

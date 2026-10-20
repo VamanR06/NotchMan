@@ -78,6 +78,14 @@ When a reply that took 3+ seconds finishes while you're not looking at that chat
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
 Detection watches only for the site's Stop button — it never reads the conversation.
 
+### Ask from anywhere
+
+Right-click an event, task, job, song, playlist or the playing track and choose **Ask ChatGPT / Claude / Muse**,
+then a project (or the default, or none). A new chat opens in the notch with a prompt about that item typed in —
+not sent. In Settings → Chat set the prompt wording (`{item}` = the item's details), each service's projects and
+default project; **Load from ChatGPT/Claude** reads project names and links from the signed-in sidebar.
+Apps opt in with `.askable { "description" }` or `AskMenuItems` inside an existing context menu.
+
 ## Now Playing
 
 Controls Spotify via AppleScript. The first time, macOS asks to let NotchMan control Spotify — allow it

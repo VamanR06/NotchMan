@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 struct JobsView: View {
@@ -304,6 +305,26 @@ private struct JobRow: View {
         .onHover { hovering = $0 }
         .onTapGesture { app.open(job) }
         .help("Open in JobManager")
+        .contextMenu {
+            if job.status == .toApply && !app.templates.isEmpty {
+                Section("Job prompts") {
+                    ForEach(app.templates) { template in
+                        Button(template.name) { app.ask(template, about: job) }
+                    }
+                }
+                Divider()
+            }
+            AskMenuItems { askText }
+        }
+    }
+
+    /// What "Ask ChatGPT/Claude/Muse" sends about this job.
+    private var askText: String {
+        var lines = ["Job application: \(job.title) at \(job.company)", "Status: \(job.status.name)\(job.round.map { " (round \($0))" } ?? "")"]
+        if let deadline = job.oaDeadline { lines.append("OA due: \(deadline.formatted(date: .complete, time: .shortened))") }
+        if let interview = job.interviewAt { lines.append("Interview: \(interview.formatted(date: .complete, time: .shortened))") }
+        if let url = job.url { lines.append("Posting: \(url)") }
+        return lines.joined(separator: "\n")
     }
 
     /// OA or interview link, shown for upcoming items (and on hover otherwise).

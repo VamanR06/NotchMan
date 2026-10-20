@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 struct NowPlayingView: View {
@@ -44,6 +45,7 @@ struct NowPlayingView: View {
     private func player(_ track: Track) -> some View {
         HStack(spacing: 16) {
             Artwork(url: track.artworkURL, size: 120, cornerRadius: 12)
+                .askable { "Song: \(track.title)\nArtist: \(track.artist)\nAlbum: \(track.album)" }
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
                     .font(.system(size: 15, weight: .semibold))

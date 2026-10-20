@@ -34,3 +34,36 @@ import Testing
         #expect(ChatService.claude.page("https://claude.ai/project/abc") != nil)
     }
 }
+
+@Suite struct ProjectLinkParsingTests {
+    @Test func findsChatGPTProjectsButNotTheirChats() {
+        let links: [[String: String]] = [
+            ["href": "/g/g-p-67c8ab12cd-job-search/project", "name": "Job Search"],
+            ["href": "/g/g-p-67c8ab12cd-job-search/c/abc-123", "name": "Resume review"],  // a chat inside it
+            ["href": "https://chatgpt.com/g/g-p-99ff00-robotics", "name": "Robotics\n3 chats"],
+            ["href": "/g/g-p-1234abcd-untitled-thing", "name": ""],                     // name from slug
+            ["href": "/c/plain-chat", "name": "Some chat"],
+            ["href": "/g/g-abc-custom-gpt", "name": "A custom GPT"],                     // GPTs aren't projects
+        ]
+        let projects = ChatService.chatgpt.projects(fromLinks: links)
+        #expect(projects.map(\.name) == ["Job Search", "Robotics", "untitled thing"])
+        #expect(projects[0].url == "https://chatgpt.com/g/g-p-67c8ab12cd-job-search/project")
+        #expect(projects[1].url == "https://chatgpt.com/g/g-p-99ff00-robotics/project")
+    }
+
+    @Test func findsClaudeProjects() {
+        let links: [[String: String]] = [
+            ["href": "/project/0198a7c2-1111-7abc-9def-0123456789ab", "name": "Thesis"],
+            ["href": "/projects", "name": "Projects"],
+            ["href": "/chat/0198a7c2-2222-7abc-9def-0123456789ab", "name": "A chat"],
+        ]
+        let projects = ChatService.claude.projects(fromLinks: links)
+        #expect(projects.map(\.name) == ["Thesis"])
+        #expect(projects.first?.url == "https://claude.ai/project/0198a7c2-1111-7abc-9def-0123456789ab")
+    }
+
+    @Test func museHasNoProjects() {
+        #expect(!ChatService.muse.supportsProjects)
+        #expect(ChatService.muse.projects(fromLinks: [["href": "/project/x", "name": "x"]]).isEmpty)
+    }
+}

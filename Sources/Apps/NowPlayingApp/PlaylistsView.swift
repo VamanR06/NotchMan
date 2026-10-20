@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 /// Playlists on the left, the selected playlist's songs on the right; clicking a song plays it in that playlist.
@@ -38,6 +39,7 @@ struct PlaylistsView: View {
                     PlaylistRow(playlist: playlist, selected: playlist.id == app.selectedPlaylistID) {
                         app.select(playlist)
                     }
+                    .askable { askText(playlist) }
                 }
             }
         }
@@ -90,6 +92,7 @@ struct PlaylistsView: View {
                             SongRow(song: song, playing: song.uri == app.snapshot?.track?.id) {
                                 app.play(song, in: playlist)
                             }
+                            .askable { "Song: \(song.title)\nArtist: \(song.artist)\nFrom my Spotify playlist: \(playlist.name)" }
                         }
                     }
                 }
@@ -100,6 +103,18 @@ struct PlaylistsView: View {
                 .foregroundStyle(app.libraryError == nil ? .white.opacity(0.5) : .orange)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+extension PlaylistsView {
+    /// Playlist name plus the first songs we know about.
+    func askText(_ playlist: SpotifyLibrary.Playlist) -> String {
+        var text = "My Spotify playlist: \(playlist.name)"
+        if let songs = library.songs[playlist.id], !songs.isEmpty {
+            text += "\nSongs:\n" + songs.prefix(40).map { "- \($0.title) — \($0.artist)" }.joined(separator: "\n")
+            if songs.count > 40 { text += "\n…and \(songs.count - 40) more" }
+        }
+        return text
     }
 }
 

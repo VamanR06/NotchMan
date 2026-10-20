@@ -14,6 +14,8 @@ final class NotchViewModel {
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
+    /// A menu (context menu, ✨, …) is open; the mouse is on it, outside the notch, so don't collapse.
+    @ObservationIgnored var isMenuOpen = false
 
     // Layout constants.
     let activitySideWidth: CGFloat = 84
@@ -125,7 +127,7 @@ final class NotchViewModel {
                 attentionExpansion = false
                 pendingCollapse?.cancel()
                 pendingCollapse = nil
-            } else if !attentionExpansion, !isPinned, pendingCollapse == nil {
+            } else if !attentionExpansion, !isPinned, !isMenuOpen, pendingCollapse == nil {
                 scheduleCollapse(after: .milliseconds(250))
             }
         }

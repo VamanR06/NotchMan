@@ -32,6 +32,10 @@ public final class ChatApp: NotchApp {
         didSet { context?.defaults.set(notifyWhenDone, forKey: "notifyWhenDone") }
     }
 
+    /// Projects per service (for "Ask …" menus), and which one new asks go to by default.
+    private(set) var projects: [ChatService: [AskProject]] = [:]
+    private(set) var defaultProjects: [ChatService: String] = [:]
+
     /// Replies quicker than this don't notify.
     private static let notableReplyDuration: TimeInterval = 3
 
@@ -56,6 +60,15 @@ public final class ChatApp: NotchApp {
             service = saved
         }
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
+        for service in ChatService.allCases {
+            if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
+               let saved = try? JSONDecoder().decode([AskProject].self, from: data) {
+                projects[service] = saved
+            }
+            defaultProjects[service] = context.defaults.string(forKey: "defaultProject.\(service.rawValue)")
+        }
+        AskAI.shared.promptTemplate = context.defaults.string(forKey: "askTemplate") ?? AskAI.defaultTemplate
+        publishAskServices()
     }
 
     /// Created (and loaded) lazily, then kept for the app's lifetime so conversations survive collapsing.
@@ -224,17 +237,54 @@ public final class ChatApp: NotchApp {
     }
 
     public func makeSettingsView() -> AnyView? {
-        AnyView(Form {
-            Section {
-                Toggle(isOn: Binding(get: { self.notifyWhenDone }, set: { self.notifyWhenDone = $0 })) {
-                    Text("Notify when a reply finishes")
-                    Text("A macOS notification when ChatGPT, Claude or Muse finishes a reply (3 seconds or longer) while the chat isn't on screen. The notch always shows a ✓ until you look.")
-                }
-            } header: {
-                Text("Notifications")
-            }
+        AnyView(ChatSettingsView(app: self))
+    }
+
+    // MARK: - Projects / Ask from anywhere
+
+    var askTemplate: String {
+        get { AskAI.shared.promptTemplate }
+        set {
+            AskAI.shared.promptTemplate = newValue
+            context?.defaults.set(newValue, forKey: "askTemplate")
         }
-        .formStyle(.grouped))
+    }
+
+    func setProjects(_ list: [AskProject], for service: ChatService) {
+        projects[service] = list
+        if let data = try? JSONEncoder().encode(list) { context?.defaults.set(data, forKey: "projects.\(service.rawValue)") }
+        if let current = defaultProjects[service], !list.contains(where: { $0.url == current }) {
+            setDefaultProject(nil, for: service)
+        }
+        publishAskServices()
+    }
+
+    func setDefaultProject(_ url: String?, for service: ChatService) {
+        defaultProjects[service] = url
+        context?.defaults.set(url, forKey: "defaultProject.\(service.rawValue)")
+        publishAskServices()
+    }
+
+    private func publishAskServices() {
+        AskAI.shared.services = ChatService.allCases.map {
+            AskService(id: $0.rawValue, name: $0.name, projects: projects[$0] ?? [], defaultProjectURL: defaultProjects[$0])
+        }
+    }
+
+    /// Reads the project links from the service's signed-in page (its sidebar) and merges them in.
+    /// Returns how many new projects were found.
+    func loadProjects(for service: ChatService) async throws -> Int {
+        let view = webView(for: service)
+        // A just-created view is still loading; give it a moment.
+        for _ in 0..<40 where view.isLoading { try await Task.sleep(for: .milliseconds(250)) }
+        let raw = try await view.callAsyncJavaScript(ChatService.linkScript, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let links = (raw as? [[String: Any]] ?? []).map { $0.compactMapValues { $0 as? String } }
+        let found = service.projects(fromLinks: links)
+        var merged = projects[service] ?? []
+        let new = found.filter { project in !merged.contains { $0.url == project.url } }
+        merged += new
+        setProjects(merged, for: service)
+        return new.count
     }
 
     // MARK: - Pop out

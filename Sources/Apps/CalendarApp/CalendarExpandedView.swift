@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 struct CalendarExpandedView: View {
@@ -191,10 +192,22 @@ private struct EventRow: View {
         .onHover { hovering = $0 }
         .onTapGesture(perform: open)
         .contextMenu {
+            AskMenuItems { askText }
+            Divider()
             Button("Open in Notion Calendar", action: NotionLinks.openNotionCalendar)
             if let url = item.url { Button("Open in Google Calendar") { NSWorkspace.shared.open(url) } }
             if let meeting = item.meetingURL { Button("Join Meeting") { NSWorkspace.shared.open(meeting) } }
         }
+    }
+
+    /// What "Ask ChatGPT/Claude/Muse" sends about this event.
+    private var askText: String {
+        var lines = ["Calendar event: \(item.title)",
+                     "When: \(item.start.formatted(.dateTime.weekday(.wide).month().day())), \(timeText)",
+                     "Calendar: \(item.calendarName)"]
+        if let location = item.location, !location.isEmpty { lines.append("Location: \(location)") }
+        if let meeting = item.meetingURL { lines.append("Meeting link: \(meeting.absoluteString)") }
+        return lines.joined(separator: "\n")
     }
 
     private var timeText: String {
