@@ -61,7 +61,7 @@ works too (`http://localhost:3000`, empty password). Plain `http://` is refused 
 
 ## Chat (ChatGPT / Claude / Muse)
 
-The real chatgpt.com, claude.ai and meta.ai (Muse), embedded in the notch with a toggle. Sign in once with your own accounts
+The real chatgpt.com, claude.ai and muse.ai, embedded in the notch with a toggle. Sign in once with your own accounts
 (you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless
 you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading.
 

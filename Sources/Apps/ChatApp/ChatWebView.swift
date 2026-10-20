@@ -21,8 +21,7 @@ enum ChatService: String, CaseIterable, Identifiable {
         switch self {
         case .chatgpt: URL(string: "https://chatgpt.com/")!
         case .claude: URL(string: "https://claude.ai/new")!
-        // Meta's Muse models, used through Meta AI.
-        case .muse: URL(string: "https://www.meta.ai/")!
+        case .muse: URL(string: "https://muse.ai/")!
         }
     }
 }
@@ -48,7 +47,7 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Hosts that stay inside the notch: the chat sites plus the sign-in providers they redirect through.
     private static let inAppHosts = [
         "chatgpt.com", "openai.com", "claude.ai", "anthropic.com",
-        "meta.ai", "meta.com", "facebook.com", "instagram.com",
+        "muse.ai",
         "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com",
         "challenges.cloudflare.com",
     ]
