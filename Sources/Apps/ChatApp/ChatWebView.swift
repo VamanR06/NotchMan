@@ -5,7 +5,7 @@ import WebKit
 
 /// The chat services, each loaded as its real website so usage is exactly like using the site.
 enum ChatService: String, CaseIterable, Identifiable {
-    case chatgpt, claude
+    case chatgpt, claude, muse
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum ChatService: String, CaseIterable, Identifiable {
         switch self {
         case .chatgpt: "ChatGPT"
         case .claude: "Claude"
+        case .muse: "Muse"
         }
     }
 
@@ -20,6 +21,8 @@ enum ChatService: String, CaseIterable, Identifiable {
         switch self {
         case .chatgpt: URL(string: "https://chatgpt.com/")!
         case .claude: URL(string: "https://claude.ai/new")!
+        // Meta's Muse models, used through Meta AI.
+        case .muse: URL(string: "https://www.meta.ai/")!
         }
     }
 }
@@ -45,6 +48,7 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Hosts that stay inside the notch: the chat sites plus the sign-in providers they redirect through.
     private static let inAppHosts = [
         "chatgpt.com", "openai.com", "claude.ai", "anthropic.com",
+        "meta.ai", "meta.com", "facebook.com", "instagram.com",
         "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com",
         "challenges.cloudflare.com",
     ]

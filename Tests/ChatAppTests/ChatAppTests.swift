@@ -11,6 +11,8 @@ import Testing
         #expect(stays("https://claude.ai/new"))
         #expect(stays("https://accounts.google.com/o/oauth2/auth"))
         #expect(stays("https://appleid.apple.com/auth"))
+        #expect(stays("https://www.meta.ai/"))
+        #expect(stays("https://www.facebook.com/login"))
     }
 
     @Test func otherLinksGoToBrowser() {

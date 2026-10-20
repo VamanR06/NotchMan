@@ -59,9 +59,9 @@ the 30-day session. Shows upcoming OA deadlines and interviews (with Open OA / J
 progress, and ones still to apply to; click a row to open it in JobManager. A local server without a password
 works too (`http://localhost:3000`, empty password). Plain `http://` is refused for anything but localhost.
 
-## Chat (ChatGPT / Claude)
+## Chat (ChatGPT / Claude / Muse)
 
-The real chatgpt.com and claude.ai, embedded in the notch with a toggle. Sign in once with your own accounts
+The real chatgpt.com, claude.ai and meta.ai (Muse), embedded in the notch with a toggle. Sign in once with your own accounts
 (you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless
 you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading.
 
