@@ -1,6 +1,6 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Now Playing) switchable from a dock.
+A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Now Playing) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
@@ -22,7 +22,7 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 | --- | --- |
 | `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
 | `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Now Playing) |
+| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Now Playing) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
 
 ## Writing a notch app
@@ -50,6 +50,14 @@ secret in Settings → Tasks, then share each task database with it (database `�
 Tasks are grouped Overdue / Today / Upcoming / No due date; done tasks are hidden. NotchMan detects the due date
 property and how the board marks tasks done (a Status property's *Complete* group, a "Done" checkbox, or a select
 option like "Done"); both can be overridden per database. Checking a task off writes back to Notion.
+
+## Jobs (JobManager)
+
+Reads applications from a [JobManager](https://github.com/VamanR06/JobManager) server. In Settings → Jobs enter
+the server URL and password; NotchMan signs in like the web app and keeps the password in the Keychain to renew
+the 30-day session. Shows upcoming OA deadlines and interviews (with Open OA / Join links), applications in
+progress, and ones still to apply to; click a row to open it in JobManager. A local server without a password
+works too (`http://localhost:3000`, empty password). Plain `http://` is refused for anything but localhost.
 
 ## Now Playing
 
