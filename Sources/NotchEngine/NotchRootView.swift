@@ -9,22 +9,28 @@ struct NotchRootView: View {
         let shape = NotchShape(topRadius: model.topCornerRadius, bottomRadius: model.bottomCornerRadius)
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
+                switch model.state {
+                case .collapsed:
+                    collapsedContent
+                        .transition(.opacity.animation(.easeOut(duration: 0.12)))
+                case .expanded:
+                    // Laid out at full expanded size so it never reflows while the shape animates;
+                    // the shrinking shape clips it and it fades out quickly on close.
+                    expandedContent
+                        .frame(width: model.expandedSize.width, height: model.expandedSize.height, alignment: .top)
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(.easeIn(duration: 0.2).delay(0.08)),
+                            removal: .opacity.animation(.easeOut(duration: 0.1))
+                        ))
+                }
+            }
+            .frame(width: model.shapeSize.width, height: model.shapeSize.height, alignment: .top)
+            .clipShape(shape)
+            .background(
                 shape
                     .fill(.black)
                     .shadow(color: .black.opacity(model.state == .expanded ? 0.45 : 0), radius: 14, y: 6)
-
-                Group {
-                    switch model.state {
-                    case .collapsed:
-                        collapsedContent
-                    case .expanded:
-                        expandedContent
-                    }
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                .clipShape(shape)
-            }
-            .frame(width: model.shapeSize.width, height: model.shapeSize.height)
+            )
             .scaleEffect(model.pulsing ? 1.08 : 1, anchor: .top)
 
             Spacer(minLength: 0)

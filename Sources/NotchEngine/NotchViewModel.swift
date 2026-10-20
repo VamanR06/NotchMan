@@ -47,9 +47,14 @@ final class NotchViewModel {
             let sides = topActivity == nil ? 0 : activitySideWidth * 2
             return CGSize(width: notch.width + 2 * topCornerRadius + sides, height: notch.height)
         case .expanded:
-            let content = selectedApp?.expandedHeight ?? 120
-            return CGSize(width: expandedWidth, height: notch.height + content + expandedBottomPadding)
+            return expandedSize
         }
+    }
+
+    /// Size of the shape when expanded with the selected app.
+    var expandedSize: CGSize {
+        let content = selectedApp?.expandedHeight ?? 120
+        return CGSize(width: expandedWidth, height: geometry.notchSize.height + content + expandedBottomPadding)
     }
 
     /// Size the window must have to contain any state (plus room for the shadow).
