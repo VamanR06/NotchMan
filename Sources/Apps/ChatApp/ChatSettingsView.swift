@@ -19,6 +19,9 @@ struct ChatSettingsView: View {
             }
 
             Section {
+                Picker("Clicking a background agent opens", selection: $app.agentOpenMode) {
+                    ForEach(ChatApp.AgentOpenMode.allCases) { Text($0.name).tag($0) }
+                }
                 Picker("Open interactive sessions in", selection: $app.editor) {
                     ForEach(AgentEditor.allCases) { Text($0.name).tag($0) }
                 }
@@ -30,7 +33,7 @@ struct ChatSettingsView: View {
             } header: {
                 Text("Claude Code Agents")
             } footer: {
-                Text("The Overview lists sessions from `claude agents --json` (CLI, VS Code and background agents on this Mac). Clicking a background agent opens Terminal attached to it; an interactive one opens its folder in your editor. Leave the command empty to find it automatically.")
+                Text("The Overview lists sessions from `claude agents --json` (CLI, VS Code and background agents on this Mac). Clicking a background agent attaches to it in a terminal inside the notch (or a new Terminal window); right-click offers both. An interactive one opens its folder in your editor. Leave the command empty to find it automatically.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

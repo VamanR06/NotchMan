@@ -16,6 +16,10 @@ final class NotchViewModel {
     var isPinned = false
     /// A menu (context menu, ✨, …) is open; the mouse is on it, outside the notch, so don't collapse.
     @ObservationIgnored var isMenuOpen = false
+    /// Apps asking to stay open while selected (`NotchContext.holdOpen`).
+    @ObservationIgnored var heldApps: Set<String> = []
+
+    private var isHeld: Bool { heldApps.contains(selectedAppID) }
 
     // Layout constants.
     /// Collapsed layout: width of one chip slot, of each side of a split (media) activity, and the margin
@@ -178,10 +182,16 @@ final class NotchViewModel {
                 attentionExpansion = false
                 pendingCollapse?.cancel()
                 pendingCollapse = nil
-            } else if !attentionExpansion, !isPinned, !isMenuOpen, pendingCollapse == nil {
+            } else if !attentionExpansion, !isPinned, !isMenuOpen, !isHeld, pendingCollapse == nil {
                 scheduleCollapse(after: .milliseconds(250))
             }
         }
+    }
+
+    /// A click outside the notch (seen by the global monitor) closes a held notch; pinned ones stay.
+    func clickedOutside(at point: CGPoint) {
+        guard state == .expanded, isHeld, !isPinned, !contains(point, slack: 4) else { return }
+        collapse()
     }
 
     func expand() {

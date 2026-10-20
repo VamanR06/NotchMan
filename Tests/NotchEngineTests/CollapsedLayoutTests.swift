@@ -115,3 +115,30 @@ private final class FakeApp: NotchApp {
         try data.write(to: dir.appending(path: name))
     }
 }
+
+@MainActor @Suite struct HoldOpenTests {
+    private let geometry = NotchGeometry(
+        screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+        notchSize: CGSize(width: 185, height: 32), centerX: 756, hasNotch: true)
+
+    @Test func heldNotchIgnoresMouseLeavingButClosesOnOutsideClick() async throws {
+        let model = NotchViewModel(apps: [FakeApp("chat", activity: nil)], geometry: geometry)
+        model.expand()
+        model.heldApps = ["chat"]
+        let outside = CGPoint(x: 100, y: 100)
+        model.mouseMoved(to: outside)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(model.state == .expanded, "mouse leaving shouldn't close a held notch")
+        model.clickedOutside(at: outside)
+        #expect(model.state == .collapsed)
+    }
+
+    @Test func unheldNotchClosesWhenTheMouseLeaves() async throws {
+        let model = NotchViewModel(apps: [FakeApp("chat", activity: nil)], geometry: geometry)
+        model.expand()
+        model.mouseMoved(to: CGPoint(x: 100, y: 100))
+        // Collapses after a short delay; allow for a busy test run.
+        for _ in 0..<20 where model.state == .expanded { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(model.state == .collapsed)
+    }
+}

@@ -74,8 +74,10 @@ also copied to the clipboard as a fallback. To keep these chats in a ChatGPT pro
 
 One place for AI work. The **Overview** tab shows the three web chats (writing / reply ready) and every Claude
 Code session on this Mac — CLI, VS Code and background agents — grouped as Needs you, Working, Done and Idle,
-read from `claude agents --json` whenever Claude Code's session files change. Click a background agent to open
-Terminal attached to it, or an interactive one to open its folder in VS Code/Cursor; right-click for more.
+read from `claude agents --json` whenever Claude Code's session files change. Click a background agent to open an
+interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
+open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
+right-click, or the default in Settings). Interactive sessions open their folder in VS Code/Cursor.
 **New Agent** starts `claude --bg "<prompt>"` in a project folder. You're notified when an agent needs you or
 finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
 

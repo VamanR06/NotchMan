@@ -8,6 +8,10 @@ let package = Package(
         .executable(name: "NotchMan", targets: ["NotchMan"]),
         .library(name: "NotchKit", targets: ["NotchKit"]),
     ],
+    dependencies: [
+        // Terminal emulator for the in-notch Claude Code terminal (MIT).
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", .upToNextMinor(from: "1.20.0")),
+    ],
     targets: [
         // SDK that every notch app imports.
         .target(name: "NotchKit"),
@@ -18,7 +22,7 @@ let package = Package(
         .target(name: "NowPlayingApp", dependencies: ["NotchKit"], path: "Sources/Apps/NowPlayingApp"),
         .target(name: "TasksApp", dependencies: ["NotchKit"], path: "Sources/Apps/TasksApp"),
         .target(name: "JobsApp", dependencies: ["NotchKit"], path: "Sources/Apps/JobsApp"),
-        .target(name: "ChatApp", dependencies: ["NotchKit"], path: "Sources/Apps/ChatApp"),
+        .target(name: "ChatApp", dependencies: ["NotchKit", "SwiftTerm"], path: "Sources/Apps/ChatApp"),
         // App shell: wires the registry of apps into the engine.
         .executableTarget(
             name: "NotchMan",

@@ -16,6 +16,7 @@ public final class NotchContext {
     private let sendHandler: (NotchMessage, String) -> Void
     private let visibleHandler: () -> Bool
     private let notifyHandler: (String, String, [String: String]) -> Void
+    private let holdHandler: (Bool) -> Void
 
     public init(
         appID: String,
@@ -23,7 +24,8 @@ public final class NotchContext {
         openSettings: @escaping () -> Void,
         send: @escaping (NotchMessage, String) -> Void = { _, _ in },
         isVisible: @escaping () -> Bool = { false },
-        notify: @escaping (String, String, [String: String]) -> Void = { _, _, _ in }
+        notify: @escaping (String, String, [String: String]) -> Void = { _, _, _ in },
+        holdOpen: @escaping (Bool) -> Void = { _ in }
     ) {
         self.appID = appID
         self.defaults = UserDefaults(suiteName: "com.notchman.app.\(appID)") ?? .standard
@@ -34,6 +36,13 @@ public final class NotchContext {
         self.sendHandler = send
         self.visibleHandler = isVisible
         self.notifyHandler = notify
+        self.holdHandler = holdOpen
+    }
+
+    /// While held, the notch stays expanded on this app when the mouse wanders off (e.g. while typing in a
+    /// terminal); a click outside the notch still closes it.
+    public func holdOpen(_ hold: Bool) {
+        holdHandler(hold)
     }
 
     /// Whether this app is on screen right now (selected in an expanded notch).

@@ -50,6 +50,11 @@ public final class NotchEngine {
                 },
                 notify: { [weak self] title, body, payload in
                     self?.notifications?.post(appID: appID, title: title, body: body, payload: payload)
+                },
+                holdOpen: { [weak self] hold in
+                    self?.notches.values.forEach { notch in
+                        if hold { notch.model.heldApps.insert(appID) } else { notch.model.heldApps.remove(appID) }
+                    }
                 }
             )
             app.activate(context: context)
@@ -159,8 +164,13 @@ public final class NotchEngine {
 
     private func installMouseMonitors() {
         let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseDown]
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] _ in
-            MainActor.assumeIsolated { self?.handleMouse() }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] event in
+            // Global events go to other apps, i.e. happen outside the notch.
+            let isClick = event.type == .leftMouseDown
+            MainActor.assumeIsolated {
+                self?.handleMouse()
+                if isClick { self?.notches.values.forEach { $0.model.clickedOutside(at: NSEvent.mouseLocation) } }
+            }
         }) {
             monitors.append(global)
         }

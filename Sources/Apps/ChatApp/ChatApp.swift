@@ -21,7 +21,10 @@ public final class ChatApp: NotchApp {
     }
     /// The Overview tab is showing (instead of a chat).
     var showingOverview = true {
-        didSet { context?.defaults.set(showingOverview, forKey: "showingOverview") }
+        didSet {
+            context?.defaults.set(showingOverview, forKey: "showingOverview")
+            updateHold()
+        }
     }
     /// The inline New Agent form is open on the Overview.
     var composingAgent = false
@@ -32,6 +35,24 @@ public final class ChatApp: NotchApp {
     private(set) var unseenAgents: Set<String> = []
     var editor: AgentEditor = .vscode {
         didSet { context?.defaults.set(editor.rawValue, forKey: "editor") }
+    }
+
+    /// What clicking a background agent does.
+    enum AgentOpenMode: String, CaseIterable, Identifiable {
+        case notch, terminalApp
+        var id: String { rawValue }
+        var name: String { self == .notch ? "Terminal in the notch" : "New Terminal window" }
+    }
+
+    var agentOpenMode: AgentOpenMode = .notch {
+        didSet { context?.defaults.set(agentOpenMode.rawValue, forKey: "agentOpenMode") }
+    }
+
+    /// In-notch terminals attached to background agents, by agent id; they keep running when hidden.
+    private(set) var terminals: [String: AgentTerminal] = [:]
+    /// The terminal shown on the Overview tab, if any.
+    private(set) var shownTerminalID: String? {
+        didSet { updateHold() }
     }
     private(set) var loading: Set<ChatService> = []
     /// Services currently generating a reply, and since when.
@@ -77,6 +98,7 @@ public final class ChatApp: NotchApp {
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
+        agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
         agentMonitor.start()
@@ -254,13 +276,62 @@ public final class ChatApp: NotchApp {
         unseenAgents.removeAll()
     }
 
-    /// Background agents open attached in Terminal; interactive ones open their folder in the editor.
+    /// Background agents open attached in a terminal (in the notch or Terminal, per settings); interactive
+    /// ones open their folder in the editor.
     func open(_ agent: ClaudeAgent) {
-        if agent.kind == .background {
-            Task { await agentMonitor.attach(agent) }
-        } else {
+        guard agent.kind == .background else {
             editor.open(agent.cwd)
+            return
         }
+        switch agentOpenMode {
+        case .notch: openInNotch(agent)
+        case .terminalApp: openInTerminalApp(agent)
+        }
+    }
+
+    // MARK: - In-notch terminals
+
+    var shownTerminal: AgentTerminal? {
+        shownTerminalID.flatMap { terminals[$0] }
+    }
+
+    func openInNotch(_ agent: ClaudeAgent) {
+        let terminal = terminals[agent.id] ?? AgentTerminal(agent: agent)
+        terminals[agent.id] = terminal
+        terminal.update(agent)
+        showingOverview = true
+        shownTerminalID = agent.id
+        if !terminal.isRunning { reattach(terminal) }
+    }
+
+    func reattach(_ terminal: AgentTerminal) {
+        Task {
+            guard let path = await agentMonitor.claudePath() else { return }
+            terminal.start(claudePath: path)
+            terminal.focus()
+        }
+    }
+
+    /// Detaches the in-notch terminal (if any) and attaches in a new Terminal window instead.
+    func openInTerminalApp(_ agent: ClaudeAgent) {
+        if terminals[agent.id] != nil { closeTerminal(agent.id) }
+        Task { await agentMonitor.attach(agent) }
+    }
+
+    /// Ends the in-notch attach; the agent keeps running.
+    func closeTerminal(_ id: String) {
+        terminals.removeValue(forKey: id)?.stop()
+        if shownTerminalID == id { shownTerminalID = nil }
+    }
+
+    /// Back to the agent list; the terminal keeps running and can be reopened from its row.
+    func backToOverview() {
+        shownTerminalID = nil
+    }
+
+    /// Keep the notch open while a terminal is on screen, so typing isn't cut off by the mouse drifting away.
+    private func updateHold() {
+        context?.holdOpen(showingOverview && shownTerminalID != nil)
     }
 
     /// Called by the view when a service is on screen.

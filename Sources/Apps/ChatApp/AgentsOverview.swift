@@ -7,14 +7,18 @@ struct AgentsOverview: View {
     @Bindable var app: ChatApp
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ChatStrip(app: app)
-            if app.composingAgent {
-                NewAgentForm(app: app)
+        if let terminal = app.shownTerminal {
+            AgentTerminalScreen(app: app, terminal: terminal)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ChatStrip(app: app)
+                if app.composingAgent {
+                    NewAgentForm(app: app)
+                }
+                AgentList(app: app)
             }
-            AgentList(app: app)
+            .onAppear { app.markOverviewSeen() }
         }
-        .onAppear { app.markOverviewSeen() }
     }
 }
 
@@ -148,6 +152,12 @@ private struct AgentRow: View {
                     if app.unseenAgents.contains(agent.id) {
                         Circle().fill(agent.phase == .needsYou ? .orange : .green).frame(width: 6, height: 6)
                     }
+                    if app.terminals[agent.id]?.isRunning == true {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .help("Open in the notch")
+                    }
                 }
                 HStack(spacing: 4) {
                     Text(agent.project)
@@ -164,7 +174,9 @@ private struct AgentRow: View {
             }
             Spacer(minLength: 4)
             if hovering {
-                Text(agent.kind == .background ? "Attach" : "Open in \(app.editor.name)")
+                Text(agent.kind == .background
+                     ? (app.agentOpenMode == .notch ? "Open terminal" : "Attach in Terminal")
+                     : "Open in \(app.editor.name)")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.6))
             }
@@ -177,7 +189,9 @@ private struct AgentRow: View {
         .onTapGesture { app.open(agent) }
         .contextMenu {
             if agent.kind == .background {
-                Button("Attach in Terminal") { Task { await app.agentMonitor.attach(agent) } }
+                Button("Open Terminal in Notch") { app.openInNotch(agent) }
+                Button("Attach in New Terminal Window") { app.openInTerminalApp(agent) }
+                Divider()
             }
             Button("Open Folder in \(app.editor.name)") { app.editor.open(agent.cwd) }
             Button("Reveal in Finder") {
