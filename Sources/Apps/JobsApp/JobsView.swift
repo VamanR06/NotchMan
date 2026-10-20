@@ -14,10 +14,11 @@ struct JobsView: View {
                 placeholder("Sign in to JobManager to see your applications.", settings: true)
             } else if !app.hasLoaded {
                 placeholder(app.error ?? "Loading…", settings: app.error != nil)
-            } else if app.board.comingUp.isEmpty && app.board.inProgress.isEmpty && app.board.toApply.isEmpty {
-                placeholder("No active applications.", settings: false)
             } else {
-                JobList(app: app)
+                VStack(spacing: 6) {
+                    FilterBar(app: app)
+                    JobList(app: app)
+                }
             }
         }
         .task { await app.refreshIfStale() }
@@ -82,12 +83,17 @@ private struct Pipeline: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    /// Tapping a count filters the list to that stage.
     private func stat(_ status: JobStatus, _ counts: [JobStatus: Int]) -> some View {
-        HStack(spacing: 3) {
-            Circle().fill(status.color).frame(width: 5, height: 5)
-            Text("\(counts[status] ?? 0)").monospacedDigit()
+        Button { app.filter = .status(status) } label: {
+            HStack(spacing: 3) {
+                Circle().fill(status.color).frame(width: 5, height: 5)
+                Text("\(counts[status] ?? 0)").monospacedDigit()
+            }
+            .foregroundStyle(app.filter == .status(status) ? .white : .white.opacity(0.6))
         }
-        .help(status.name)
+        .buttonStyle(.plain)
+        .help("Show \(status.name)")
     }
 }
 
@@ -96,6 +102,38 @@ private struct JobList: View {
 
     var body: some View {
         let board = app.board
+        let searching = !app.query.trimmingCharacters(in: .whitespaces).isEmpty
+        if app.filter == .active && !searching {
+            if board.count(.active) == 0 {
+                empty("No active applications.")
+            } else {
+                sections(board)
+            }
+        } else {
+            // Searching from Active looks through everything.
+            let jobs = board.jobs(for: app.filter == .active ? .all : app.filter, matching: app.query)
+            if jobs.isEmpty {
+                empty(searching ? "No matches for \u{201C}\(app.query)\u{201D}." : "No \(app.filter.name.lowercased()) applications.")
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(jobs) { job in
+                            JobRow(app: app, job: job, action: board.comingUp.first { $0.job.id == job.id })
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func empty(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(.white.opacity(0.5))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func sections(_ board: JobBoard) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                 if !board.comingUp.isEmpty {
@@ -127,6 +165,66 @@ private struct JobList: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 3)
             .background(.black)
+    }
+}
+
+/// Search field plus a chip per filter (with counts).
+private struct FilterBar: View {
+    @Bindable var app: JobsApp
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+                TextField("Search", text: $app.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white)
+                    .focused($searchFocused)
+                    .onExitCommand { app.query = ""; searchFocused = false }
+                if !app.query.isEmpty {
+                    Button { app.query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .frame(width: 120)
+            .background(Capsule().fill(.white.opacity(searchFocused ? 0.16 : 0.08)))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(JobFilter.chips, id: \.self) { filter in
+                        chip(filter)
+                    }
+                }
+            }
+        }
+    }
+
+    private func chip(_ filter: JobFilter) -> some View {
+        let selected = app.filter == filter
+        let tint: Color = if case .status(let status) = filter { status.color } else { .white }
+        return Button { app.filter = filter } label: {
+            HStack(spacing: 3) {
+                Text(filter.name)
+                Text("\(app.board.count(filter))")
+                    .monospacedDigit()
+                    .foregroundStyle(selected ? .black.opacity(0.6) : .white.opacity(0.4))
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(selected ? tint.opacity(0.9) : .white.opacity(0.08)))
+            .foregroundStyle(selected ? .black : .white.opacity(0.75))
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -118,3 +118,25 @@ private let now = Date(timeIntervalSince1970: 1_792_497_600)
         #expect(try JobManagerClient.validate("https://jobs.vamanr.com/").absoluteString == "https://jobs.vamanr.com")
     }
 }
+
+@Suite struct JobFilterTests {
+    @Test func filtersByStatus() throws {
+        let board = JobBoard(jobs: try jobs(), now: now)
+        #expect(board.jobs(for: .status(.rejected), matching: "").map(\.company) == ["Umbrella"])
+        #expect(board.count(.status(.oa)) == 1)
+        #expect(board.count(.all) == 5)
+        #expect(board.count(.active) == 4)
+    }
+
+    @Test func searchMatchesCompanyOrTitle() throws {
+        let board = JobBoard(jobs: try jobs(), now: now)
+        #expect(board.jobs(for: .all, matching: "robotics").map(\.company) == ["Globex"])
+        #expect(board.jobs(for: .all, matching: " acme ").map(\.company) == ["Acme"])
+        #expect(board.jobs(for: .status(.rejected), matching: "acme").isEmpty)
+    }
+
+    @Test func allIsMostRecentFirst() throws {
+        let board = JobBoard(jobs: try jobs(), now: now)
+        #expect(board.all.first?.company == "Acme")
+    }
+}

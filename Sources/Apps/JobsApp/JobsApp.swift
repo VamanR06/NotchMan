@@ -16,6 +16,9 @@ public final class JobsApp: NotchApp {
     private(set) var hasLoaded = false
     private(set) var error: String?
     private(set) var now = Date()
+    /// List filter and search; kept here so they survive the notch collapsing.
+    var filter: JobFilter = .active
+    var query = ""
 
     @ObservationIgnored private(set) var client: JobManagerClient!
     @ObservationIgnored private var context: NotchContext?

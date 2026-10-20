@@ -114,8 +114,28 @@ struct JobAction: Identifiable, Hashable {
     var id: String { "\(job.id)-\(kind)" }
 }
 
+/// Which jobs the list shows.
+enum JobFilter: Hashable {
+    /// Coming up / in progress / to apply sections.
+    case active
+    case all
+    case status(JobStatus)
+
+    var name: String {
+        switch self {
+        case .active: "Active"
+        case .all: "All"
+        case .status(let status): status.name
+        }
+    }
+
+    static let chips: [JobFilter] = [.active, .all] + [.applied, .oa, .interview, .pending, .toApply, .accepted, .rejected].map(JobFilter.status)
+}
+
 /// The dashboard derived from all jobs at a point in time.
 struct JobBoard {
+    /// Every job, most recently updated first.
+    let all: [TrackedJob]
     let comingUp: [JobAction]
     let inProgress: [TrackedJob]
     let toApply: [TrackedJob]
@@ -127,6 +147,7 @@ struct JobBoard {
         var counts: [JobStatus: Int] = [:]
         for job in jobs { counts[job.status, default: 0] += 1 }
         self.counts = counts
+        all = jobs.sorted { $0.statusDate > $1.statusDate }
 
         var actions: [JobAction] = []
         for job in jobs {
@@ -146,6 +167,26 @@ struct JobBoard {
             .filter { [.oa, .interview, .pending].contains($0.status) && !scheduled.contains($0.id) }
             .sorted { $0.statusDate > $1.statusDate }
         toApply = jobs.filter { $0.status == .toApply }.sorted { $0.statusDate > $1.statusDate }
+    }
+
+    /// Jobs for a non-sectioned filter, matching `query` against company and title.
+    func jobs(for filter: JobFilter, matching query: String) -> [TrackedJob] {
+        let base: [TrackedJob]
+        switch filter {
+        case .active, .all: base = all
+        case .status(let status): base = all.filter { $0.status == status }
+        }
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return base }
+        return base.filter { $0.company.localizedCaseInsensitiveContains(query) || $0.title.localizedCaseInsensitiveContains(query) }
+    }
+
+    func count(_ filter: JobFilter) -> Int {
+        switch filter {
+        case .active: comingUp.count + inProgress.count + toApply.count
+        case .all: all.count
+        case .status(let status): counts[status] ?? 0
+        }
     }
 
     /// The next action soon enough to show beside the collapsed notch.
