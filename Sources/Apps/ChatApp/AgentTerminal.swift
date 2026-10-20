@@ -65,7 +65,8 @@ final class AgentTerminal: Identifiable {
     }
 }
 
-/// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel.
+/// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel, and
+/// translates macOS editing shortcuts into what terminal programs expect (see `TerminalKeyMap`).
 final class NotchTerminalView: LocalProcessTerminalView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -73,6 +74,93 @@ final class NotchTerminalView: LocalProcessTerminalView {
         window?.makeKey()
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        Self.installKeyMonitor()
+    }
+
+    /// SwiftTerm's keyDown can't be overridden, so translate shortcuts just before AppKit dispatches them
+    /// (this also runs before the Edit menu, which keeps ⌘C/⌘V/⌘A since we don't map those).
+    private static var keyMonitor: Any?
+
+    private static func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Local monitors run on the main thread.
+            nonisolated(unsafe) let event = event
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let terminal = event.window?.firstResponder as? NotchTerminalView else { return false }
+                return terminal.handle(event)
+            }
+            return handled ? nil : event
+        }
+    }
+
+    /// Sends our translation of `event`, if it's one of the mapped shortcuts.
+    func handle(_ event: NSEvent) -> Bool {
+        let kittyActive = !getTerminal().keyboardEnhancementFlags.isEmpty
+        switch TerminalKeyMap.action(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+                                     modifiers: event.modifierFlags, kittyKeyboard: kittyActive) {
+        case .send(let bytes):
+            send(data: bytes[...])
+            return true
+        case .clear:
+            // Like Terminal's ⌘K: drop the scrollback, and ask the program to redraw a clean screen (Ctrl-L).
+            getTerminal().clearScrollback()
+            send(data: [0x0c][...])
+            return true
+        case nil:
+            return false
+        }
+    }
+}
+
+/// macOS editing shortcuts → terminal input, matching Terminal/iTerm2 conventions (and Claude Code's
+/// `/terminal-setup`, which binds ⇧↩ to ESC+Return for a newline).
+enum TerminalKeyMap {
+    enum Action: Equatable {
+        case send([UInt8])
+        case clear
+    }
+
+    enum KeyCode {
+        static let returnKey: UInt16 = 36
+        static let keypadEnter: UInt16 = 76
+        static let delete: UInt16 = 51
+        static let forwardDelete: UInt16 = 117
+        static let left: UInt16 = 123
+        static let right: UInt16 = 124
+    }
+
+    static func action(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags,
+                       kittyKeyboard: Bool) -> Action? {
+        let mods = modifiers.intersection([.command, .option, .shift, .control])
+        switch (keyCode, mods) {
+        case (KeyCode.returnKey, [.shift]), (KeyCode.keypadEnter, [.shift]):
+            // With the kitty keyboard protocol on, the terminal already encodes ⇧↩ unambiguously.
+            return kittyKeyboard ? nil : .send([0x1B, 0x0D])        // ESC CR: newline, don't submit
+        case (KeyCode.delete, [.command]):
+            return .send([0x15])                                   // Ctrl-U: delete to line start
+        case (KeyCode.delete, [.option]):
+            return .send([0x1B, 0x7F])                             // ESC DEL: delete previous word
+        case (KeyCode.forwardDelete, [.command]):
+            return .send([0x0B])                                   // Ctrl-K: delete to line end
+        case (KeyCode.forwardDelete, [.option]):
+            return .send([0x1B, 0x64])                             // ESC d: delete next word
+        case (KeyCode.left, [.command]):
+            return .send([0x01])                                   // Ctrl-A: line start
+        case (KeyCode.right, [.command]):
+            return .send([0x05])                                   // Ctrl-E: line end
+        case (KeyCode.left, [.option]):
+            return .send([0x1B, 0x62])                             // ESC b: word back
+        case (KeyCode.right, [.option]):
+            return .send([0x1B, 0x66])                             // ESC f: word forward
+        default:
+            if mods == [.command], characters?.lowercased() == "k" { return .clear }
+            return nil
+        }
     }
 }
 
