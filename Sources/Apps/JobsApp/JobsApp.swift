@@ -169,6 +169,10 @@ public final class JobsApp: NotchApp {
             Text(until <= 0 ? "now" : relativeTime(action.date, now: now).replacingOccurrences(of: "in ", with: ""))
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(imminent ? .orange : .white.opacity(0.7))
+        } compact: {
+            Image(systemName: action.kind == .interview ? "person.2.fill" : "briefcase.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(imminent ? .orange : action.job.status.color)
         }
     }
 

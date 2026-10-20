@@ -130,6 +130,12 @@ public final class CalendarApp: NotchApp {
             Text(ongoing ? "now" : "in \(minutes)m")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(soon ? .orange : .white.opacity(0.7))
+        } compact: {
+            Text(ongoing ? "now" : "\(minutes)m")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(soon ? .orange : .white.opacity(0.75))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
     }
 

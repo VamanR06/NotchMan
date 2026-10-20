@@ -260,6 +260,10 @@ public final class TasksApp: NotchApp {
                 }
             }
             .font(.system(size: 11, weight: .semibold).monospacedDigit())
+        } compact: {
+            Image(systemName: "checklist")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(overdue > 0 ? .red : .white.opacity(0.8))
         }
     }
 

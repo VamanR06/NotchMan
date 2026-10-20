@@ -35,8 +35,26 @@ final class NotchViewModel {
         apps.first { $0.id == selectedAppID } ?? apps.first
     }
 
+    /// All published activities, highest priority first.
+    private var activities: [NotchActivity] {
+        apps.compactMap(\.activity).sorted { $0.priority > $1.priority }
+    }
+
     var topActivity: NotchActivity? {
-        apps.compactMap(\.activity).max { $0.priority < $1.priority }
+        activities.first
+    }
+
+    /// Up to two runner-up activities, shown as compact icons beside the top one.
+    var extraActivities: [NotchActivity] {
+        Array(activities.dropFirst().filter { $0.compact != nil }.prefix(2))
+    }
+
+    /// Width of one compact slot.
+    let extraSlotWidth: CGFloat = 26
+
+    /// Each side grows by the same amount so the shape stays centered on the notch.
+    var collapsedSideWidth: CGFloat {
+        activitySideWidth + CGFloat((extraActivities.count + 1) / 2) * extraSlotWidth
     }
 
     var topCornerRadius: CGFloat { state == .expanded ? 14 : 6 }
@@ -47,7 +65,7 @@ final class NotchViewModel {
         let notch = geometry.notchSize
         switch state {
         case .collapsed:
-            let sides = topActivity == nil ? 0 : activitySideWidth * 2
+            let sides = topActivity == nil ? 0 : collapsedSideWidth * 2
             return CGSize(width: notch.width + 2 * topCornerRadius + sides, height: notch.height)
         case .expanded:
             return expandedSize

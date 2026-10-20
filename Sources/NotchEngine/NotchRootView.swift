@@ -42,20 +42,36 @@ struct NotchRootView: View {
     @ViewBuilder
     private var collapsedContent: some View {
         if let activity = model.topActivity {
-            // Each side area is `activitySideWidth` wide; content keeps `activityEdgeInset` clear of
-            // the outer edge so it doesn't crowd the rounded corners.
+            // The top activity sits next to the notch; runner-ups go on the outer edges, the first on the
+            // right and the second on the left. Content keeps `activityEdgeInset` clear of the outer edge
+            // so it doesn't crowd the rounded corners.
+            let extras = model.extraActivities
+            let width = model.collapsedSideWidth - model.activityEdgeInset
             HStack(spacing: 0) {
-                (activity.leading ?? AnyView(EmptyView()))
-                    .frame(width: model.activitySideWidth - model.activityEdgeInset, alignment: .leading)
-                    .padding(.leading, model.activityEdgeInset)
+                HStack(spacing: 0) {
+                    if extras.count > 1 { compactSlot(extras[1]) }
+                    (activity.leading ?? AnyView(EmptyView()))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(width: width, alignment: .leading)
+                .padding(.leading, model.activityEdgeInset)
                 Spacer(minLength: model.geometry.notchSize.width)
-                (activity.trailing ?? AnyView(EmptyView()))
-                    .frame(width: model.activitySideWidth - model.activityEdgeInset, alignment: .trailing)
-                    .padding(.trailing, model.activityEdgeInset)
+                HStack(spacing: 0) {
+                    (activity.trailing ?? AnyView(EmptyView()))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    if let first = extras.first { compactSlot(first) }
+                }
+                .frame(width: width, alignment: .trailing)
+                .padding(.trailing, model.activityEdgeInset)
             }
             .padding(.horizontal, model.topCornerRadius)
             .frame(maxHeight: .infinity)
         }
+    }
+
+    private func compactSlot(_ activity: NotchActivity) -> some View {
+        (activity.compact ?? AnyView(EmptyView()))
+            .frame(width: model.extraSlotWidth, height: model.geometry.notchSize.height)
     }
 
     private var expandedContent: some View {

@@ -191,7 +191,7 @@ public final class ChatApp: NotchApp {
         let anyBusy = !busy.isEmpty
         return NotchActivity(priority: anyBusy ? 14 : 12) {
             if anyBusy {
-                ProgressView().controlSize(.mini).tint(.white)
+                NotchSpinner(size: 13)
             } else {
                 Image(systemName: "checkmark.bubble.fill")
                     .font(.system(size: 12))
@@ -207,6 +207,14 @@ public final class ChatApp: NotchApp {
             }
             .font(.system(size: 10, weight: .semibold))
             .lineLimit(1)
+        } compact: {
+            if anyBusy {
+                NotchSpinner(size: 13)
+            } else {
+                Image(systemName: "checkmark.bubble.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.green)
+            }
         }
     }
 
@@ -314,7 +322,7 @@ struct ChatView: View {
                 ServiceTabs(app: app)
 
                 if app.loading.contains(app.service) {
-                    ProgressView().controlSize(.mini)
+                    NotchSpinner(size: 11, color: .white.opacity(0.6), lineWidth: 1.6)
                 }
                 Spacer()
                 Group {
@@ -379,7 +387,7 @@ private struct ServiceTabs: View {
                     HStack(spacing: 5) {
                         Text(service.name)
                         if app.isBusy(service) {
-                            ProgressView().controlSize(.mini).tint(.white)
+                            NotchSpinner(size: 10, lineWidth: 1.6)
                         } else if app.unread.contains(service) {
                             Circle().fill(.green).frame(width: 6, height: 6)
                         }

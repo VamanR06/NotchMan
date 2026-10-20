@@ -119,6 +119,8 @@ public final class NowPlayingApp: NotchApp {
             Artwork(url: track.artworkURL, size: 20, cornerRadius: 5)
         } trailing: {
             PlayingBars()
+        } compact: {
+            Artwork(url: track.artworkURL, size: 18, cornerRadius: 4)
         }
     }
 

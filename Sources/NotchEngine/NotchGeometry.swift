@@ -20,6 +20,13 @@ struct NotchGeometry: Equatable {
         return (screen, NotchGeometry(screen: screen))
     }
 
+    init(screenFrame: CGRect, notchSize: CGSize, centerX: CGFloat, hasNotch: Bool) {
+        self.screenFrame = screenFrame
+        self.notchSize = notchSize
+        self.centerX = centerX
+        self.hasNotch = hasNotch
+    }
+
     @MainActor
     init(screen: NSScreen) {
         let frame = screen.frame
