@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import NotchKit
 import SwiftUI
 
@@ -73,9 +72,8 @@ final class GoogleCalendarSource {
         pendingServer = server
         let port = try await server.start()
         let redirectURI = "http://127.0.0.1:\(port)"
-        let verifier = Self.randomURLSafeString(length: 64)
-        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URLEncoded()
-        let state = Self.randomURLSafeString(length: 24)
+        let pkce = PKCE()
+        let state = PKCE.randomString(length: 24)
 
         var auth = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         auth.queryItems = [
@@ -83,7 +81,7 @@ final class GoogleCalendarSource {
             .init(name: "redirect_uri", value: redirectURI),
             .init(name: "response_type", value: "code"),
             .init(name: "scope", value: Self.scope),
-            .init(name: "code_challenge", value: challenge),
+            .init(name: "code_challenge", value: pkce.challenge),
             .init(name: "code_challenge_method", value: "S256"),
             .init(name: "state", value: state),
             .init(name: "access_type", value: "offline"),
@@ -109,7 +107,7 @@ final class GoogleCalendarSource {
             "client_secret": clientSecret,
             "redirect_uri": redirectURI,
             "grant_type": "authorization_code",
-            "code_verifier": verifier,
+            "code_verifier": pkce.verifier,
         ])
         guard let refresh = tokens.refresh_token else {
             throw GoogleError.authFailed("no refresh token returned")
@@ -270,21 +268,5 @@ final class GoogleCalendarSource {
             let host = $0.host() ?? ""
             return host.contains("zoom.us") || host.contains("meet.google.com") || host.contains("teams.microsoft.com")
         }
-    }
-
-    // MARK: - Helpers
-
-    private static func randomURLSafeString(length: Int) -> String {
-        let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-        return String((0..<length).map { _ in chars.randomElement()! })
-    }
-}
-
-private extension Data {
-    func base64URLEncoded() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

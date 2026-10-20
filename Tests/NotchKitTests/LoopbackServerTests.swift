@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CalendarApp
+@testable import NotchKit
 
 @Suite struct LoopbackServerTests {
     @Test func receivesOAuthCallback() async throws {
@@ -29,5 +29,18 @@ import Testing
         _ = try await server.start()
         server.cancel()
         await #expect(throws: LoopbackServer.ServerError.self) { try await server.waitForCallback() }
+    }
+}
+
+@Suite struct PKCETests {
+    /// Example from RFC 7636, appendix B.
+    @Test func matchesRFCExample() {
+        let pkce = PKCE(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+        #expect(pkce.challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+    }
+
+    @Test func randomVerifiersDiffer() {
+        #expect(PKCE().verifier != PKCE().verifier)
+        #expect(PKCE().verifier.count == 64)
     }
 }

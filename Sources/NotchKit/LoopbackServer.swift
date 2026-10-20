@@ -3,8 +3,8 @@ import Network
 
 /// One-shot HTTP server on 127.0.0.1 that receives an OAuth redirect.
 /// All mutable state is confined to `queue`.
-final class LoopbackServer: @unchecked Sendable {
-    enum ServerError: Error { case noPort, cancelled }
+public final class LoopbackServer: @unchecked Sendable {
+    public enum ServerError: Error { case noPort, cancelled }
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "com.notchman.oauth-loopback")
@@ -12,14 +12,16 @@ final class LoopbackServer: @unchecked Sendable {
     private var callbackContinuation: CheckedContinuation<URL, Error>?
     private var earlyResult: Result<URL, Error>?
 
-    init() throws {
+    /// Listens on `port`, or any free port when nil (for providers that accept dynamic loopback ports).
+    public init(port: UInt16? = nil) throws {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        let fixed = port.flatMap(NWEndpoint.Port.init(rawValue:))
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: fixed ?? .any)
         listener = try NWListener(using: params)
     }
 
     /// Starts listening and returns the bound port.
-    func start() async throws -> UInt16 {
+    public func start() async throws -> UInt16 {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 startContinuation = continuation
@@ -47,7 +49,7 @@ final class LoopbackServer: @unchecked Sendable {
     }
 
     /// Waits for the browser to hit the redirect URL; returns the full callback URL.
-    func waitForCallback() async throws -> URL {
+    public func waitForCallback() async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 if let earlyResult {
@@ -59,7 +61,7 @@ final class LoopbackServer: @unchecked Sendable {
         }
     }
 
-    func cancel() {
+    public func cancel() {
         queue.async { [self] in finish(.failure(ServerError.cancelled)) }
     }
 
