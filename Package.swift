@@ -29,6 +29,7 @@ let package = Package(
             dependencies: ["NotchKit", "NotchEngine", "CalendarApp", "NowPlayingApp", "TasksApp", "JobsApp", "ChatApp"]
         ),
         .testTarget(name: "NotchKitTests", dependencies: ["NotchKit"]),
+        .testTarget(name: "CalendarAppTests", dependencies: ["CalendarApp"]),
         .testTarget(name: "NotchEngineTests", dependencies: ["NotchEngine", "NotchKit"]),
         .testTarget(name: "TasksAppTests", dependencies: ["TasksApp"]),
         .testTarget(name: "JobsAppTests", dependencies: ["JobsApp"]),

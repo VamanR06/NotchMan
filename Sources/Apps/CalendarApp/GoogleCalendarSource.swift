@@ -220,6 +220,17 @@ final class GoogleCalendarSource {
             let htmlLink: String?
             let hangoutLink: String?
             let location: String?
+            let conferenceData: ConferenceData?
+        }
+
+        /// Meet, and add-ons like Zoom/Teams/Webex, put their join links here.
+        struct ConferenceData: Decodable {
+            struct EntryPoint: Decodable { let entryPointType: String?; let uri: String? }
+            let entryPoints: [EntryPoint]?
+
+            var videoLink: String? {
+                entryPoints?.first { $0.entryPointType == "video" }?.uri
+            }
         }
         let items: [Event]
     }
@@ -251,22 +262,12 @@ final class GoogleCalendarSource {
                     color: calendar.color,
                     calendarName: calendar.name,
                     url: event.htmlLink.flatMap(URL.init(string:)),
-                    meetingURL: event.hangoutLink.flatMap(URL.init(string:)) ?? Self.meetingLink(in: event.location),
+                    meetingURL: MeetingLinks.link(conferenceVideo: event.conferenceData?.videoLink,
+                                                  hangoutLink: event.hangoutLink, location: event.location),
                     location: event.location
                 ))
             }
         }
         return result
-    }
-
-    /// Picks up Zoom/Meet/Teams links pasted into the location field.
-    private static func meetingLink(in text: String?) -> URL? {
-        guard let text,
-              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
-        let range = NSRange(text.startIndex..., in: text)
-        return detector.matches(in: text, range: range).compactMap(\.url).first {
-            let host = $0.host() ?? ""
-            return host.contains("zoom.us") || host.contains("meet.google.com") || host.contains("teams.microsoft.com")
-        }
     }
 }
