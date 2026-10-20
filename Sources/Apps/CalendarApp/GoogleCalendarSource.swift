@@ -251,7 +251,7 @@ final class GoogleCalendarSource {
                     end: endDate,
                     isAllDay: allDay,
                     color: calendar.color,
-                    source: .google(calendarName: calendar.name),
+                    calendarName: calendar.name,
                     url: event.htmlLink.flatMap(URL.init(string:)),
                     meetingURL: event.hangoutLink.flatMap(URL.init(string:)) ?? Self.meetingLink(in: event.location),
                     location: event.location

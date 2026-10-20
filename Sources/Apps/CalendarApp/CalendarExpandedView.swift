@@ -86,7 +86,7 @@ private struct ConnectPrompt: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("Connect Google Calendar or Notion to see your schedule.")
+            Text("Connect Google Calendar to see your schedule.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
@@ -159,8 +159,7 @@ private struct EventRow: View {
                 HStack(spacing: 4) {
                     Text(timeText)
                     Text("·")
-                    if case .notion = item.source { Image(systemName: "doc.text") }
-                    Text(item.source.label).lineLimit(1)
+                    Text(item.calendarName).lineLimit(1)
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
@@ -192,13 +191,8 @@ private struct EventRow: View {
         .onHover { hovering = $0 }
         .onTapGesture(perform: open)
         .contextMenu {
-            switch item.source {
-            case .google:
-                Button("Open in Notion Calendar", action: NotionLinks.openNotionCalendar)
-                if let url = item.url { Button("Open in Google Calendar") { NSWorkspace.shared.open(url) } }
-            case .notion:
-                if let url = item.url { Button("Open in Notion") { NotionLinks.openNotionPage(url) } }
-            }
+            Button("Open in Notion Calendar", action: NotionLinks.openNotionCalendar)
+            if let url = item.url { Button("Open in Google Calendar") { NSWorkspace.shared.open(url) } }
             if let meeting = item.meetingURL { Button("Join Meeting") { NSWorkspace.shared.open(meeting) } }
         }
     }
@@ -210,17 +204,12 @@ private struct EventRow: View {
         return "\(start) – \(end.formatted(date: .omitted, time: .shortened))"
     }
 
-    /// Notion pages open in Notion; Google events open in Notion Calendar if installed, else Google Calendar.
+    /// Opens in Notion Calendar if installed, else Google Calendar on the web.
     private func open() {
-        switch item.source {
-        case .notion:
-            if let url = item.url { NotionLinks.openNotionPage(url) }
-        case .google:
-            if NotionLinks.hasNotionCalendar {
-                NotionLinks.openNotionCalendar()
-            } else if let url = item.url {
-                NSWorkspace.shared.open(url)
-            }
+        if NotionLinks.hasNotionCalendar {
+            NotionLinks.openNotionCalendar()
+        } else if let url = item.url {
+            NSWorkspace.shared.open(url)
         }
     }
 }

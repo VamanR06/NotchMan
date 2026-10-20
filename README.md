@@ -1,6 +1,6 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" switchable from a dock.
+A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Now Playing) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
@@ -22,7 +22,7 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 | --- | --- |
 | `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
 | `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Calendar, Now Playing) |
+| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Now Playing) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
 
 ## Writing a notch app
@@ -38,14 +38,18 @@ and `openSettings()`. Apps keep running when not selected.
 
 ## Calendar setup (free)
 
-**Google Calendar:** in Google Cloud Console create a project → enable *Google Calendar API* → OAuth consent
-screen (External; add yourself; then *Publish app* so sign-in doesn't expire after 7 days — an unverified app
-is fine for personal use) → Credentials → *OAuth client ID* of type **Desktop app**. Paste the client ID and
-secret in NotchMan Settings → Calendar and sign in.
+In Google Cloud Console create a project → enable *Google Calendar API* → OAuth consent screen (External; add
+yourself; then *Publish app* so sign-in doesn't expire after 7 days — an unverified app is fine for personal use)
+→ Credentials → *OAuth client ID* of type **Desktop app**. Paste the client ID and secret in NotchMan Settings →
+Calendar and sign in. Clicking an event opens Notion Calendar if installed (otherwise Google Calendar).
 
-**Notion:** create an internal integration at notion.so/profile/integrations, paste its secret in settings, then
-share each database with the integration (database `•••` → Connections). Choose the date property per database.
-Clicking a Google event opens Notion Calendar if installed (otherwise Google Calendar); right-click for more.
+## Tasks (Notion)
+
+Create an internal integration at notion.so/profile/integrations with *Read* and *Update content*, paste its
+secret in Settings → Tasks, then share each task database with it (database `•••` → Connections) and enable it.
+Tasks are grouped Overdue / Today / Upcoming / No due date; done tasks are hidden. NotchMan detects the due date
+property and how the board marks tasks done (a Status property's *Complete* group, a "Done" checkbox, or a select
+option like "Done"); both can be overridden per database. Checking a task off writes back to Notion.
 
 ## Now Playing
 

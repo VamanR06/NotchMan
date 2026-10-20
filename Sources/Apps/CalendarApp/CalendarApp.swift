@@ -1,7 +1,7 @@
 import SwiftUI
 import NotchKit
 
-/// Unified timeline of Google Calendar events and dated Notion pages.
+/// Timeline of upcoming Google Calendar events.
 @MainActor @Observable
 public final class CalendarApp: NotchApp {
     public let id = "calendar"
@@ -17,7 +17,6 @@ public final class CalendarApp: NotchApp {
     private(set) var now = Date()
 
     @ObservationIgnored private(set) var google: GoogleCalendarSource!
-    @ObservationIgnored private(set) var notion: NotionSource!
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var timers: [Task<Void, Never>] = []
     @ObservationIgnored private var alertedEventIDs: Set<String> = []
@@ -31,7 +30,6 @@ public final class CalendarApp: NotchApp {
     public func activate(context: NotchContext) {
         self.context = context
         google = GoogleCalendarSource(keychain: context.keychain, defaults: context.defaults)
-        notion = NotionSource(keychain: context.keychain, defaults: context.defaults)
 
         timers.append(Task { [weak self] in
             while !Task.isCancelled {
@@ -53,7 +51,7 @@ public final class CalendarApp: NotchApp {
     }
 
     var isConnected: Bool {
-        google.isSignedIn || (notion.hasToken && !notion.selection.isEmpty)
+        google.isSignedIn
     }
 
     func refresh() async {
@@ -78,11 +76,7 @@ public final class CalendarApp: NotchApp {
 
         do { collected += try await google.items(from: start, to: end) } catch {
             errors.append(error.localizedDescription)
-            context?.logger.error("Google refresh failed: \(error.localizedDescription)")
-        }
-        do { collected += try await notion.items(from: start, to: end) } catch {
-            errors.append(error.localizedDescription)
-            context?.logger.error("Notion refresh failed: \(error.localizedDescription)")
+            context?.logger.error("Google refresh failed: \(error.localizedDescription, privacy: .public)")
         }
 
         items = collected.sorted { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
@@ -148,6 +142,6 @@ public final class CalendarApp: NotchApp {
     }
 
     public func makeSettingsView() -> AnyView? {
-        AnyView(CalendarSettingsView(app: self, google: google, notion: notion))
+        AnyView(CalendarSettingsView(app: self, google: google))
     }
 }
