@@ -167,3 +167,16 @@ struct WebViewHost: NSViewRepresentable {
         container.addSubview(webView)
     }
 }
+
+/// Tells the Chat app when a popped-out chat window closes so the chat returns to the notch.
+final class WindowCloseObserver: NSObject, NSWindowDelegate {
+    private let onClose: @MainActor () -> Void
+
+    init(onClose: @escaping @MainActor () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated { onClose() }
+    }
+}

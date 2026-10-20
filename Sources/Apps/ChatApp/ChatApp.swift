@@ -23,6 +23,10 @@ public final class ChatApp: NotchApp {
     private(set) var busySince: [ChatService: Date] = [:]
     /// Services with a finished reply the user hasn't looked at yet.
     private(set) var unread: Set<ChatService> = []
+    /// Services moved out of the notch into their own window (for room, e.g. PDF previews).
+    private(set) var poppedOut: Set<ChatService> = []
+    @ObservationIgnored private var windows: [ChatService: NSWindow] = [:]
+    @ObservationIgnored private var windowDelegates: [ChatService: WindowCloseObserver] = [:]
     /// Post a macOS notification when a reply finishes while you're not looking.
     var notifyWhenDone = true {
         didSet { context?.defaults.set(notifyWhenDone, forKey: "notifyWhenDone") }
@@ -165,9 +169,10 @@ public final class ChatApp: NotchApp {
         }
     }
 
-    /// The Chat app is open in the notch on this service.
+    /// The chat is on screen: open in the notch on this service, or its own window is focused.
     private func isLooking(at service: ChatService) -> Bool {
-        (context?.isVisible ?? false) && self.service == service
+        if windows[service]?.isKeyWindow == true { return true }
+        return (context?.isVisible ?? false) && self.service == service && !poppedOut.contains(service)
     }
 
     /// Called by the view when a service is on screen.
@@ -215,6 +220,61 @@ public final class ChatApp: NotchApp {
         .formStyle(.grouped))
     }
 
+    // MARK: - Pop out
+
+    /// Moves the current chat (conversation and all) into a normal resizable window.
+    func popOut() {
+        let service = self.service
+        if let existing = windows[service] {
+            NSApp.activate()
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        let view = webView(for: service)
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 900)
+        let size = CGSize(width: min(1100, visible.width - 80), height: min(900, visible.height - 80))
+        let window = NSWindow(
+            contentRect: CGRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2,
+                                width: size.width, height: size.height),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = service.name
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("NotchManChat-\(service.rawValue)")
+
+        let container = NSView()
+        window.contentView = container
+        view.removeFromSuperview()
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+
+        let observer = WindowCloseObserver { [weak self] in self?.windowClosed(service) }
+        window.delegate = observer
+        windowDelegates[service] = observer
+        windows[service] = window
+        poppedOut.insert(service)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Closes the window; the chat goes back into the notch.
+    func bringBack() {
+        windows[service]?.close()
+    }
+
+    func showWindow() {
+        NSApp.activate()
+        windows[service]?.makeKeyAndOrderFront(nil)
+    }
+
+    private func windowClosed(_ service: ChatService) {
+        windows[service] = nil
+        windowDelegates[service] = nil
+        poppedOut.remove(service)
+    }
+
     func goHome() {
         webViews[service]?.load(URLRequest(url: service.home))
     }
@@ -257,6 +317,7 @@ struct ChatView: View {
                     button("chevron.left", "Back", app.goBack)
                     button("square.and.pencil", "New chat", app.goHome)
                     button("arrow.clockwise", "Reload", app.reload)
+                    button("macwindow.badge.plus", "Pop out into a window", app.popOut)
                     button("safari", "Open in browser", app.openInBrowser)
                 }
             }
@@ -265,7 +326,21 @@ struct ChatView: View {
             ZStack {
                 ForEach(ChatService.allCases) { service in
                     if service == app.service {
-                        WebViewHost(webView: app.webView(for: service))
+                        if app.poppedOut.contains(service) {
+                            VStack(spacing: 8) {
+                                Text("\(service.name) is open in its own window.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                HStack {
+                                    Button("Show Window", action: app.showWindow)
+                                    Button("Bring Back", action: app.bringBack)
+                                }
+                                .controlSize(.small)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            WebViewHost(webView: app.webView(for: service))
+                        }
                     }
                 }
             }

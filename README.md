@@ -70,7 +70,9 @@ also copied to the clipboard as a fallback. To keep these chats in a ChatGPT pro
 
 The real chatgpt.com, claude.ai and muse.ai, embedded in the notch with a toggle. Sign in once with your own accounts
 (you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless
-you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading.
+you send it. Links to other sites open in your browser. Use the pin button to keep the notch open while reading,
+or Pop out to move the chat (conversation and all) into a normal resizable window for more room — handy for
+file previews, especially on non-Retina monitors. Closing the window puts it back in the notch.
 
 When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
