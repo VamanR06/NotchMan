@@ -4,16 +4,34 @@ import SwiftUI
 struct ChatSettingsView: View {
     @Bindable var app: ChatApp
     @State private var template = AskAI.shared.promptTemplate
+    @State private var claudePath = ""
+    @State private var detectedPath: String?
 
     var body: some View {
         Form {
             Section {
                 Toggle(isOn: $app.notifyWhenDone) {
-                    Text("Notify when a reply finishes")
-                    Text("A macOS notification when ChatGPT, Claude or Muse finishes a reply (3 seconds or longer) while the chat isn't on screen. The notch always shows a ✓ until you look.")
+                    Text("Notify about agents and chats")
+                    Text("A macOS notification when a Claude Code agent needs you or finishes, or when ChatGPT, Claude or Muse finishes a reply (3 seconds or longer), while you aren't looking at it. The notch always shows it until you look.")
                 }
             } header: {
                 Text("Notifications")
+            }
+
+            Section {
+                Picker("Open interactive sessions in", selection: $app.editor) {
+                    ForEach(AgentEditor.allCases) { Text($0.name).tag($0) }
+                }
+                TextField("claude command", text: $claudePath, prompt: Text(detectedPath ?? "Auto-detect"))
+                    .onSubmit { app.agentMonitor.claudePathOverride = claudePath; refreshDetected() }
+                if let error = app.agentMonitor.error {
+                    Text(error).foregroundStyle(.orange).font(.caption)
+                }
+            } header: {
+                Text("Claude Code Agents")
+            } footer: {
+                Text("The Overview lists sessions from `claude agents --json` (CLI, VS Code and background agents on this Mac). Clicking a background agent opens Terminal attached to it; an interactive one opens its folder in your editor. Leave the command empty to find it automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
@@ -34,6 +52,14 @@ struct ChatSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            claudePath = app.agentMonitor.claudePathOverride
+            refreshDetected()
+        }
+    }
+
+    private func refreshDetected() {
+        Task { detectedPath = await app.agentMonitor.claudePath() }
     }
 }
 

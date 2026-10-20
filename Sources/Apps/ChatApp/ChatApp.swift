@@ -3,20 +3,35 @@ import SwiftUI
 import WebKit
 import NotchKit
 
-/// ChatGPT and Claude in the notch, as their real websites (signed in with your own accounts).
+/// Agents: one place for AI work. An Overview of Claude Code sessions (via `claude agents --json`) and the
+/// web chats, plus ChatGPT, Claude and Muse themselves as their real websites (signed in with your own
+/// accounts — usage is the same as using the sites in a browser; pages load the first time they're shown).
 ///
-/// Nothing is sent anywhere except what you type into the sites yourself, so usage is the same as using
-/// chatgpt.com / claude.ai in a browser. Pages only load the first time a service is shown.
+/// The module and app id stay "chat" so Ask menus and prompts from other apps keep routing here.
 @MainActor @Observable
 public final class ChatApp: NotchApp {
     public let id = "chat"
-    public let name = "Chat"
-    public let iconSystemName = "bubble.left.and.text.bubble.right"
+    public let name = "Agents"
+    public let iconSystemName = "sparkles"
     public var expandedHeight: CGFloat { 460 }
     public var expandedWidth: CGFloat { 720 }
 
     var service: ChatService = .chatgpt {
         didSet { context?.defaults.set(service.rawValue, forKey: "service") }
+    }
+    /// The Overview tab is showing (instead of a chat).
+    var showingOverview = true {
+        didSet { context?.defaults.set(showingOverview, forKey: "showingOverview") }
+    }
+    /// The inline New Agent form is open on the Overview.
+    var composingAgent = false
+
+    /// Claude Code sessions.
+    @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
+    /// Agents that needed you or finished while you weren't looking at the Overview.
+    private(set) var unseenAgents: Set<String> = []
+    var editor: AgentEditor = .vscode {
+        didSet { context?.defaults.set(editor.rawValue, forKey: "editor") }
     }
     private(set) var loading: Set<ChatService> = []
     /// Services currently generating a reply, and since when.
@@ -60,6 +75,11 @@ public final class ChatApp: NotchApp {
             service = saved
         }
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
+        showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
+        editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
+        agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
+        agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
+        agentMonitor.start()
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
                let saved = try? JSONDecoder().decode([AskProject].self, from: data) {
@@ -102,12 +122,16 @@ public final class ChatApp: NotchApp {
 
     public func receive(_ message: NotchMessage) {
         if message.name == NotchMessage.notificationOpenedName {
-            if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) { service = opened }
+            if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) {
+                show(opened)
+            } else if message.payload["agent"] != nil {
+                showingOverview = true
+            }
             return
         }
         guard message.name == NotchMessage.chatPromptName, let text = message.payload["text"] else { return }
         let target = message.payload["service"].flatMap(ChatService.init(rawValue:)) ?? .chatgpt
-        service = target
+        show(target)
         // Backup in case the site's message box can't be filled: just paste.
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -185,7 +209,58 @@ public final class ChatApp: NotchApp {
     /// The chat is on screen: open in the notch on this service, or its own window is focused.
     private func isLooking(at service: ChatService) -> Bool {
         if windows[service]?.isKeyWindow == true { return true }
-        return (context?.isVisible ?? false) && self.service == service && !poppedOut.contains(service)
+        return (context?.isVisible ?? false) && !showingOverview && self.service == service && !poppedOut.contains(service)
+    }
+
+    private var isLookingAtOverview: Bool {
+        (context?.isVisible ?? false) && showingOverview
+    }
+
+    /// Switches to a chat tab.
+    func show(_ service: ChatService) {
+        self.service = service
+        showingOverview = false
+    }
+
+    // MARK: - Claude Code agents
+
+    private func handle(_ events: [AgentEvent]) {
+        guard !isLookingAtOverview else { return }
+        for event in events {
+            unseenAgents.insert(event.agent.id)
+            guard notifyWhenDone else { continue }
+            let agent = event.agent
+            switch event {
+            case .needsYou:
+                context?.notify(title: "\(agent.name) needs you", body: "Claude Code · \(agent.project)", payload: ["agent": agent.id])
+            case .finished:
+                context?.notify(title: "\(agent.name) finished", body: "Claude Code · \(agent.project)", payload: ["agent": agent.id])
+            }
+        }
+        context?.requestAttention(.pulse)
+    }
+
+    /// For tests.
+    func useUnseenForTesting(_ ids: Set<String>) {
+        unseenAgents = ids
+    }
+
+    /// For tests: use a monitor without starting it.
+    func useAgentMonitor(_ monitor: ClaudeAgentsMonitor) {
+        agentMonitor = monitor
+    }
+
+    func markOverviewSeen() {
+        unseenAgents.removeAll()
+    }
+
+    /// Background agents open attached in Terminal; interactive ones open their folder in the editor.
+    func open(_ agent: ClaudeAgent) {
+        if agent.kind == .background {
+            Task { await agentMonitor.attach(agent) }
+        } else {
+            editor.open(agent.cwd)
+        }
     }
 
     /// Called by the view when a service is on screen.
@@ -195,32 +270,71 @@ public final class ChatApp: NotchApp {
 
     func isBusy(_ service: ChatService) -> Bool { busySince[service] != nil }
 
-    /// Collapsed notch: a spinner while any service is writing, plus each busy (white) or finished (green) service.
-    /// Outranks music so a pending reply isn't hidden by what's playing.
-    /// Chip: a spinner and the service still writing (e.g. "GPT", or "GPT +1" if several), or a green check
-    /// and the service whose reply is waiting. Outranks music so a pending reply isn't hidden.
+    /// One summary of all AI activity, most urgent first.
+    struct Summary: Equatable {
+        enum Kind: Equatable { case needsYou, working, ready }
+        let kind: Kind
+        let label: String
+    }
+
+    /// Needs you (agents that newly need input) > working (busy agents + writing chats) > ready (finished
+    /// agents and chat replies you haven't seen). A single chat shows its name instead of a count.
+    static func summary(needsYou: Int, workingAgents: Int, writingChats: [ChatService],
+                        readyAgents: Int, readyChats: [ChatService]) -> Summary? {
+        if needsYou > 0 {
+            return Summary(kind: .needsYou, label: needsYou == 1 ? "1 needs you" : "\(needsYou) need you")
+        }
+        let working = workingAgents + writingChats.count
+        if working > 0 {
+            let label = working == 1 && writingChats.count == 1 ? writingChats[0].shortName : "\(working) working"
+            return Summary(kind: .working, label: label)
+        }
+        let ready = readyAgents + readyChats.count
+        if ready > 0 {
+            let label = ready == 1 && readyChats.count == 1 ? readyChats[0].shortName : "\(ready) ready"
+            return Summary(kind: .ready, label: label)
+        }
+        return nil
+    }
+
+    private var currentSummary: Summary? {
+        let agents = agentMonitor?.agents ?? []
+        let unseen = agents.filter { unseenAgents.contains($0.id) }
+        return Self.summary(
+            needsYou: unseen.filter { $0.phase == .needsYou }.count,
+            workingAgents: agents.filter { $0.phase == .working }.count,
+            writingChats: ChatService.allCases.filter(isBusy),
+            readyAgents: unseen.filter { $0.phase == .done || $0.phase == .idle }.count,
+            readyChats: ChatService.allCases.filter { unread.contains($0) && !isBusy($0) }
+        )
+    }
+
+    /// Collapsed-notch chip for all AI activity; outranks music so it isn't hidden while something plays.
     public var activity: NotchActivity? {
-        let busy = ChatService.allCases.filter(isBusy)
-        let done = ChatService.allCases.filter { unread.contains($0) && !isBusy($0) }
-        guard let first = busy.first ?? done.first else { return nil }
-        let others = busy.count + done.count - 1
-        let label = first.shortName + (others > 0 ? " +\(others)" : "")
-        return NotchActivity(priority: busy.isEmpty ? 12 : 14) {
-            if busy.isEmpty {
-                NotchChip(label, tint: .green) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
-                }
-            } else {
-                NotchChip(label) { NotchSpinner(size: 11, lineWidth: 1.8) }
+        guard let summary = currentSummary else { return nil }
+        switch summary.kind {
+        case .needsYou:
+            return NotchActivity(priority: 18) {
+                NotchChip(summary.label, systemImage: "exclamationmark.bubble.fill", tint: .orange)
+            }
+        case .working:
+            return NotchActivity(priority: 14) {
+                NotchChip(summary.label) { NotchSpinner(size: 11, lineWidth: 1.8) }
+            }
+        case .ready:
+            return NotchActivity(priority: 12) {
+                NotchChip(summary.label, systemImage: "checkmark.circle.fill", tint: .green)
             }
         }
     }
 
     public var dockBadge: NotchBadge? {
-        if ChatService.allCases.contains(where: isBusy) { return .busy }
-        return unread.isEmpty ? nil : .dot(.green)
+        switch currentSummary?.kind {
+        case .needsYou: .dot(.orange)
+        case .working: .busy
+        case .ready: .dot(.green)
+        case nil: nil
+        }
     }
 
     public func makeSettingsView() -> AnyView? {
@@ -358,19 +472,34 @@ struct ChatView: View {
             HStack(spacing: 10) {
                 ServiceTabs(app: app)
 
-                if app.loading.contains(app.service) {
+                if !app.showingOverview && app.loading.contains(app.service) {
                     NotchSpinner(size: 11, color: .white.opacity(0.6), lineWidth: 1.6)
                 }
                 Spacer()
-                Group {
-                    button("chevron.left", "Back", app.goBack)
-                    button("square.and.pencil", "New chat", app.goHome)
-                    button("arrow.clockwise", "Reload", app.reload)
-                    button("macwindow.badge.plus", "Pop out into a window", app.popOut)
-                    button("safari", "Open in browser", app.openInBrowser)
+                if app.showingOverview {
+                    button("arrow.clockwise", "Refresh agents") { Task { await app.agentMonitor.refresh() } }
+                    Button { app.composingAgent.toggle() } label: {
+                        Label("New Agent", systemImage: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(.white.opacity(app.composingAgent ? 0.25 : 0.12)))
+                            .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Group {
+                        button("chevron.left", "Back", app.goBack)
+                        button("square.and.pencil", "New chat", app.goHome)
+                        button("arrow.clockwise", "Reload", app.reload)
+                        button("macwindow.badge.plus", "Pop out into a window", app.popOut)
+                        button("safari", "Open in browser", app.openInBrowser)
+                    }
                 }
             }
 
+            if app.showingOverview {
+                AgentsOverview(app: app)
+            } else {
             // Both services stay loaded; only the selected one is shown.
             ZStack {
                 ForEach(ChatService.allCases) { service in
@@ -394,9 +523,11 @@ struct ChatView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
         }
-        .onAppear { app.markSeen(app.service) }
+        .onAppear { if !app.showingOverview { app.markSeen(app.service) } }
         .onChange(of: app.service) { _, service in app.markSeen(service) }
+        .onChange(of: app.showingOverview) { _, overview in if !overview { app.markSeen(app.service) } }
     }
 
     private func button(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
@@ -412,15 +543,31 @@ struct ChatView: View {
     }
 }
 
-/// ChatGPT | Claude | Muse switcher showing each service's reply state.
+/// Overview | ChatGPT | Claude | Muse switcher showing each one's state.
 private struct ServiceTabs: View {
     @Bindable var app: ChatApp
 
     var body: some View {
         HStack(spacing: 2) {
+            Button { app.showingOverview = true } label: {
+                HStack(spacing: 5) {
+                    Text("Overview")
+                    if !app.unseenAgents.isEmpty {
+                        Circle().fill(.orange).frame(width: 6, height: 6)
+                    }
+                }
+                .font(.system(size: 12, weight: app.showingOverview ? .semibold : .regular))
+                .foregroundStyle(app.showingOverview ? .white : .white.opacity(0.65))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(app.showingOverview ? 0.2 : 0)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
             ForEach(ChatService.allCases) { service in
-                let selected = service == app.service
-                Button { app.service = service } label: {
+                let selected = !app.showingOverview && service == app.service
+                Button { app.show(service) } label: {
                     HStack(spacing: 5) {
                         Text(service.name)
                         if app.isBusy(service) {

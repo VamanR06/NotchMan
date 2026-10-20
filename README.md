@@ -1,6 +1,6 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Chat, Now Playing) switchable from a dock.
+A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Agents, Now Playing) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
@@ -22,7 +22,7 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 | --- | --- |
 | `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
 | `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Chat, Now Playing) |
+| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Agents, Now Playing) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
 
 ## Writing a notch app
@@ -70,7 +70,16 @@ title, company, link, location and saved description — into a new ChatGPT chat
 also copied to the clipboard as a fallback. To keep these chats in a ChatGPT project, paste the project's link
 (`https://chatgpt.com/g/g-p-…/project`) under Settings → Jobs → ChatGPT Project; each prompt can override it.
 
-## Chat (ChatGPT / Claude / Muse)
+## Agents (Claude Code + ChatGPT / Claude / Muse)
+
+One place for AI work. The **Overview** tab shows the three web chats (writing / reply ready) and every Claude
+Code session on this Mac — CLI, VS Code and background agents — grouped as Needs you, Working, Done and Idle,
+read from `claude agents --json` whenever Claude Code's session files change. Click a background agent to open
+Terminal attached to it, or an interactive one to open its folder in VS Code/Cursor; right-click for more.
+**New Agent** starts `claude --bg "<prompt>"` in a project folder. You're notified when an agent needs you or
+finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
+
+### Chat tabs
 
 The real chatgpt.com, claude.ai and muse.ai, embedded in the notch with a toggle. Sign in once with your own accounts
 (you stay signed in); no API keys, and usage is exactly the same as using the websites — nothing is sent unless

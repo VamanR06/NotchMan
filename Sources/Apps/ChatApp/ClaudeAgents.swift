@@ -204,20 +204,25 @@ final class ClaudeAgentsMonitor {
         }
         do {
             let output = try await Shell.run(path, ["agents", "--json"])
-            let fresh = try ClaudeAgent.decodeList(Data(output.utf8))
-            let now = Date()
-            let previous = Dictionary(agents.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            let events = hasLoaded ? AgentTransitions.events(from: previous, to: fresh, workingSince: workingSince, now: now) : []
-            for agent in fresh {
-                if agent.phase == .working { workingSince[agent.id] = workingSince[agent.id] ?? now } else { workingSince[agent.id] = nil }
-            }
-            agents = ClaudeAgent.sorted(fresh)
-            hasLoaded = true
+            let events = apply(try ClaudeAgent.decodeList(Data(output.utf8)), now: Date())
             error = nil
             if !events.isEmpty { onEvents?(events) }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Takes a fresh snapshot and returns what changed (nothing on the first snapshot).
+    @discardableResult
+    func apply(_ fresh: [ClaudeAgent], now: Date) -> [AgentEvent] {
+        let previous = Dictionary(agents.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let events = hasLoaded ? AgentTransitions.events(from: previous, to: fresh, workingSince: workingSince, now: now) : []
+        for agent in fresh {
+            if agent.phase == .working { workingSince[agent.id] = workingSince[agent.id] ?? now } else { workingSince[agent.id] = nil }
+        }
+        agents = ClaudeAgent.sorted(fresh)
+        hasLoaded = true
+        return events
     }
 
     /// Project folders seen in current sessions, most recent first (for "New agent").
