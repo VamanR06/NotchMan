@@ -157,7 +157,7 @@ public final class NowPlayingApp: NotchApp {
     func play(_ song: SpotifyLibrary.Song?, in playlist: SpotifyLibrary.Playlist) {
         let previous = NSWorkspace.shared.frontmostApplication
         let spotifyBefore = NSRunningApplication.runningApplications(withBundleIdentifier: SpotifyClient.bundleID).first
-        let spotifyWasHidden = spotifyBefore?.isHidden ?? true
+        let spotifyWasVisible = spotifyBefore.map { !$0.isHidden } ?? false
         Task {
             do {
                 if let song {
@@ -166,7 +166,7 @@ public final class NowPlayingApp: NotchApp {
                     try await SpotifyClient.play(playlist.uri)
                 }
                 error = nil
-                await Self.restoreFocus(to: previous, hideSpotify: spotifyWasHidden)
+                await Self.restoreFocus(to: previous, spotifyWasVisible: spotifyWasVisible)
             } catch {
                 self.error = error.localizedDescription
             }
@@ -175,19 +175,36 @@ public final class NowPlayingApp: NotchApp {
         }
     }
 
-    /// Spotify's `play track` brings its window to the front. Undo that: give focus back to the app the user
-    /// was in, and re-hide Spotify if it was hidden (or not running) before.
-    private static func restoreFocus(to previous: NSRunningApplication?, hideSpotify: Bool) async {
-        guard previous?.bundleIdentifier != SpotifyClient.bundleID else { return }
-        // Spotify activates asynchronously; watch for it for a moment.
-        for _ in 0..<12 {
-            try? await Task.sleep(for: .milliseconds(100))
-            guard let spotify = NSWorkspace.shared.frontmostApplication,
-                  spotify.bundleIdentifier == SpotifyClient.bundleID else { continue }
-            if hideSpotify { spotify.hide() }
-            previous?.activate()
-            return
+    /// Spotify's `play track` brings its window to the front — sometimes more than a second later, and sometimes
+    /// twice (again once playback starts). For a few seconds, whenever it comes forward, hand focus back to
+    /// the app the user was in. If macOS refuses that activation, hide Spotify instead: when the frontmost app
+    /// hides, focus returns to the app beneath it. A window that was showing before is unhidden afterwards,
+    /// which doesn't take focus.
+    private static func restoreFocus(to previous: NSRunningApplication?, spotifyWasVisible: Bool) async {
+        guard let previous, previous.bundleIdentifier != SpotifyClient.bundleID else { return }
+        func spotifyIsFront() -> NSRunningApplication? {
+            let front = NSWorkspace.shared.frontmostApplication
+            return front?.bundleIdentifier == SpotifyClient.bundleID ? front : nil
         }
+
+        var hidden: NSRunningApplication?
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let spotify = spotifyIsFront() else { continue }
+            previous.activate()
+            try? await Task.sleep(for: .milliseconds(300))
+            if spotifyIsFront() != nil {
+                spotify.hide()
+                hidden = spotify
+            }
+        }
+
+        guard let hidden, spotifyWasVisible else { return }
+        hidden.unhide()
+        try? await Task.sleep(for: .milliseconds(250))
+        // Unhiding shouldn't take focus; if it did anyway, leaving Spotify hidden beats stealing focus.
+        if spotifyIsFront() != nil { hidden.hide() }
     }
 
     func openSettings() {
