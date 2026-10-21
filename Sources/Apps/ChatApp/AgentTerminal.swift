@@ -10,8 +10,14 @@ final class AgentTerminal: Identifiable {
     private(set) var agent: ClaudeAgent
     /// False once `claude attach` exits (detached with ← / Ctrl+Z, or the session ended).
     private(set) var isRunning = false
+    /// Title the program sets (OSC 0/2).
+    private(set) var title = ""
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
+    /// Called when Claude Code switches this terminal to its own agent list (← from the session); the app
+    /// shows NotchMan's Overview instead.
+    @ObservationIgnored var onAgentList: (() -> Void)?
+    @ObservationIgnored private var watch: Task<Void, Never>?
 
     init(agent: ClaudeAgent) {
         id = agent.id
@@ -25,6 +31,8 @@ final class AgentTerminal: Identifiable {
         view.optionAsMetaKey = true
         view.processDelegate = events
         events.onExit = { [weak self] in self?.isRunning = false }
+        events.onTitle = { [weak self] title in self?.title = title }
+        view.onKey = { [weak self] event in self?.keyPressed(event) }
     }
 
     /// Starts (or restarts) `claude attach` through a login shell, so the user's PATH applies.
@@ -58,6 +66,30 @@ final class AgentTerminal: Identifiable {
         self.agent = agent
     }
 
+    /// ← either moves the cursor (while editing) or makes Claude Code open its agent list; only the program
+    /// knows which. So let it through, and if the agent list appears, hand over to NotchMan's Overview.
+    private func keyPressed(_ event: NSEvent) {
+        let plainLeftArrow = event.keyCode == TerminalKeyMap.KeyCode.left
+            && event.modifierFlags.intersection([.command, .option, .shift, .control]).isEmpty
+        guard plainLeftArrow, isRunning else { return }
+        watch?.cancel()
+        watch = Task { [weak self] in
+            for _ in 0..<15 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled else { return }
+                if Self.isClaudeAgentList(self.screenText) {
+                    self.onAgentList?()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Claude Code's agent list (what `claude attach` shows after ←), recognized by its prompt and footer.
+    static func isClaudeAgentList(_ screen: String) -> Bool {
+        screen.contains("describe a task for a new session") && screen.contains("enter to return")
+    }
+
     /// Puts keyboard focus in the terminal.
     func focus() {
         view.window?.makeKey()
@@ -68,6 +100,9 @@ final class AgentTerminal: Identifiable {
 /// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel, and
 /// translates macOS editing shortcuts into what terminal programs expect (see `TerminalKeyMap`).
 final class NotchTerminalView: LocalProcessTerminalView {
+    /// Sees every key pressed in this terminal (after our shortcut translation).
+    var onKey: ((NSEvent) -> Void)?
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
@@ -92,7 +127,9 @@ final class NotchTerminalView: LocalProcessTerminalView {
             nonisolated(unsafe) let event = event
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let terminal = event.window?.firstResponder as? NotchTerminalView else { return false }
-                return terminal.handle(event)
+                let handled = terminal.handle(event)
+                if !handled { terminal.onKey?(event) }
+                return handled
             }
             return handled ? nil : event
         }
@@ -167,9 +204,13 @@ enum TerminalKeyMap {
 /// Process callbacks from SwiftTerm.
 private final class TerminalEvents: LocalProcessTerminalViewDelegate {
     var onExit: (@MainActor () -> Void)?
+    var onTitle: (@MainActor (String) -> Void)?
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        let onTitle = self.onTitle
+        DispatchQueue.main.async { MainActor.assumeIsolated { onTitle?(title) } }
+    }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
