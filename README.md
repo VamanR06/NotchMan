@@ -77,7 +77,9 @@ Code session on this Mac — CLI, VS Code and background agents — grouped as N
 read from `claude agents --json` whenever Claude Code's session files change. Click a background agent to open an
 interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
-right-click, or the default in Settings). Interactive sessions open their folder in VS Code/Cursor.
+right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** opens shells in the
+agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
+a shell. Interactive sessions open their folder in VS Code/Cursor.
 **New Agent** starts `claude --bg "<prompt>"` in a project folder. You're notified when an agent needs you or
 finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
 
