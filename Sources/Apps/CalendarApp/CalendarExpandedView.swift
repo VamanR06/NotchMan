@@ -111,8 +111,12 @@ private struct Timeline: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 4, pinnedViews: [.sectionHeaders]) {
                 ForEach(days, id: \.0) { day, items in
+                    let past = items.filter { $0.isPast(at: app.now) }
                     Section {
-                        ForEach(items) { item in
+                        if !past.isEmpty {
+                            EarlierToggle(app: app, count: past.count)
+                        }
+                        ForEach(items.filter { app.showPastEvents || !$0.isPast(at: app.now) }) { item in
                             EventRow(app: app, item: item, now: app.now)
                         }
                     } header: {
@@ -137,6 +141,33 @@ private struct Timeline: View {
     }
 }
 
+/// "3 earlier events ▸" — shows or hides today's finished events.
+private struct EarlierToggle: View {
+    @Bindable var app: CalendarApp
+    let count: Int
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { app.showPastEvents.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(app.showPastEvents ? 90 : 0))
+                Text(app.showPastEvents ? "Hide earlier events" : "\(count) earlier event\(count == 1 ? "" : "s")")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.white.opacity(hovering ? 0.7 : 0.45))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 private struct EventRow: View {
     let app: CalendarApp
     let item: CalendarItem
@@ -153,10 +184,7 @@ private struct EventRow: View {
         }
     }
 
-    private var isPast: Bool {
-        if let end = item.end { return end < now && !item.isAllDay }
-        return item.start < now && !item.isAllDay
-    }
+    private var isPast: Bool { item.isPast(at: now) }
 
     private var row: some View {
         HStack(spacing: 8) {

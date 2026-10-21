@@ -20,6 +20,12 @@ struct CalendarItem: Identifiable, Hashable {
     let meetingURL: URL?
     let location: String?
 
+    /// Finished: timed events whose end (or start, with no end) has passed. All-day events never count.
+    func isPast(at now: Date) -> Bool {
+        guard !isAllDay else { return false }
+        return (end ?? start) < now
+    }
+
     func isOngoing(at now: Date) -> Bool {
         guard !isAllDay, let end else { return false }
         return start <= now && now < end

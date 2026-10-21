@@ -13,6 +13,10 @@ public final class CalendarApp: NotchApp {
     private(set) var errors: [String] = []
     private(set) var isLoading = false
     private(set) var lastRefresh: Date?
+    /// Show today's finished events (otherwise they're folded into one "earlier" row).
+    var showPastEvents = false {
+        didSet { context?.defaults.set(showPastEvents, forKey: "showPastEvents") }
+    }
     /// Ticks every 30s so relative times and the activity stay current.
     private(set) var now = Date()
 
@@ -30,6 +34,7 @@ public final class CalendarApp: NotchApp {
     public func activate(context: NotchContext) {
         self.context = context
         google = GoogleCalendarSource(keychain: context.keychain, defaults: context.defaults)
+        showPastEvents = context.defaults.bool(forKey: "showPastEvents")
 
         timers.append(Task { [weak self] in
             while !Task.isCancelled {

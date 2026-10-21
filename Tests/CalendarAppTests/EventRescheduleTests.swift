@@ -62,3 +62,19 @@ import NotchKit
         #expect(!info("reader").canEdit && !info("freeBusyReader").canEdit)
     }
 }
+
+@Suite struct PastEventTests {
+    private func event(start: Date, end: Date?, allDay: Bool = false) -> CalendarItem {
+        CalendarItem(id: "x", title: "E", start: start, end: end, isAllDay: allDay, color: .blue,
+                     calendarName: "C", url: nil, meetingURL: nil, location: nil)
+    }
+
+    @Test func onlyFinishedTimedEventsArePast() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(event(start: now - 7200, end: now - 3600).isPast(at: now))
+        #expect(!event(start: now - 1800, end: now + 1800).isPast(at: now), "in progress stays visible")
+        #expect(!event(start: now + 600, end: now + 4200).isPast(at: now))
+        #expect(event(start: now - 600, end: nil).isPast(at: now), "no end: started already")
+        #expect(!event(start: now - 86400, end: now + 3600, allDay: true).isPast(at: now), "all-day never folds")
+    }
+}
