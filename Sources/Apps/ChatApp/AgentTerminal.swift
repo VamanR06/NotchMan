@@ -93,6 +93,8 @@ final class AgentTerminal: Identifiable {
     var selected: Tab = .claude
     /// Claude on top, a shell below.
     var split = false
+    /// Share of the split height given to Claude (the shell gets the rest); adjustable by dragging.
+    var splitRatio: CGFloat = 0.6
     /// Called when Claude Code switches to its own agent list (← from the session); the app shows NotchMan's
     /// Overview instead.
     @ObservationIgnored var onAgentList: (() -> Void)?
@@ -339,12 +341,16 @@ struct AgentTerminalScreen: View {
         VStack(alignment: .leading, spacing: 6) {
             header
             if terminal.split, let shell = terminal.splitShell {
-                VStack(spacing: 6) {
-                    pane(terminal.claude, detachedOverlay: true)
-                        .frame(maxHeight: .infinity)
-                        .layoutPriority(1.5)
-                    pane(shell.session, detachedOverlay: false)
-                        .frame(maxHeight: .infinity)
+                // Explicit heights: letting the stack divide the space squeezed the shell to a sliver.
+                GeometryReader { geo in
+                    let heights = SplitLayout.heights(total: geo.size.height, ratio: terminal.splitRatio)
+                    VStack(spacing: 0) {
+                        pane(terminal.claude, detachedOverlay: true)
+                            .frame(height: heights.top)
+                        SplitHandle(ratio: $terminal.splitRatio, total: geo.size.height)
+                        pane(shell.session, detachedOverlay: false)
+                            .frame(height: heights.bottom)
+                    }
                 }
             } else {
                 switch terminal.selected {
@@ -435,6 +441,50 @@ struct AgentTerminalScreen: View {
                 terminal.selected = .shell(shell.id)
             }
         })
+    }
+}
+
+/// Pane heights for the split view.
+enum SplitLayout {
+    static let handleHeight: CGFloat = 10
+    /// Each pane keeps at least this much (about 8 rows of 12pt text plus padding).
+    static let minimumPane: CGFloat = 130
+
+    static func heights(total: CGFloat, ratio: CGFloat) -> (top: CGFloat, bottom: CGFloat) {
+        let available = max(total - handleHeight, 0)
+        guard available >= minimumPane * 2 else { return (available / 2, available / 2) }
+        let top = min(max(available * ratio, minimumPane), available - minimumPane)
+        return (top, available - top)
+    }
+}
+
+/// Drag to resize the split.
+private struct SplitHandle: View {
+    @Binding var ratio: CGFloat
+    let total: CGFloat
+    @State private var startRatio: CGFloat?
+    @State private var hovering = false
+
+    var body: some View {
+        Capsule()
+            .fill(.white.opacity(hovering ? 0.5 : 0.25))
+            .frame(width: 44, height: 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: SplitLayout.handleHeight)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { drag in
+                    let start = startRatio ?? ratio
+                    startRatio = start
+                    let available = max(total - SplitLayout.handleHeight, 1)
+                    ratio = min(max(start + drag.translation.height / available, 0.2), 0.8)
+                }
+                .onEnded { _ in startRatio = nil })
+            .help("Drag to resize")
     }
 }
 

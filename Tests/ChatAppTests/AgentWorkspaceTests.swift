@@ -50,3 +50,18 @@ import Testing
         #expect(workspace.shells.isEmpty)
     }
 }
+
+@Suite struct SplitLayoutTests {
+    @Test func bothPanesGetRealHeight() {
+        let (top, bottom) = SplitLayout.heights(total: 400, ratio: 0.6)
+        #expect(abs(top - 234) < 0.5 && abs(bottom - 156) < 0.5)
+        #expect(top + bottom + SplitLayout.handleHeight == 400)
+    }
+
+    @Test func shellNeverShrinksBelowTheMinimum() {
+        let (top, bottom) = SplitLayout.heights(total: 400, ratio: 0.95)
+        #expect(bottom == SplitLayout.minimumPane)
+        #expect(top + bottom + SplitLayout.handleHeight == 400)
+        #expect(SplitLayout.heights(total: 400, ratio: 0.05).top == SplitLayout.minimumPane)
+    }
+}
