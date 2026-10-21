@@ -34,6 +34,15 @@ struct CalendarSettingsView: View {
                         Button("Sign Out") { google.signOut(); refreshTimeline() }
                     }
                 }
+                if !google.canEditEvents {
+                    LabeledContent("Rescheduling") {
+                        HStack {
+                            Text("Needs permission to change events").foregroundStyle(.secondary)
+                            Button(google.isSigningIn ? "Waiting for browser…" : "Reconnect") { signInGoogle() }
+                                .disabled(google.isSigningIn)
+                        }
+                    }
+                }
                 ForEach(google.calendars) { calendar in
                     Toggle(isOn: Binding(
                         get: { !google.hiddenCalendarIDs.contains(calendar.id) },

@@ -11,6 +11,10 @@ final class GoogleCalendarSource {
         let name: String
         let color: Color
         let isPrimary: Bool
+        /// Google's access role: owner / writer can change events; reader / freeBusyReader can't.
+        let accessRole: String
+
+        var canEdit: Bool { accessRole == "owner" || accessRole == "writer" }
     }
 
     enum GoogleError: LocalizedError {
@@ -26,7 +30,15 @@ final class GoogleCalendarSource {
         }
     }
 
-    private static let scope = "https://www.googleapis.com/auth/calendar.readonly"
+    /// Read calendars and events, and change events (for rescheduling).
+    private static let scope = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events"
+    private static let eventsScope = "https://www.googleapis.com/auth/calendar.events"
+
+    /// Whether the signed-in grant allows changing events (sign-ins before rescheduling existed are read-only).
+    var canEditEvents: Bool {
+        let granted = (defaults.string(forKey: "google.scopes") ?? "").split(separator: " ").map(String.init)
+        return granted.contains(Self.eventsScope) || granted.contains("https://www.googleapis.com/auth/calendar")
+    }
 
     private(set) var calendars: [CalendarInfo] = []
     private(set) var isSigningIn = false
@@ -124,6 +136,7 @@ final class GoogleCalendarSource {
 
     func signOut() {
         keychain.remove("google.refreshToken")
+        defaults.removeObject(forKey: "google.scopes")
         accessToken = nil
         calendars = []
         isSignedIn = false
@@ -133,6 +146,8 @@ final class GoogleCalendarSource {
         let access_token: String
         let expires_in: Double
         let refresh_token: String?
+        /// Space-separated scopes Google actually granted.
+        let scope: String?
     }
 
     private func tokenRequest(_ form: [String: String]) async throws -> TokenResponse {
@@ -153,6 +168,7 @@ final class GoogleCalendarSource {
     private func store(_ tokens: TokenResponse) {
         accessToken = tokens.access_token
         accessTokenExpiry = Date().addingTimeInterval(tokens.expires_in - 60)
+        if let scope = tokens.scope { defaults.set(scope, forKey: "google.scopes") }
     }
 
     private func validAccessToken() async throws -> String {
@@ -194,6 +210,7 @@ final class GoogleCalendarSource {
             let summaryOverride: String?
             let backgroundColor: String?
             let primary: Bool?
+            let accessRole: String?
         }
         let items: [Entry]
     }
@@ -204,9 +221,58 @@ final class GoogleCalendarSource {
             CalendarInfo(id: $0.id,
                          name: $0.summaryOverride ?? $0.summary,
                          color: $0.backgroundColor.flatMap(Color.init(hex:)) ?? .blue,
-                         isPrimary: $0.primary ?? false)
+                         isPrimary: $0.primary ?? false,
+                         accessRole: $0.accessRole ?? "reader")
         }
         .sorted { ($0.isPrimary ? 0 : 1, $0.name) < ($1.isPrimary ? 0 : 1, $1.name) }
+    }
+
+    enum MoveError: LocalizedError {
+        case needsPermission, notAllowed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .needsPermission:
+                "Reconnect Google in Settings → Calendar to allow rescheduling."
+            case .notAllowed(let detail):
+                "Google wouldn't move this event (you may not be its organizer). \(detail)"
+            }
+        }
+    }
+
+    /// Moves an event. Timed events get explicit local start/end times; all-day events use dates (end exclusive).
+    /// Guests, if any, are emailed about the change, as Google Calendar does.
+    func move(calendarID: String, eventID: String, start: Date, end: Date, allDay: Bool) async throws {
+        guard canEditEvents else { throw MoveError.needsPermission }
+        let path = "/calendars/\(Self.pathComponent(calendarID))/events/\(Self.pathComponent(eventID))"
+        var components = URLComponents(string: "https://www.googleapis.com/calendar/v3" + path)!
+        components.queryItems = [.init(name: "sendUpdates", value: "all")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: Self.moveBody(start: start, end: end, allDay: allDay))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if status == 403, body.contains("insufficient") { throw MoveError.needsPermission }
+            if status == 403 { throw MoveError.notAllowed("") }
+            throw GoogleError.http(status, body)
+        }
+    }
+
+    static func moveBody(start: Date, end: Date, allDay: Bool) -> [String: Any] {
+        if allDay {
+            return ["start": ["date": DateParsing.dayString(start)], "end": ["date": DateParsing.dayString(end)]]
+        }
+        let zone = TimeZone.current.identifier
+        return ["start": ["dateTime": DateParsing.localRFC3339(start), "timeZone": zone],
+                "end": ["dateTime": DateParsing.localRFC3339(end), "timeZone": zone]]
+    }
+
+    private static func pathComponent(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? s
     }
 
     private struct EventsResponse: Decodable {
@@ -261,6 +327,9 @@ final class GoogleCalendarSource {
                     isAllDay: allDay,
                     color: calendar.color,
                     calendarName: calendar.name,
+                    calendarID: calendar.id,
+                    eventID: event.id,
+                    canEdit: calendar.canEdit,
                     url: event.htmlLink.flatMap(URL.init(string:)),
                     meetingURL: MeetingLinks.link(conferenceVideo: event.conferenceData?.videoLink,
                                                   hangoutLink: event.hangoutLink, location: event.location),

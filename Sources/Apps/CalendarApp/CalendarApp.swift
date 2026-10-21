@@ -132,6 +132,41 @@ public final class CalendarApp: NotchApp {
         context?.openSettings()
     }
 
+    // MARK: - Rescheduling
+
+    /// Google granted permission to change events (sign-ins from before rescheduling are read-only).
+    var canChangeEvents: Bool { google.canEditEvents }
+
+    /// Moves an event to `newStart`, keeping its length. The timeline updates right away and reverts if Google
+    /// refuses.
+    func reschedule(_ item: CalendarItem, to newStart: Date) {
+        guard let calendarID = item.calendarID, let eventID = item.eventID,
+              let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let (start, end) = item.moved(to: newStart)
+        let before = items[index]
+        withAnimation(.easeOut(duration: 0.2)) {
+            items[index].start = start
+            items[index].end = end
+            items.sort { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+        }
+        Task {
+            do {
+                try await google.move(calendarID: calendarID, eventID: eventID, start: start, end: end, allDay: item.isAllDay)
+                errors = []
+                await refresh()
+            } catch {
+                if let i = items.firstIndex(where: { $0.id == item.id }) { items[i] = before }
+                items.sort { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+                errors = [error.localizedDescription]
+            }
+        }
+    }
+
+    /// Keep the notch open while a date picker is being used.
+    func setEditing(_ editing: Bool) {
+        context?.holdOpen(editing)
+    }
+
     public func makeExpandedView() -> AnyView {
         AnyView(CalendarExpandedView(app: self))
     }

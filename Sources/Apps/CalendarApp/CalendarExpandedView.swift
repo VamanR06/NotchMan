@@ -113,7 +113,7 @@ private struct Timeline: View {
                 ForEach(days, id: \.0) { day, items in
                     Section {
                         ForEach(items) { item in
-                            EventRow(item: item, now: app.now)
+                            EventRow(app: app, item: item, now: app.now)
                         }
                     } header: {
                         Text(Self.dayLabel(day))
@@ -138,16 +138,27 @@ private struct Timeline: View {
 }
 
 private struct EventRow: View {
+    let app: CalendarApp
     let item: CalendarItem
     let now: Date
     @State private var hovering = false
+    @State private var editing = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            row
+            if editing {
+                EventTimeEditor(app: app, item: item) { editing = false }
+            }
+        }
+    }
 
     private var isPast: Bool {
         if let end = item.end { return end < now && !item.isAllDay }
         return item.start < now && !item.isAllDay
     }
 
-    var body: some View {
+    private var row: some View {
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(item.color)
@@ -192,6 +203,20 @@ private struct EventRow: View {
         .onHover { hovering = $0 }
         .onTapGesture(perform: open)
         .contextMenu {
+            if item.canEdit && item.eventID != nil {
+                if app.canChangeEvents {
+                    Menu("Reschedule") {
+                        ForEach(EventMoveOption.options(for: item)) { option in
+                            Button(option.title) { app.reschedule(item, to: option.newStart(for: item)) }
+                        }
+                        Divider()
+                        Button(item.isAllDay ? "Pick Date…" : "Pick Date & Time…") { editing = true }
+                    }
+                } else {
+                    Button("Allow Rescheduling…") { app.openSettings() }
+                }
+                Divider()
+            }
             AskMenuItems { askText }
             Divider()
             Button("Open in Notion Calendar", action: NotionLinks.openNotionCalendar)
@@ -224,5 +249,58 @@ private struct EventRow: View {
         } else if let url = item.url {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+/// Inline picker for a new start; the event keeps its length.
+private struct EventTimeEditor: View {
+    let app: CalendarApp
+    let item: CalendarItem
+    let done: () -> Void
+    @State private var start: Date
+
+    init(app: CalendarApp, item: CalendarItem, done: @escaping () -> Void) {
+        self.app = app
+        self.item = item
+        self.done = done
+        _start = State(initialValue: item.start)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar.badge.clock").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            DatePicker("Start", selection: $start,
+                       displayedComponents: item.isAllDay ? [.date] : [.date, .hourAndMinute])
+                .datePickerStyle(.field)
+                .labelsHidden()
+                .fixedSize()
+            if !item.isAllDay {
+                Text("→ \(item.moved(to: start).end.formatted(date: .omitted, time: .shortened))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer()
+            Button("Cancel", action: done)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.6))
+            Button {
+                app.reschedule(item, to: start)
+                done()
+            } label: {
+                Text("Move")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Capsule().fill(.white))
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+            .disabled(start == item.start)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
+        .onAppear { app.setEditing(true) }
+        .onDisappear { app.setEditing(false) }
     }
 }

@@ -47,6 +47,10 @@ In Google Cloud Console create a project → enable *Google Calendar API* → OA
 yourself; then *Publish app* so sign-in doesn't expire after 7 days — an unverified app is fine for personal use)
 → Credentials → *OAuth client ID* of type **Desktop app**. Paste the client ID and secret in NotchMan Settings →
 Calendar and sign in. Clicking an event opens Notion Calendar if installed (otherwise Google Calendar).
+Right-click an event → **Reschedule** (15 min / 1 hour later, tomorrow or next week at the same time, or pick a
+date and time); it keeps its length, and guests are emailed as in Google Calendar. This needs permission to change
+events — if you signed in before it existed, use **Reconnect** in Settings → Calendar. Only calendars you own or
+can edit offer it.
 
 ## Tasks (Notion)
 
@@ -54,7 +58,8 @@ Create an internal integration at notion.so/profile/integrations with *Read* and
 secret in Settings → Tasks, then share each task database with it (database `•••` → Connections) and enable it.
 Tasks are grouped Overdue / Today / Upcoming / No due date; done tasks are hidden. NotchMan detects the due date
 property and how the board marks tasks done (a Status property's *Complete* group, a "Done" checkbox, or a select
-option like "Done"); both can be overridden per database. Checking a task off writes back to Notion.
+option like "Done"); both can be overridden per database. Checking a task off writes back to Notion. Right-click a task → **Reschedule** (Today, Tomorrow, Next Monday,
+Push 1 Week, Pick Date…, Remove Due Date) to change its due date in Notion.
 
 ## Jobs (JobManager)
 
