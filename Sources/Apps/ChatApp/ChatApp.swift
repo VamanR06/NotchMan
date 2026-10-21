@@ -590,7 +590,7 @@ struct ChatView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            WebViewHost(webView: app.webView(for: service))
+                            NSViewHost(view: app.webView(for: service))
                         }
                     }
                 }

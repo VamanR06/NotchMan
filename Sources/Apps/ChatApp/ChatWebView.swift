@@ -154,29 +154,6 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// Hosts a long-lived web view; the view itself survives the notch collapsing.
-struct WebViewHost: NSViewRepresentable {
-    let webView: WKWebView
-
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        attach(to: container)
-        return container
-    }
-
-    func updateNSView(_ container: NSView, context: Context) {
-        if webView.superview !== container { attach(to: container) }
-    }
-
-    private func attach(to container: NSView) {
-        container.subviews.forEach { $0.removeFromSuperview() }
-        webView.removeFromSuperview()
-        webView.frame = container.bounds
-        webView.autoresizingMask = [.width, .height]
-        container.addSubview(webView)
-    }
-}
-
 /// Tells the Chat app when a popped-out chat window closes so the chat returns to the notch.
 final class WindowCloseObserver: NSObject, NSWindowDelegate {
     private let onClose: @MainActor () -> Void
