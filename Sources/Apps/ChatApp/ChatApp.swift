@@ -120,6 +120,11 @@ public final class ChatApp: NotchApp {
         // Persistent store: you stay signed in across launches.
         config.websiteDataStore = .default()
         config.preferences.isElementFullscreenEnabled = false
+        if service.scrollsToLatest {
+            ScrollMemory.install(in: config.userContentController, handler: ScrollMessageProxy { [weak self] path, spot in
+                self?.scrollSpots[service, default: [:]][path] = spot
+            })
+        }
         ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] busy, title in
             self?.replyStateChanged(service, busy: busy, pageTitle: title)
         })
@@ -516,15 +521,24 @@ public final class ChatApp: NotchApp {
         poppedOut.remove(service)
     }
 
-    // MARK: - Scroll to the latest message
+    // MARK: - Scroll position
 
-    /// Opening a chat shows its newest messages, not the top of the thread. Runs twice: the site may still be
-    /// rendering the thread when the view first appears.
-    func scrollToLatest(_ service: ChatService) {
+    /// Where you were in each conversation, by service and page path (reported by the page as you scroll).
+    @ObservationIgnored private var scrollSpots: [ChatService: [String: ScrollSpot]] = [:]
+
+    /// When a chat comes back on screen: return to where you were in this conversation, or — the first time you
+    /// open it — to its newest message. Runs twice: the site may still be rendering the thread.
+    func restoreScroll(_ service: ChatService) {
         guard service.scrollsToLatest, let view = webViews[service] else { return }
+        let path = view.url?.path() ?? "/"
+        let spot = scrollSpots[service]?[path] ?? ScrollSpot(top: 0, atBottom: true)
         for delay in [0.15, 0.8] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                view.evaluateJavaScript(ChatService.scrollToLatestScript, in: nil, in: .defaultClient) { _ in }
+                Task {
+                    _ = try? await view.callAsyncJavaScript(ScrollMemory.restoreScript,
+                                                            arguments: ["top": spot.top, "atBottom": spot.atBottom],
+                                                            in: nil, contentWorld: .defaultClient)
+                }
             }
         }
     }
@@ -603,7 +617,7 @@ struct ChatView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            NSViewHost(view: app.webView(for: service), onAttach: { app.scrollToLatest(service) })
+                            NSViewHost(view: app.webView(for: service), onAttach: { app.restoreScroll(service) })
                         }
                     }
                 }
