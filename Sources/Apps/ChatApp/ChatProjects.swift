@@ -5,6 +5,31 @@ extension ChatService {
     /// ChatGPT and Claude have projects; Muse doesn't.
     var supportsProjects: Bool { self != .muse }
 
+    /// Chat threads (ChatGPT, Claude) open at their newest message; Muse isn't a chat thread.
+    var scrollsToLatest: Bool { self != .muse }
+
+    /// Scrolls the conversation to its newest message: the scrollable ancestor of the last message if there is
+    /// one, else the largest scrollable area, else the page. Does nothing on pages that don't scroll.
+    static let scrollToLatestScript = """
+    (() => {
+      const scrollable = el => {
+        const style = getComputedStyle(el);
+        return /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 20;
+      };
+      const messages = document.querySelectorAll(
+        '[data-message-author-role], [data-testid^="conversation-turn"], [data-test-render-count]');
+      let target = messages.length ? messages[messages.length - 1].parentElement : null;
+      while (target && !scrollable(target)) target = target.parentElement;
+      if (!target) {
+        target = [...document.querySelectorAll('main *, main')].filter(scrollable)
+          .sort((a, b) => b.clientHeight - a.clientHeight)[0] || null;
+      }
+      if (target) { target.scrollTop = target.scrollHeight; return 'element'; }
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      return 'page';
+    })();
+    """
+
     /// Turns the page's links (`href` + visible text) into this service's projects, ignoring everything else
     /// (including chats *inside* a project, which link to the same project prefix).
     func projects(fromLinks links: [[String: String]]) -> [AskProject] {

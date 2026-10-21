@@ -538,43 +538,58 @@ private struct TerminalTabs: View {
 /// Hosts a long-lived AppKit view (a terminal or web view) that outlives SwiftUI's containers: it survives the
 /// notch collapsing and moves between layouts (e.g. split ↔ single pane).
 ///
-/// The most recently created container owns the view. When a layout changes, the old container can get one
-/// last update after the new one took the view; without ownership it would pull the view back and then be
-/// discarded with it, leaving a blank pane.
+/// - The most recently created container owns the view. When a layout changes, the old container can get one
+///   last update after the new one took the view; without ownership it would pull the view back and then be
+///   discarded with it, leaving a blank pane.
+/// - The view is only attached once its container has a real size. A zero-size moment makes web pages clamp
+///   their scroll position to the top and makes terminals resize to zero columns.
 struct NSViewHost: NSViewRepresentable {
     let view: NSView
     var onAttach: (() -> Void)?
 
-    @MainActor private static var owners: [ObjectIdentifier: ObjectIdentifier] = [:]
+    @MainActor fileprivate static var owners: [ObjectIdentifier: ObjectIdentifier] = [:]
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+    func makeNSView(context: Context) -> HostContainer {
+        let container = HostContainer()
         Self.owners[ObjectIdentifier(view)] = ObjectIdentifier(container)
-        attach(to: container)
+        container.hosted = view
+        container.onAttach = onAttach
+        container.needsLayout = true
         return container
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        guard Self.owners[ObjectIdentifier(view)] == ObjectIdentifier(container) else { return }
-        if view.superview !== container { attach(to: container) }
+    func updateNSView(_ container: HostContainer, context: Context) {
+        container.onAttach = onAttach
+        guard Self.owns(container, view), view.superview !== container else { return }
+        container.needsLayout = true
     }
 
-    static func dismantleNSView(_ container: NSView, coordinator: ()) {
+    static func dismantleNSView(_ container: HostContainer, coordinator: ()) {
         // Release ownership only if this container still holds it.
         for (key, owner) in owners where owner == ObjectIdentifier(container) { owners[key] = nil }
     }
 
-    private func attach(to container: NSView) {
-        container.subviews.forEach { $0.removeFromSuperview() }
-        view.removeFromSuperview()
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
-        if let onAttach { DispatchQueue.main.async { onAttach() } }
-    }
-
-    /// For tests: whether `container` currently owns `view`.
+    /// Whether `container` currently owns `view`.
     @MainActor static func owns(_ container: NSView, _ view: NSView) -> Bool {
         owners[ObjectIdentifier(view)] == ObjectIdentifier(container)
+    }
+}
+
+/// Container that takes its hosted view once it has been laid out at a real size.
+final class HostContainer: NSView {
+    weak var hosted: NSView?
+    var onAttach: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        guard let hosted, bounds.width > 1, bounds.height > 1, NSViewHost.owns(self, hosted) else { return }
+        if hosted.superview !== self {
+            subviews.forEach { $0.removeFromSuperview() }
+            hosted.removeFromSuperview()
+            hosted.frame = bounds
+            hosted.autoresizingMask = [.width, .height]
+            addSubview(hosted)
+            if let onAttach { DispatchQueue.main.async { onAttach() } }
+        }
     }
 }

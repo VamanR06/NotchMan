@@ -516,6 +516,19 @@ public final class ChatApp: NotchApp {
         poppedOut.remove(service)
     }
 
+    // MARK: - Scroll to the latest message
+
+    /// Opening a chat shows its newest messages, not the top of the thread. Runs twice: the site may still be
+    /// rendering the thread when the view first appears.
+    func scrollToLatest(_ service: ChatService) {
+        guard service.scrollsToLatest, let view = webViews[service] else { return }
+        for delay in [0.15, 0.8] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                view.evaluateJavaScript(ChatService.scrollToLatestScript, in: nil, in: .defaultClient) { _ in }
+            }
+        }
+    }
+
     func goHome() {
         webViews[service]?.load(URLRequest(url: service.home))
     }
@@ -590,7 +603,7 @@ struct ChatView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            NSViewHost(view: app.webView(for: service))
+                            NSViewHost(view: app.webView(for: service), onAttach: { app.scrollToLatest(service) })
                         }
                     }
                 }
