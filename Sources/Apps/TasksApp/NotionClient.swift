@@ -91,6 +91,18 @@ final class NotionClient {
         try await request("PATCH", "/pages/\(task.id)", body: ["properties": [rule.property: value]])
     }
 
+    /// Sets (or clears, with nil) a task's date property.
+    func setDue(_ task: NotionTask, property: String, to date: Date?, allDay: Bool) async throws {
+        try await request("PATCH", "/pages/\(task.id)", body: ["properties": [property: Self.dateValue(date, allDay: allDay)]])
+    }
+
+    /// Notion date property value: `{"date": {"start": …}}`, or `{"date": null}` to clear it.
+    static func dateValue(_ date: Date?, allDay: Bool) -> [String: Any] {
+        guard let date else { return ["date": NSNull()] }
+        let start = allDay ? DateParsing.dayString(date) : DateParsing.localRFC3339(date)
+        return ["date": ["start": start]]
+    }
+
     static func notDoneFilter(_ rule: DoneRule?) -> [String: Any]? {
         guard let rule else { return nil }
         switch rule.kind {

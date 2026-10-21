@@ -1,11 +1,12 @@
 import Foundation
+import NotchKit
 
 /// A task (page) from a Notion database.
 struct NotionTask: Identifiable, Hashable {
     let id: String
     let title: String
-    let due: Date?
-    let dueIsAllDay: Bool
+    var due: Date?
+    var dueIsAllDay: Bool
     var isDone: Bool
     /// The page's status/select value when loaded, so un-checking can restore it.
     let originalValue: String?
@@ -132,5 +133,38 @@ struct TaskDatabase: Identifiable, Hashable {
 
     private static func looksDone(_ name: String) -> Bool {
         doneWords.contains(name.lowercased().trimmingCharacters(in: .whitespaces))
+    }
+}
+
+/// Quick "move to…" choices for a task's due date.
+enum TaskDueOption: CaseIterable, Identifiable {
+    case today, tomorrow, nextMonday, pushWeek
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .today: "Today"
+        case .tomorrow: "Tomorrow"
+        case .nextMonday: "Next Monday"
+        case .pushWeek: "Push 1 Week"
+        }
+    }
+
+    /// The new due date. A task with a time keeps its time of day; "Push 1 Week" moves from the current due
+    /// date (or today if there is none).
+    func target(for task: NotionTask, now: Date, calendar: Calendar = .current) -> Date {
+        let time = task.dueIsAllDay ? nil : task.due
+        switch self {
+        case .today:
+            return Reschedule.day(now, keepingTimeOf: time, calendar: calendar)
+        case .tomorrow:
+            return Reschedule.day(calendar.date(byAdding: .day, value: 1, to: now)!, keepingTimeOf: time, calendar: calendar)
+        case .nextMonday:
+            return Reschedule.day(Reschedule.nextMonday(after: now, calendar: calendar), keepingTimeOf: time, calendar: calendar)
+        case .pushWeek:
+            let base = task.due ?? calendar.startOfDay(for: now)
+            return calendar.date(byAdding: .day, value: 7, to: base)!
+        }
     }
 }

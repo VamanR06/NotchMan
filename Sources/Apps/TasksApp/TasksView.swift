@@ -139,8 +139,18 @@ private struct TaskRow: View {
     let overdue: Bool
     let showDatabase: Bool
     @State private var hovering = false
+    @State private var editingDue = false
 
     var body: some View {
+        VStack(spacing: 4) {
+            row
+            if editingDue {
+                DueEditor(app: app, task: task) { editingDue = false }
+            }
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: 8) {
             Button { app.toggle(task) } label: {
                 Image(systemName: task.isDone ? "checkmark.circle.fill" : "circle")
@@ -184,7 +194,26 @@ private struct TaskRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { app.open(task) }
-        .askable { askText }
+        .contextMenu {
+            if app.canReschedule(task) {
+                Menu("Reschedule") {
+                    ForEach(TaskDueOption.allCases) { option in
+                        Button(option.title) {
+                            // Tasks with a time keep it; date-only tasks stay date-only.
+                            app.reschedule(task, to: option.target(for: task, now: Date()),
+                                           allDay: task.due == nil || task.dueIsAllDay)
+                        }
+                    }
+                    Divider()
+                    Button("Pick Date…") { editingDue = true }
+                    if task.due != nil {
+                        Button("Remove Due Date") { app.reschedule(task, to: nil, allDay: true) }
+                    }
+                }
+                Divider()
+            }
+            AskMenuItems { askText }
+        }
     }
 
     /// What "Ask ChatGPT/Claude/Muse" sends about this task.
@@ -211,5 +240,58 @@ private struct TaskRow: View {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: app.now), to: due).day ?? 0
         let date = days < 7 ? due.formatted(.dateTime.weekday(.wide)) : due.formatted(.dateTime.month(.abbreviated).day())
         return date + time
+    }
+}
+
+/// Inline date (and optional time) picker for a task's due date.
+private struct DueEditor: View {
+    let app: TasksApp
+    let task: NotionTask
+    let done: () -> Void
+    @State private var date: Date
+    @State private var includeTime: Bool
+
+    init(app: TasksApp, task: NotionTask, done: @escaping () -> Void) {
+        self.app = app
+        self.task = task
+        self.done = done
+        let fallback = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+        _date = State(initialValue: task.due ?? fallback)
+        _includeTime = State(initialValue: task.due != nil && !task.dueIsAllDay)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar.badge.clock").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            DatePicker("Due", selection: $date,
+                       displayedComponents: includeTime ? [.date, .hourAndMinute] : [.date])
+                .datePickerStyle(.field)
+                .labelsHidden()
+                .fixedSize()
+            Toggle("Time", isOn: $includeTime)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+            Spacer()
+            Button("Cancel", action: done)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.6))
+            Button {
+                app.reschedule(task, to: includeTime ? date : Calendar.current.startOfDay(for: date), allDay: !includeTime)
+                done()
+            } label: {
+                Text("Save")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Capsule().fill(.white))
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
+        .onAppear { app.setEditing(true) }
+        .onDisappear { app.setEditing(false) }
     }
 }

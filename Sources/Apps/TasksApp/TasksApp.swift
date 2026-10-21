@@ -201,6 +201,41 @@ public final class TasksApp: NotchApp {
         }
     }
 
+    /// Whether the task's database has a due property to write.
+    func canReschedule(_ task: NotionTask) -> Bool {
+        databases.first { $0.id == task.databaseID }.flatMap(dueProperty(for:)) != nil
+    }
+
+    /// Moves (or clears, with nil) a task's due date in Notion; updates the list right away, reverts on failure.
+    func reschedule(_ task: NotionTask, to date: Date?, allDay: Bool) {
+        guard let db = databases.first(where: { $0.id == task.databaseID }),
+              let property = dueProperty(for: db),
+              let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let before = tasks[index]
+        withAnimation(.easeOut(duration: 0.2)) {
+            tasks[index].due = date
+            tasks[index].dueIsAllDay = allDay
+            tasks.sort(by: Self.order)
+        }
+        Task {
+            do {
+                try await client.setDue(task, property: property, to: date, allDay: allDay)
+                error = nil
+            } catch {
+                if let i = tasks.firstIndex(where: { $0.id == task.id }) {
+                    tasks[i] = before
+                    tasks.sort(by: Self.order)
+                }
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// Keep the notch open while a date picker is being used.
+    func setEditing(_ editing: Bool) {
+        context?.holdOpen(editing)
+    }
+
     func open(_ task: NotionTask) {
         if let url = task.url { Self.openInNotion(url) }
     }
