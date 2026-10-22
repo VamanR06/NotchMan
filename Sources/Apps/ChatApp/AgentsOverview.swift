@@ -263,6 +263,13 @@ private struct AgentRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(agent.id, forType: .string)
             }
+            if agent.kind == .background {
+                Divider()
+                if agent.status != nil && agent.phase != .done {
+                    Button("Stop Session") { app.stopSession(agent) }
+                }
+                Button("Delete Session…", role: .destructive) { app.deleteSession(agent) }
+            }
             Divider()
             AskMenuItems { "Claude Code session: \(agent.name)\nProject: \(agent.cwd)\nStatus: \(agent.state ?? agent.status ?? "unknown")" }
         }

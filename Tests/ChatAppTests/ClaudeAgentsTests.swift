@@ -107,3 +107,50 @@ private func agents() throws -> [ClaudeAgent] {
         #expect(list.first?.phase == .done && list.first?.shortID == "5774c1c3")
     }
 }
+
+/// Runs stop/delete against a stand-in `claude` that records its arguments.
+@MainActor @Suite(.serialized) struct SessionCommandTests {
+    private func stubClaude() throws -> (path: String, log: String) {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "notchman-claude-stub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let log = dir.appending(path: "args.log").path
+        let script = dir.appending(path: "claude").path
+        // `agents` (the refresh after each command) prints an empty list; everything else is logged.
+        try """
+        #!/bin/sh
+        if [ "$1" = "agents" ]; then echo '[]'; exit 0; fi
+        echo "$@" >> '\(log)'
+        if [ "$2" = "dirty" ]; then echo "worktree has unpushed commits: pass --discard-unpushed abc@wt1" >&2; exit 1; fi
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        return (script, log)
+    }
+
+    private func agent(_ short: String?) -> ClaudeAgent {
+        ClaudeAgent(id: "full-\(short ?? "x")", shortID: short, name: "S", cwd: "/tmp",
+                    kind: short == nil ? .interactive : .background, state: "done", status: nil, startedAt: nil)
+    }
+
+    @Test func stopAndDeleteRunTheRightCommandWithoutForceFlags() async throws {
+        let (path, log) = try stubClaude()
+        let defaults = UserDefaults(suiteName: "notchman.tests.sessioncmd")!
+        let monitor = ClaudeAgentsMonitor(defaults: defaults)
+        monitor.claudePathOverride = path
+        try await monitor.stop(agent("abc123"))
+        try await monitor.delete(agent("abc123"))
+        let lines = try String(contentsOfFile: log, encoding: .utf8).split(separator: "\n")
+        #expect(lines == ["stop abc123", "rm abc123"])
+        defaults.removeObject(forKey: "claudePath")
+    }
+
+    @Test func refusalsAreReportedNotForced() async throws {
+        let (path, log) = try stubClaude()
+        let defaults = UserDefaults(suiteName: "notchman.tests.sessioncmd")!
+        let monitor = ClaudeAgentsMonitor(defaults: defaults)
+        monitor.claudePathOverride = path
+        await #expect(throws: Shell.ShellError.self) { try await monitor.delete(agent("dirty")) }
+        #expect(try String(contentsOfFile: log, encoding: .utf8) == "rm dirty\n", "no retry with --discard-unpushed")
+        await #expect(throws: Shell.ShellError.self) { try await monitor.delete(agent(nil)) }  // interactive
+        defaults.removeObject(forKey: "claudePath")
+    }
+}

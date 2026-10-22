@@ -329,6 +329,44 @@ public final class ChatApp: NotchApp {
         Task { await agentMonitor.attach(agent) }
     }
 
+    /// Stops a background session (its conversation is kept).
+    func stopSession(_ agent: ClaudeAgent) {
+        if terminals[agent.id] != nil { closeTerminal(agent.id) }
+        Task {
+            do { try await agentMonitor.stop(agent) } catch { Self.showFailure("Couldn't stop “\(agent.name)”", error) }
+        }
+    }
+
+    /// Deletes a background session after confirming; it can't be undone.
+    func deleteSession(_ agent: ClaudeAgent) {
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(agent.name)”?"
+        alert.informativeText = """
+            This removes the session and its conversation from Claude Code (and its worktree when that's safe). \
+            It can't be undone. To keep the conversation, use Stop Session instead.
+            """
+        alert.alertStyle = .warning
+        let delete = alert.addButton(withTitle: "Delete")
+        delete.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        if terminals[agent.id] != nil { closeTerminal(agent.id) }
+        unseenAgents.remove(agent.id)
+        Task {
+            do { try await agentMonitor.delete(agent) } catch { Self.showFailure("Couldn't delete “\(agent.name)”", error) }
+        }
+    }
+
+    private static func showFailure(_ title: String, _ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        NSApp.activate()
+        alert.runModal()
+    }
+
     /// Ends the in-notch attach; the agent keeps running.
     func closeTerminal(_ id: String) {
         terminals.removeValue(forKey: id)?.stop()

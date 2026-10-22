@@ -251,6 +251,25 @@ final class ClaudeAgentsMonitor {
         openInTerminal(AgentScripts.commandFile(cwd: agent.cwd, command: command), name: "attach-\(agent.shortID ?? agent.id)")
     }
 
+    /// Stops a background session; its conversation is kept (attaching reopens it).
+    func stop(_ agent: ClaudeAgent) async throws {
+        try await runOnSession("stop", agent)
+    }
+
+    /// Deletes a background session and its conversation (and its worktree when Claude Code deems that safe).
+    /// Never passes the discard/force flags: if a worktree has unpushed work, `claude rm` refuses and its
+    /// message is thrown so the user sees it.
+    func delete(_ agent: ClaudeAgent) async throws {
+        try await runOnSession("rm", agent)
+    }
+
+    private func runOnSession(_ command: String, _ agent: ClaudeAgent) async throws {
+        guard let shortID = agent.shortID else { throw Shell.ShellError.failed("Only background sessions can be \(command == "rm" ? "deleted" : "stopped").") }
+        guard let path = await claudePath() else { throw Shell.ShellError.failed("claude not found") }
+        defer { Task { await refresh() } }
+        _ = try await Shell.run(path, [command, shortID])
+    }
+
     /// Starts a background agent in `folder` with `prompt`. Only ever called from an explicit user action.
     func dispatch(prompt: String, in folder: String) async throws {
         guard let path = await claudePath() else { throw Shell.ShellError.failed("claude not found") }
