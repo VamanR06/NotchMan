@@ -78,3 +78,32 @@ import NotchKit
         #expect(!event(start: now - 86400, end: now + 3600, allDay: true).isPast(at: now), "all-day never folds")
     }
 }
+
+@Suite struct CalendarDaysTests {
+    private let cal = Calendar.current
+    private var now: Date { cal.date(bySettingHour: 13, minute: 0, second: 0, of: Date())! }
+
+    private func event(dayOffset: Int) -> CalendarItem {
+        let start = cal.date(byAdding: .day, value: dayOffset, to: now)!
+        return CalendarItem(id: "\(dayOffset)", title: "E", start: start, end: start.addingTimeInterval(1800), isAllDay: false,
+                            color: .blue, calendarName: "C", url: nil, meetingURL: nil, location: nil)
+    }
+
+    @Test func todayAlwaysHasASection() {
+        let days = CalendarDays.group([event(dayOffset: 2)], now: now)
+        #expect(days.count == 2)
+        #expect(cal.isDate(days[0].day, inSameDayAs: now) && days[0].items.isEmpty)
+    }
+
+    @Test func labelsTodayTomorrowAndLater() {
+        #expect(CalendarDays.kind(of: now, now: now) == .today)
+        #expect(CalendarDays.kind(of: cal.date(byAdding: .day, value: 1, to: now)!, now: now) == .tomorrow)
+        #expect(CalendarDays.kind(of: cal.date(byAdding: .day, value: 3, to: now)!, now: now) == .later)
+    }
+
+    @Test func daysAreInOrder() {
+        let days = CalendarDays.group([event(dayOffset: 3), event(dayOffset: 1), event(dayOffset: 0)], now: now)
+        #expect(days.map(\.items.count) == [1, 1, 1])
+        #expect(days.map(\.day) == days.map(\.day).sorted())
+    }
+}

@@ -137,6 +137,12 @@ public final class CalendarApp: NotchApp {
         context?.openSettings()
     }
 
+    /// For tests.
+    func useItemsForTesting(_ items: [CalendarItem], now: Date) {
+        self.items = items
+        self.now = now
+    }
+
     // MARK: - Rescheduling
 
     /// Google granted permission to change events (sign-ins from before rescheduling are read-only).

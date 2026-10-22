@@ -98,46 +98,127 @@ private struct ConnectPrompt: View {
     }
 }
 
+/// Groups the timeline by day. Today always gets a section (possibly empty) so it's easy to find.
+enum CalendarDays {
+    enum Kind: Equatable { case today, tomorrow, later }
+
+    static func kind(of day: Date, now: Date, calendar: Calendar = .current) -> Kind {
+        if calendar.isDate(day, inSameDayAs: now) { return .today }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(day, inSameDayAs: tomorrow) {
+            return .tomorrow
+        }
+        return .later
+    }
+
+    static func group(_ items: [CalendarItem], now: Date, calendar: Calendar = .current) -> [(day: Date, items: [CalendarItem])] {
+        var grouped = Dictionary(grouping: items) { calendar.startOfDay(for: $0.start) }
+        let today = calendar.startOfDay(for: now)
+        if grouped[today] == nil { grouped[today] = [] }
+        return grouped.keys.sorted().map { ($0, grouped[$0]!) }
+    }
+}
+
 private struct Timeline: View {
     let app: CalendarApp
 
-    private var days: [(Date, [CalendarItem])] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: app.items) { calendar.startOfDay(for: $0.start) }
-        return grouped.keys.sorted().map { ($0, grouped[$0]!) }
-    }
-
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 4, pinnedViews: [.sectionHeaders]) {
-                ForEach(days, id: \.0) { day, items in
-                    let past = items.filter { $0.isPast(at: app.now) }
+            TimelineSections(app: app, lazy: true)
+        }
+    }
+}
+
+/// The days and their events (lazy inside the scroll view; plain when rendered on its own, e.g. in tests).
+struct TimelineSections: View {
+    let app: CalendarApp
+    var lazy = false
+
+    var body: some View {
+        if lazy {
+            LazyVStack(alignment: .leading, spacing: 4, pinnedViews: [.sectionHeaders]) { sections }
+        } else {
+            VStack(alignment: .leading, spacing: 4) { sections }
+        }
+    }
+
+    @ViewBuilder
+    private var sections: some View {
+        let days = CalendarDays.group(app.items, now: app.now)
+                ForEach(Array(days.enumerated()), id: \.element.day) { index, entry in
+                    let past = entry.items.filter { $0.isPast(at: app.now) }
+                    let upcoming = entry.items.filter { !$0.isPast(at: app.now) }
+                    let kind = CalendarDays.kind(of: entry.day, now: app.now)
                     Section {
                         if !past.isEmpty {
                             EarlierToggle(app: app, count: past.count)
                         }
-                        ForEach(items.filter { app.showPastEvents || !$0.isPast(at: app.now) }) { item in
+                        ForEach(app.showPastEvents ? entry.items : upcoming) { item in
                             EventRow(app: app, item: item, now: app.now)
                         }
+                        if kind == .today && upcoming.isEmpty {
+                            Text(past.isEmpty ? "Nothing scheduled today" : "Nothing else today")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.4))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                        }
                     } header: {
-                        Text(Self.dayLabel(day))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .textCase(.uppercase)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 3)
-                            .background(.black)
+                        DayHeader(day: entry.day, kind: kind, count: entry.items.count, isFirst: index == 0)
                     }
                 }
+    }
+}
+
+/// A day's header: a colored pill for Today / Tomorrow (weekday name for later days), the date, a rule across,
+/// and the event count.
+private struct DayHeader: View {
+    let day: Date
+    let kind: CalendarDays.Kind
+    let count: Int
+    let isFirst: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            label
+            Text(day.formatted(kind == .later ? .dateTime.month(.abbreviated).day() : .dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.55))
+            Rectangle()
+                .fill(.white.opacity(kind == .today ? 0.25 : 0.12))
+                .frame(height: 1)
+            if count > 0 {
+                Text("\(count) event\(count == 1 ? "" : "s")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
             }
+        }
+        .padding(.top, isFirst ? 2 : 12)
+        .padding(.bottom, 4)
+        .background(.black)
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        switch kind {
+        case .today:
+            pill("TODAY", fill: .red, text: .white)
+        case .tomorrow:
+            pill("TOMORROW", fill: .orange.opacity(0.9), text: .black)
+        case .later:
+            Text(day.formatted(.dateTime.weekday(.wide)))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
         }
     }
 
-    private static func dayLabel(_ day: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInTomorrow(day) { return "Tomorrow" }
-        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    private func pill(_ title: String, fill: Color, text: Color) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .heavy))
+            .tracking(0.5)
+            .foregroundStyle(text)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(fill))
     }
 }
 
