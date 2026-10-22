@@ -495,18 +495,31 @@ public final class ChatApp: NotchApp {
 
     /// Reads the project links from the service's signed-in page (its sidebar) and merges them in.
     /// Returns how many new projects were found.
-    func loadProjects(for service: ChatService) async throws -> Int {
-        let view = webView(for: service)
-        // A just-created view is still loading; give it a moment.
-        for _ in 0..<40 where view.isLoading { try await Task.sleep(for: .milliseconds(250)) }
-        let raw = try await view.callAsyncJavaScript(ChatService.linkScript, arguments: [:], in: nil, contentWorld: .defaultClient)
-        let links = (raw as? [[String: Any]] ?? []).map { $0.compactMapValues { $0 as? String } }
-        let found = service.projects(fromLinks: links)
+    /// Reads the project list from a hidden desktop-width copy of the site and merges new ones in.
+    func loadProjects(for service: ChatService) async throws -> ProjectLoadResult {
+        let result = try await ProjectScraper(service: service, userAgent: Self.userAgent).run()
+        context?.logger.notice("Project scan \(service.rawValue, privacy: .public): \(result.projects.count, privacy: .public) projects among \(result.linksSeen, privacy: .public) links")
+        if result.projects.isEmpty, !result.candidatePaths.isEmpty {
+            context?.logger.notice("Project-like links seen: \(result.candidatePaths.joined(separator: " "), privacy: .public)")
+        }
         var merged = projects[service] ?? []
-        let new = found.filter { project in !merged.contains { $0.url == project.url } }
+        let new = result.projects.filter { project in !merged.contains { $0.url == project.url } }
         merged += new
         setProjects(merged, for: service)
-        return new.count
+        return ProjectLoadResult(added: new.count, found: result.projects.count, linksSeen: result.linksSeen)
+    }
+
+    struct ProjectLoadResult {
+        let added: Int
+        let found: Int
+        let linksSeen: Int
+
+        var message: String {
+            if added > 0 { return "Added \(added) project\(added == 1 ? "" : "s")." }
+            if found > 0 { return "All \(found) projects are already listed." }
+            if linksSeen == 0 { return "The page didn't load. Check you're signed in, then try again." }
+            return "No projects found (looked at \(linksSeen) links). If you have projects, add one by pasting its link."
+        }
     }
 
     // MARK: - Pop out

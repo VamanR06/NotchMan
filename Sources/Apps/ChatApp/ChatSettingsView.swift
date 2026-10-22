@@ -125,7 +125,7 @@ private struct ProjectsSection: View {
         } header: {
             Text("\(service.name) Projects")
         } footer: {
-            Text("\"Load\" reads the project names and links from \(service.name)'s sidebar in the notch (sign in there first; if none are found, open the sidebar or pop the chat out and try again). You can also paste a project's link from the address bar.")
+            Text("\"Load\" reads your project names and links from \(service.name) (a hidden desktop-size copy of the site, using your sign-in from the notch — sign in there first). Or paste a project's link from the address bar.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -136,8 +136,7 @@ private struct ProjectsSection: View {
         Task {
             defer { loading = false }
             do {
-                let added = try await app.loadProjects(for: service)
-                status = added == 0 ? "No new projects found." : "Added \(added) project\(added == 1 ? "" : "s")."
+                status = try await app.loadProjects(for: service).message
             } catch {
                 status = error.localizedDescription
             }
