@@ -211,6 +211,8 @@ final class NotchViewModel {
 
     func collapse() {
         attentionExpansion = false
+        // Holds last for one opening: the next time, moving away closes the notch again until re-held.
+        heldApps.removeAll()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
     }
 

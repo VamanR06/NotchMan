@@ -131,6 +131,7 @@ private final class FakeApp: NotchApp {
         #expect(model.state == .expanded, "mouse leaving shouldn't close a held notch")
         model.clickedOutside(at: outside)
         #expect(model.state == .collapsed)
+        #expect(model.heldApps.isEmpty, "the hold ends with the notch closing")
     }
 
     @Test func unheldNotchClosesWhenTheMouseLeaves() async throws {

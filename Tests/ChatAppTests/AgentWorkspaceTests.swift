@@ -102,3 +102,28 @@ import Testing
         window.close()
     }
 }
+
+@MainActor @Suite struct TerminalClickTests {
+    @Test func clickingAnyTerminalInTheWorkspaceIsReported() throws {
+        let agent = ClaudeAgent(id: "s1", shortID: "abc", name: "Test", cwd: "/tmp", kind: .background,
+                                state: "working", status: "busy", startedAt: nil)
+        let workspace = AgentTerminal(agent: agent)
+        var clicks = 0
+        workspace.onClick = { clicks += 1 }
+        let shell = workspace.addShell()   // added after onClick was set: still reported
+
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 680, height: 380), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = workspace.claude.view
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 50, y: 50), modifierFlags: [],
+                                                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                    eventNumber: 0, clickCount: 1, pressure: 1))
+        workspace.claude.view.mouseDown(with: click)
+        #expect(clicks == 1)
+        #expect(window.firstResponder === workspace.claude.view, "clicking focuses the terminal")
+        shell.session.view.onClick?()
+        #expect(clicks == 2)
+        workspace.stop()
+    }
+}

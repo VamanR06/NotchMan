@@ -16,6 +16,10 @@ final class TerminalSession: Identifiable {
     @ObservationIgnored var onKey: ((NSEvent) -> Void)?
     /// The process exited.
     @ObservationIgnored var onExit: (() -> Void)?
+    /// The user clicked into this terminal.
+    @ObservationIgnored var onClick: (() -> Void)? {
+        didSet { view.onClick = onClick }
+    }
 
     init() {
         view = NotchTerminalView(frame: CGRect(x: 0, y: 0, width: 680, height: 380))
@@ -98,6 +102,13 @@ final class AgentTerminal: Identifiable {
     /// Called when Claude Code switches to its own agent list (← from the session); the app shows NotchMan's
     /// Overview instead.
     @ObservationIgnored var onAgentList: (() -> Void)?
+    /// The user clicked into one of this workspace's terminals.
+    @ObservationIgnored var onClick: (() -> Void)? {
+        didSet {
+            claude.onClick = onClick
+            shells.forEach { $0.session.onClick = onClick }
+        }
+    }
     @ObservationIgnored private var watch: Task<Void, Never>?
     @ObservationIgnored private var nextShellNumber = 1
 
@@ -149,6 +160,7 @@ final class AgentTerminal: Identifiable {
         let shell = ShellTab(number: nextShellNumber, session: session)
         nextShellNumber += 1
         session.onExit = { [weak self] in self?.removeShell(shell.id) }  // `exit` closes the tab
+        session.onClick = onClick
         session.runShell(in: agent.cwd)
         shells.append(shell)
         selected = .shell(shell.id)
@@ -217,9 +229,13 @@ final class NotchTerminalView: LocalProcessTerminalView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// The user clicked into this terminal (to type).
+    var onClick: (() -> Void)?
+
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
         window?.makeFirstResponder(self)
+        onClick?()
         super.mouseDown(with: event)
     }
 
@@ -361,9 +377,7 @@ struct AgentTerminalScreen: View {
                 }
             }
         }
-        .onChange(of: terminal.selected) { _, _ in
-            DispatchQueue.main.async { terminal.focus() }
-        }
+
     }
 
     private var header: some View {
@@ -410,9 +424,8 @@ struct AgentTerminalScreen: View {
 
     private func pane(_ session: TerminalSession, detachedOverlay: Bool) -> some View {
         ZStack {
-            NSViewHost(view: session.view, onAttach: {
-                if session === terminal.selectedSession { session.focus() }
-            })
+            // Not focused automatically: you click in to type (which also keeps the notch open).
+            NSViewHost(view: session.view)
             if detachedOverlay && !session.isRunning {
                 VStack(spacing: 8) {
                     Text("Detached from \(terminal.agent.name).")

@@ -23,7 +23,7 @@ public final class ChatApp: NotchApp {
     var showingOverview = true {
         didSet {
             context?.defaults.set(showingOverview, forKey: "showingOverview")
-            updateHold()
+            if !showingOverview { context?.holdOpen(false) }
         }
     }
     /// The inline New Agent form is open on the Overview.
@@ -56,7 +56,7 @@ public final class ChatApp: NotchApp {
     private(set) var terminals: [String: AgentTerminal] = [:]
     /// The terminal shown on the Overview tab, if any.
     private(set) var shownTerminalID: String? {
-        didSet { updateHold() }
+        didSet { if shownTerminalID == nil { context?.holdOpen(false) } }
     }
     private(set) var loading: Set<ChatService> = []
     /// Services currently generating a reply, and since when.
@@ -309,6 +309,7 @@ public final class ChatApp: NotchApp {
         terminals[agent.id] = terminal
         // ← out of the session goes to NotchMan's Overview, not Claude Code's own agent list.
         terminal.onAgentList = { [weak self] in self?.closeTerminal(agent.id) }
+        terminal.onClick = { [weak self] in self?.terminalClicked() }
         terminal.update(agent)
         showingOverview = true
         shownTerminalID = agent.id
@@ -319,7 +320,6 @@ public final class ChatApp: NotchApp {
         Task {
             guard let path = await agentMonitor.claudePath() else { return }
             terminal.start(claudePath: path)
-            terminal.focus()
         }
     }
 
@@ -378,9 +378,10 @@ public final class ChatApp: NotchApp {
         shownTerminalID = nil
     }
 
-    /// Keep the notch open while a terminal is on screen, so typing isn't cut off by the mouse drifting away.
-    private func updateHold() {
-        context?.holdOpen(showingOverview && shownTerminalID != nil)
+    /// Clicking into a terminal keeps the notch open while the mouse wanders (so typing isn't cut off) until a
+    /// click outside closes it. Just opening a terminal doesn't: moving away still closes the notch.
+    func terminalClicked() {
+        context?.holdOpen(true)
     }
 
     /// Called by the view when a service is on screen.
