@@ -142,3 +142,40 @@ private final class FakeApp: NotchApp {
         #expect(model.state == .collapsed)
     }
 }
+
+@MainActor @Suite(.serialized) struct HoverDelayTests {
+    private let geometry = NotchGeometry(
+        screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+        notchSize: CGSize(width: 185, height: 32), centerX: 756, hasNotch: true)
+    private let onNotch = CGPoint(x: 756, y: 975)
+    private let away = CGPoint(x: 756, y: 600)
+
+    @Test func brushingPastDoesNotOpen() async throws {
+        UserDefaults.standard.set(0.35, forKey: NotchViewModel.hoverDelayKey)
+        defer { UserDefaults.standard.removeObject(forKey: NotchViewModel.hoverDelayKey) }
+        let model = NotchViewModel(apps: [FakeApp("a", activity: nil)], geometry: geometry)
+        model.mouseMoved(to: onNotch)
+        try await Task.sleep(for: .milliseconds(150))
+        model.mouseMoved(to: away)                       // left before the delay
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(model.state == .collapsed)
+    }
+
+    @Test func restingOnTheNotchOpensIt() async throws {
+        UserDefaults.standard.set(0.35, forKey: NotchViewModel.hoverDelayKey)
+        defer { UserDefaults.standard.removeObject(forKey: NotchViewModel.hoverDelayKey) }
+        let model = NotchViewModel(apps: [FakeApp("a", activity: nil)], geometry: geometry)
+        model.mouseMoved(to: onNotch)
+        for _ in 0..<20 where model.state == .collapsed { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(model.state == .expanded)
+    }
+
+    @Test func delayIsClampedToASaneRange() {
+        UserDefaults.standard.set(-1.0, forKey: NotchViewModel.hoverDelayKey)
+        #expect(NotchViewModel.hoverDelay == 0.05)
+        UserDefaults.standard.set(9.0, forKey: NotchViewModel.hoverDelayKey)
+        #expect(NotchViewModel.hoverDelay == 2)
+        UserDefaults.standard.removeObject(forKey: NotchViewModel.hoverDelayKey)
+        #expect(NotchViewModel.hoverDelay == NotchViewModel.defaultHoverDelay)
+    }
+}

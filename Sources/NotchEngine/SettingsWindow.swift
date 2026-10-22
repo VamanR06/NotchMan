@@ -83,6 +83,7 @@ private struct SettingsView: View {
 
 private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
+    @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var error: String?
 
@@ -103,6 +104,18 @@ private struct GeneralSettingsView: View {
             Toggle(isOn: $allDisplays) {
                 Text("Show notch on all displays")
                 Text("Displays without a hardware notch get a virtual one at the top center.")
+            }
+            LabeledContent {
+                HStack {
+                    Slider(value: $hoverDelay, in: 0.1...1.0, step: 0.05)
+                        .frame(width: 180)
+                    Text(String(format: "%.2f s", hoverDelay))
+                        .monospacedDigit()
+                        .frame(width: 48, alignment: .trailing)
+                }
+            } label: {
+                Text("Open after hovering for")
+                Text("Longer means brushing the top of the screen won't open the notch.")
             }
         }
         .formStyle(.grouped)

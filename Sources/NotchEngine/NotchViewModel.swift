@@ -160,6 +160,15 @@ final class NotchViewModel {
 
     // MARK: - Mouse
 
+    /// How long the pointer must rest on the notch before it opens, so brushing past doesn't open it.
+    static let hoverDelayKey = "hoverDelay"
+    static let defaultHoverDelay: Double = 0.35
+
+    static var hoverDelay: Double {
+        let stored = UserDefaults.standard.object(forKey: hoverDelayKey) as? Double ?? defaultHoverDelay
+        return min(max(stored, 0.05), 2)
+    }
+
     func mouseMoved(to point: CGPoint) {
         switch state {
         case .collapsed:
@@ -167,7 +176,7 @@ final class NotchViewModel {
             if contains(point, slack: 4) {
                 guard pendingExpand == nil else { return }
                 pendingExpand = Task { [weak self] in
-                    try? await Task.sleep(for: .milliseconds(120))
+                    try? await Task.sleep(for: .seconds(Self.hoverDelay))
                     guard !Task.isCancelled else { return }
                     self?.pendingExpand = nil
                     self?.expand()
