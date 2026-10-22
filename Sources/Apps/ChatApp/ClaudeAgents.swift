@@ -36,6 +36,13 @@ struct ClaudeAgent: Identifiable, Hashable {
         }
     }
 
+    /// Matches `query` against the session name and project folder (case-insensitive); empty matches all.
+    func matches(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        return name.localizedCaseInsensitiveContains(query) || cwd.localizedCaseInsensitiveContains(query)
+    }
+
     /// Needs-you first, then working, done, idle; newest first within each.
     static func sorted(_ agents: [ClaudeAgent]) -> [ClaudeAgent] {
         agents.sorted {
@@ -203,7 +210,8 @@ final class ClaudeAgentsMonitor {
             return
         }
         do {
-            let output = try await Shell.run(path, ["agents", "--json"])
+            // --all keeps finished background sessions listed after their process ends (attaching revives them).
+            let output = try await Shell.run(path, ["agents", "--json", "--all"])
             let events = apply(try ClaudeAgent.decodeList(Data(output.utf8)), now: Date())
             error = nil
             if !events.isEmpty { onEvents?(events) }

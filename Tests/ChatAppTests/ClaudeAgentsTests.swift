@@ -88,3 +88,22 @@ private func agents() throws -> [ClaudeAgent] {
         #expect(try await Shell.run("/bin/pwd", [], in: "/tmp").hasSuffix("tmp\n"))
     }
 }
+
+@Suite struct AgentSearchTests {
+    private let agent = ClaudeAgent(id: "1", shortID: "a", name: "scraping-pipeline-docs", cwd: "/Users/me/GitHub/tajmahome-jj",
+                                    kind: .background, state: "done", status: nil, startedAt: nil)
+
+    @Test func matchesNameOrProjectIgnoringCase() {
+        #expect(agent.matches(""))
+        #expect(agent.matches("  "))
+        #expect(agent.matches("PIPELINE"))
+        #expect(agent.matches("tajmahome"))
+        #expect(!agent.matches("coachbot"))
+    }
+
+    @Test func finishedSessionsWithoutAProcessAreDone() throws {
+        // `--all` lists ended sessions with no `status`.
+        let list = try ClaudeAgent.decodeList(Data(#"[{"id":"5774c1c3","sessionId":"5774c1c3-3d91","name":"docs","cwd":"/x","kind":"background","state":"done"}]"#.utf8))
+        #expect(list.first?.phase == .done && list.first?.shortID == "5774c1c3")
+    }
+}

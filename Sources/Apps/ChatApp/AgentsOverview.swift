@@ -15,6 +15,7 @@ struct AgentsOverview: View {
                 if app.composingAgent {
                     NewAgentForm(app: app)
                 }
+                SessionSearch(app: app)
                 AgentList(app: app)
             }
             .onAppear { app.markOverviewSeen() }
@@ -107,11 +108,17 @@ struct AgentSections: View {
 
     @ViewBuilder
     private var sections: some View {
+        let searching = !app.agentQuery.trimmingCharacters(in: .whitespaces).isEmpty
         ForEach([ClaudeAgent.Phase.needsYou, .working, .done, .idle], id: \.self) { phase in
-            let agents = app.agentMonitor.agents.filter { $0.phase == phase }
+            let agents = app.agentMonitor.agents.filter { $0.phase == phase && $0.matches(app.agentQuery) }
+            // Done can hold every finished session; show the latest few unless expanded or searching.
+            let folded = phase == .done && !searching && !app.showAllCompleted && agents.count > Self.recentDone
             if !agents.isEmpty {
                 Section {
-                    ForEach(agents) { AgentRow(app: app, agent: $0) }
+                    ForEach(folded ? Array(agents.prefix(Self.recentDone)) : agents) { AgentRow(app: app, agent: $0) }
+                    if phase == .done && !searching && agents.count > Self.recentDone {
+                        OlderToggle(app: app, hidden: agents.count - Self.recentDone)
+                    }
                 } header: {
                     Text("\(title(phase)) · \(agents.count)")
                         .font(.system(size: 10, weight: .semibold))
@@ -125,6 +132,8 @@ struct AgentSections: View {
         }
     }
 
+    static let recentDone = 5
+
     private func title(_ phase: ClaudeAgent.Phase) -> String {
         switch phase {
         case .needsYou: "Needs you"
@@ -132,6 +141,59 @@ struct AgentSections: View {
         case .done: "Done"
         case .idle: "Idle"
         }
+    }
+}
+
+/// "Show 29 older" / "Show fewer" under Done.
+private struct OlderToggle: View {
+    @Bindable var app: ChatApp
+    let hidden: Int
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { app.showAllCompleted.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(app.showAllCompleted ? 90 : 0))
+                Text(app.showAllCompleted ? "Show fewer" : "Show \(hidden) older")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.white.opacity(hovering ? 0.7 : 0.45))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Filter sessions by name or project.
+private struct SessionSearch: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+            TextField("Search sessions", text: $app.agentQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.white)
+                .onExitCommand { app.agentQuery = "" }
+            if !app.agentQuery.isEmpty {
+                Button { app.agentQuery = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.07)))
     }
 }
 

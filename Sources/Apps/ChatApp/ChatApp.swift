@@ -28,6 +28,10 @@ public final class ChatApp: NotchApp {
     }
     /// The inline New Agent form is open on the Overview.
     var composingAgent = false
+    /// Filters the Overview's sessions by name or project.
+    var agentQuery = ""
+    /// Show every finished session, not just the most recent few.
+    var showAllCompleted = false
 
     /// Claude Code sessions.
     @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
