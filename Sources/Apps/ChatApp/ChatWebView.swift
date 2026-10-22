@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import os
 import SwiftUI
 import WebKit
@@ -48,6 +49,8 @@ final class NotchWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        // Pages open pop-ups (password AutoFill, pickers) that can only take the keyboard if NotchMan is active.
+        NotchFocus.activateForTyping()
         window?.makeKey()
         super.mouseDown(with: event)
     }

@@ -192,8 +192,14 @@ public final class NotchEngine {
 
     private func handleMouse() {
         let point = NSEvent.mouseLocation
+        // Over one of NotchMan's own pop-ups (password AutoFill, a menu or picker opened from the notch): treat
+        // it as still being in the notch so it doesn't close underneath.
+        let overOwnPopup = NSApp.windows.contains { window in
+            window.isVisible && !(window is NotchPanel) && !window.styleMask.contains(.titled)
+                && window.frame.contains(point)
+        }
         for notch in notches.values {
-            notch.model.mouseMoved(to: point)
+            if !overOwnPopup { notch.model.mouseMoved(to: point) }
             // Only capture clicks inside the visible notch shape; pass everything else through.
             notch.panel.ignoresMouseEvents = !notch.model.contains(point)
             // A text field in the notch makes the panel key; once collapsed, hand the keyboard back
@@ -202,6 +208,10 @@ public final class NotchEngine {
                 notch.panel.resignKey()
                 NSWorkspace.shared.frontmostApplication?.activate()
             }
+        }
+        // Typing in a web page activated NotchMan; once every notch has closed, give focus back.
+        if notches.values.allSatisfy({ $0.model.state == .collapsed }) {
+            NotchFocus.restore()
         }
     }
 }
