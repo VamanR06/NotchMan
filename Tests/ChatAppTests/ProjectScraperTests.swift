@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Testing
+import WebKit
 @testable import ChatApp
 
 @MainActor @Suite(.serialized) struct ProjectScraperTests {
@@ -35,6 +37,22 @@ import Testing
         #expect(ChatApp.ProjectLoadResult(added: 0, found: 0, linksSeen: 1).message.contains("No projects found"))
         #expect(ChatApp.ProjectLoadResult(added: 0, found: 0, linksSeen: 0).message.contains("didn't load"))
         #expect(ChatApp.ProjectLoadResult(added: 2, found: 3, linksSeen: 40).message == "Added 2 projects.")
+    }
+
+    @Test func readsAProjectsNameFromItsPage() async throws {
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = web
+        func name(_ html: String) async throws -> String {
+            web.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com/g/g-p-1/project"))
+            for _ in 0..<40 where web.isLoading { try await Task.sleep(for: .milliseconds(50)) }
+            return try await web.callAsyncJavaScript(ChatService.projectNameScript, arguments: [:], in: nil,
+                                                     contentWorld: .defaultClient) as? String ?? ""
+        }
+        #expect(try await name("<html><head><title>Job Search - ChatGPT</title></head><body></body></html>") == "Job Search")
+        #expect(try await name("<html><head><title>ChatGPT</title></head><body><main><h1>Robotics</h1></main></body></html>") == "Robotics")
+        window.close()
     }
 
     @Test func claudeListsProjectsOnItsProjectsPage() {

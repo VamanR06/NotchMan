@@ -109,7 +109,8 @@ public final class ChatApp: NotchApp {
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
                let saved = try? JSONDecoder().decode([AskProject].self, from: data) {
-                projects[service] = saved
+                // Older scans could keep icon glyphs in names (shown as "?" boxes).
+                projects[service] = saved.map { AskProject(name: ChatService.cleanName($0.name), url: $0.url) }
             }
             defaultProjects[service] = context.defaults.string(forKey: "defaultProject.\(service.rawValue)")
         }

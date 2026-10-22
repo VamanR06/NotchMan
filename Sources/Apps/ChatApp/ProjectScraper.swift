@@ -93,7 +93,29 @@ final class ProjectScraper: NSObject, WKNavigationDelegate {
             // Once projects have shown up and the list stopped growing for ~2s, we're done.
             if !best.projects.isEmpty && stableRounds >= 4 { break }
         }
-        return best
+        return Result(projects: await named(best.projects, using: view), linksSeen: best.linksSeen,
+                      candidatePaths: best.candidatePaths)
+    }
+
+    /// Looks up names for projects found only through their chats by opening each project's page.
+    private func named(_ projects: [AskProject], using view: WKWebView) async -> [AskProject] {
+        var result = projects
+        for index in result.indices where result[index].name.isEmpty {
+            guard let url = URL(string: result[index].url) else { continue }
+            view.load(URLRequest(url: url))
+            var name = ""
+            for _ in 0..<16 {  // up to ~8s
+                try? await Task.sleep(for: .milliseconds(500))
+                if view.isLoading { continue }
+                let raw = try? await view.callAsyncJavaScript(ChatService.projectNameScript, arguments: [:], in: nil,
+                                                              contentWorld: .defaultClient)
+                name = ChatService.cleanName(raw as? String ?? "")
+                if !name.isEmpty { break }
+            }
+            let id = url.pathComponents.dropFirst(2).first.map { String($0.suffix(6)) } ?? ""
+            result[index].name = name.isEmpty ? "Project \(id)" : name
+        }
+        return result
     }
 
     private func close() {

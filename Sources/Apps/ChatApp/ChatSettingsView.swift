@@ -89,7 +89,12 @@ private struct ProjectsSection: View {
             ForEach(projects) { project in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(project.name)
+                        TextField("Name", text: Binding(
+                            get: { project.name },
+                            set: { rename(project, to: $0) }
+                        ))
+                        .textFieldStyle(.plain)
+                        .help("Click to rename")
                         Text(project.url).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     }
                     Spacer()
@@ -128,6 +133,10 @@ private struct ProjectsSection: View {
             Text("\"Load\" reads your project names and links from \(service.name) (a hidden desktop-size copy of the site, using your sign-in from the notch — sign in there first). Or paste a project's link from the address bar.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func rename(_ project: AskProject, to name: String) {
+        app.setProjects(projects.map { $0.url == project.url ? AskProject(name: name, url: $0.url) : $0 }, for: service)
     }
 
     private func load() {

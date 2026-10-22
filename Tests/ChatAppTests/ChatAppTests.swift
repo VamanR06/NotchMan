@@ -36,19 +36,27 @@ import Testing
 }
 
 @Suite struct ProjectLinkParsingTests {
-    @Test func findsChatGPTProjectsButNotTheirChats() {
+    @Test func findsChatGPTProjectsFromTheirLinksOrTheirChats() {
         let links: [[String: String]] = [
             ["href": "/g/g-p-67c8ab12cd-job-search/project", "name": "Job Search"],
-            ["href": "/g/g-p-67c8ab12cd-job-search/c/abc-123", "name": "Resume review"],  // a chat inside it
+            ["href": "/g/g-p-67c8ab12cd-job-search/c/abc-123", "name": "Resume review"],  // same project, chat title ignored
             ["href": "https://chatgpt.com/g/g-p-99ff00-robotics", "name": "Robotics\n3 chats"],
-            ["href": "/g/g-p-1234abcd-untitled-thing", "name": ""],                     // name from slug
+            // As ChatGPT's sidebar shows them now: only chats, with bare project ids (names looked up later).
+            ["href": "/g/g-p-68e9b16536b48191912b6e36c9fad365/c/6ad9509a-55f8", "name": "Some chat title"],
+            ["href": "/g/g-p-68e9b16536b48191912b6e36c9fad365/c/6ad9509b-0000", "name": "Another chat"],
             ["href": "/c/plain-chat", "name": "Some chat"],
             ["href": "/g/g-abc-custom-gpt", "name": "A custom GPT"],                     // GPTs aren't projects
         ]
         let projects = ChatService.chatgpt.projects(fromLinks: links)
-        #expect(projects.map(\.name) == ["Job Search", "Robotics", "untitled thing"])
+        #expect(projects.map(\.name) == ["Job Search", "Robotics", ""])
         #expect(projects[0].url == "https://chatgpt.com/g/g-p-67c8ab12cd-job-search/project")
-        #expect(projects[1].url == "https://chatgpt.com/g/g-p-99ff00-robotics/project")
+        #expect(projects[2].url == "https://chatgpt.com/g/g-p-68e9b16536b48191912b6e36c9fad365/project")
+    }
+
+    @Test func cleansIconGlyphsFromNames() {
+        #expect(ChatService.cleanName("\u{F0123} Thesis  notes\u{200B}") == "Thesis notes")
+        #expect(ChatService.cleanName("\u{E001}") == "")
+        #expect(ChatService.cleanName("Café ✨ plans") == "Café ✨ plans", "real emoji and accents stay")
     }
 
     @Test func findsClaudeProjects() {

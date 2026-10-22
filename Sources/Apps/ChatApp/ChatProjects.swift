@@ -21,19 +21,28 @@ extension ChatService {
                 found.append(project)
             }
         }
-        return found.filter { !$0.name.isEmpty }
+        // Projects seen only through their chats have no name yet (`ProjectScraper` looks it up).
+        return found
     }
 
     private func project(fromHref href: String, text: String) -> AskProject? {
         guard let site = home.host() else { return nil }
         let path = URL(string: href, relativeTo: home)?.path() ?? href
-        let name = text.split(separator: "\n").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+        let name = Self.cleanName(text.split(separator: "\n").first.map(String.init) ?? "")
         switch self {
         case .chatgpt:
-            // Project home: /g/g-p-<hex>-<slug> or /g/g-p-<hex>-<slug>/project (not …/c/<chat>).
-            guard let match = path.firstMatch(of: /^\/g\/(g-p-[A-Za-z0-9-]+)(\/project)?\/?$/) else { return nil }
-            let id = String(match.1)
-            return AskProject(name: name.isEmpty ? Self.slugName(id) : name, url: "https://\(site)/g/\(id)/project")
+            // The project's own link: /g/g-p-<id>[-slug][/project] — its text is the project's name.
+            if let match = path.firstMatch(of: /^\/g\/(g-p-[A-Za-z0-9-]+)(\/project)?\/?$/) {
+                let id = String(match.1)
+                return AskProject(name: name.isEmpty ? Self.slugName(id) : name, url: "https://\(site)/g/\(id)/project")
+            }
+            // A chat inside a project: /g/g-p-<id>/c/<chat>. The sidebar often links only these, so they reveal
+            // the project — but their text is the chat's title, not the project's name.
+            if let match = path.firstMatch(of: /^\/g\/(g-p-[A-Za-z0-9-]+)\/c\//) {
+                let id = String(match.1)
+                return AskProject(name: Self.slugName(id), url: "https://\(site)/g/\(id)/project")
+            }
+            return nil
         case .claude:
             guard let match = path.firstMatch(of: /^\/project\/([0-9a-fA-F-]{36})\/?$/) else { return nil }
             return AskProject(name: name, url: "https://\(site)/project/\(match.1)")
@@ -42,11 +51,33 @@ extension ChatService {
         }
     }
 
-    /// "g-p-67c8ab12cd-job-search" → "job search".
+    /// "g-p-67c8ab12cd-job-search" → "job search"; bare ids ("g-p-68e9b165…") have no name in them.
     private static func slugName(_ id: String) -> String {
         let parts = id.split(separator: "-").dropFirst(3)
         return parts.joined(separator: " ")
     }
+
+    /// Removes icon glyphs (private-use characters), invisible and control characters, which otherwise show up as
+    /// "?" boxes, and tidies whitespace.
+    static func cleanName(_ raw: String) -> String {
+        let kept = raw.unicodeScalars.filter { scalar in
+            let v = scalar.value
+            let privateUse = (0xE000...0xF8FF).contains(v) || v >= 0xF0000
+            let invisible = [0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0xFFFC, 0xFFFD].contains(v)
+            return !privateUse && !invisible && !CharacterSet.controlCharacters.contains(scalar)
+        }
+        return String(String.UnicodeScalarView(kept))
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Reads a project page's name: its title without the site suffix, else the main heading.
+    static let projectNameScript = """
+    const clean = t => (t || '').replace(/\\s*[-|·–]\\s*(ChatGPT|Claude)\\s*$/i, '').trim();
+    const title = clean(document.title);
+    if (title && !/^(ChatGPT|Claude)$/i.test(title)) return title;
+    const heading = document.querySelector('main h1, h1, main h2');
+    return heading ? heading.innerText.trim() : '';
+    """
 
     /// Lists every link on the page; filtering happens in Swift (`projects(fromLinks:)`).
     static let linkScript = """
