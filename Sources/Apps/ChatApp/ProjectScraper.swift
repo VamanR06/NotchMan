@@ -112,8 +112,7 @@ final class ProjectScraper: NSObject, WKNavigationDelegate {
                 name = ChatService.cleanName(raw as? String ?? "")
                 if !name.isEmpty { break }
             }
-            let id = url.pathComponents.dropFirst(2).first.map { String($0.suffix(6)) } ?? ""
-            result[index].name = name.isEmpty ? "Project \(id)" : name
+            result[index].name = name.isEmpty ? ChatService.placeholderName(for: result[index].url) : name
         }
         return result
     }

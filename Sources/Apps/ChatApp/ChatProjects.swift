@@ -57,6 +57,12 @@ extension ChatService {
         return parts.joined(separator: " ")
     }
 
+    /// "Project 5ddd0b9"-style name from a project link's id, for when the real name can't be read.
+    static func placeholderName(for url: String) -> String {
+        let id = url.split(separator: "/").last { $0 != "project" } ?? ""
+        return "Project \(id.suffix(6))"
+    }
+
     /// Removes icon glyphs (private-use characters), invisible and control characters, which otherwise show up as
     /// "?" boxes, and tidies whitespace.
     static func cleanName(_ raw: String) -> String {

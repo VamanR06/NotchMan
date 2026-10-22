@@ -75,3 +75,21 @@ import Testing
         #expect(ChatService.muse.projects(fromLinks: [["href": "/project/x", "name": "x"]]).isEmpty)
     }
 }
+
+@Suite struct CurrentPageProjectTests {
+    @Test func recognizesTheProjectOfTheCurrentPage() {
+        let chatInProject = "https://chatgpt.com/g/g-p-6ac39f065fe48191bad77db285ddd0b9/c/6ac6e1b2-dcf0"
+        #expect(ChatService.chatgpt.projects(fromLinks: [["href": chatInProject, "name": ""]]).first?.url
+                == "https://chatgpt.com/g/g-p-6ac39f065fe48191bad77db285ddd0b9/project")
+        let claudeProject = "https://claude.ai/project/0198a7c2-1111-7abc-9def-0123456789ab"
+        #expect(ChatService.claude.projects(fromLinks: [["href": claudeProject, "name": ""]]).first?.url == claudeProject)
+        #expect(ChatService.chatgpt.projects(fromLinks: [["href": "https://chatgpt.com/c/123", "name": ""]]).isEmpty)
+    }
+
+    @Test func placeholderNamesUseTheProjectID() {
+        #expect(ChatService.placeholderName(for: "https://chatgpt.com/g/g-p-6ac39f065fe48191bad77db285ddd0b9/project")
+                == "Project ddd0b9")
+        #expect(ChatService.placeholderName(for: "https://claude.ai/project/0198a7c2-1111-7abc-9def-0123456789ab")
+                == "Project 6789ab")
+    }
+}

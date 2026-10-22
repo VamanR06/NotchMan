@@ -59,6 +59,11 @@ public final class ChatApp: NotchApp {
         didSet { if shownTerminalID == nil { context?.holdOpen(false) } }
     }
     private(set) var loading: Set<ChatService> = []
+    /// Each service's current page (kept up to date as you navigate).
+    private(set) var pageURLs: [ChatService: URL] = [:]
+    /// Brief confirmation shown in the toolbar ("Link copied").
+    private(set) var toast: String?
+    @ObservationIgnored private var toastTask: Task<Void, Never>?
     /// Services currently generating a reply, and since when.
     private(set) var busySince: [ChatService: Date] = [:]
     /// Services with a finished reply the user hasn't looked at yet.
@@ -139,6 +144,10 @@ public final class ChatApp: NotchApp {
         view.uiDelegate = coordinator
         view.allowsBackForwardNavigationGestures = true
         view.underPageBackgroundColor = .black
+        observations.append(view.observe(\.url, options: [.new]) { [weak self] _, change in
+            let url = change.newValue ?? nil
+            Task { @MainActor in self?.pageURLs[service] = url }
+        })
         observations.append(view.observe(\.isLoading, options: [.new]) { [weak self] _, change in
             let isLoading = change.newValue ?? false
             Task { @MainActor in
@@ -612,6 +621,51 @@ public final class ChatApp: NotchApp {
         webViews[service]?.goBack()
     }
 
+    // MARK: - Copy link / add project
+
+    func copyLink() {
+        guard let url = webViews[service]?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        showToast("Link copied")
+    }
+
+    /// The project the current page is in (a project page, or a chat inside one), if any.
+    var currentProject: AskProject? {
+        guard service.supportsProjects, let url = pageURLs[service] else { return nil }
+        return service.projects(fromLinks: [["href": url.absoluteString, "name": ""]]).first
+    }
+
+    func isSaved(_ project: AskProject) -> Bool {
+        projects[service]?.contains { $0.url == project.url } ?? false
+    }
+
+    /// Adds the current page's project to the Ask menus, named from the page when it's the project's own page.
+    func addCurrentProject() {
+        guard var project = currentProject, !isSaved(project), let view = webViews[service] else { return }
+        let service = self.service
+        Task {
+            if project.name.isEmpty, view.url?.path().hasSuffix("/project") == true || service == .claude {
+                let raw = try? await view.callAsyncJavaScript(ChatService.projectNameScript, arguments: [:], in: nil,
+                                                              contentWorld: .defaultClient)
+                project.name = ChatService.cleanName(raw as? String ?? "")
+            }
+            if project.name.isEmpty { project.name = ChatService.placeholderName(for: project.url) }
+            setProjects((projects[service] ?? []) + [project], for: service)
+            showToast("Added “\(project.name)” — rename it in Settings")
+        }
+    }
+
+    private func showToast(_ text: String) {
+        toast = text
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.toast = nil
+        }
+    }
+
     func openInBrowser() {
         NSWorkspace.shared.open(webViews[service]?.url ?? service.home)
     }
@@ -644,7 +698,18 @@ struct ChatView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
+                    if let toast = app.toast {
+                        Text(toast)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.green)
+                            .lineLimit(1)
+                            .transition(.opacity)
+                    }
                     Group {
+                        if let project = app.currentProject, !app.isSaved(project) {
+                            button("folder.badge.plus", "Add this project to the Ask menus", app.addCurrentProject)
+                        }
+                        button("link", "Copy link to this page", app.copyLink)
                         button("chevron.left", "Back", app.goBack)
                         button("square.and.pencil", "New chat", app.goHome)
                         button("arrow.clockwise", "Reload", app.reload)
