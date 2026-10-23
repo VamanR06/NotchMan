@@ -120,6 +120,7 @@ private struct JobList: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(jobs) { job in
                             JobRow(app: app, job: job, action: board.comingUp.first { $0.job.id == job.id })
+                                .notchSelected(job.id == app.selectedJob?.id)
                         }
                     }
                 }
@@ -141,17 +142,22 @@ private struct JobList: View {
                     Section {
                         ForEach(board.comingUp) { action in
                             JobRow(app: app, job: action.job, action: action)
+                                .notchSelected(action.job.id == app.selectedJob?.id)
                         }
                     } header: { header("Coming up", board.comingUp.count) }
                 }
                 if !board.inProgress.isEmpty {
                     Section {
-                        ForEach(board.inProgress) { job in JobRow(app: app, job: job, action: nil) }
+                        ForEach(board.inProgress) { job in
+                            JobRow(app: app, job: job, action: nil).notchSelected(job.id == app.selectedJob?.id)
+                        }
                     } header: { header("In progress", board.inProgress.count) }
                 }
                 if !board.toApply.isEmpty {
                     Section {
-                        ForEach(board.toApply) { job in JobRow(app: app, job: job, action: nil) }
+                        ForEach(board.toApply) { job in
+                            JobRow(app: app, job: job, action: nil).notchSelected(job.id == app.selectedJob?.id)
+                        }
                     } header: { header("To apply", board.toApply.count) }
                 }
             }

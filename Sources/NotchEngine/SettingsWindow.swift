@@ -84,6 +84,7 @@ private struct SettingsView: View {
 private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
+    @AppStorage(HotKey.defaultsKey) private var hotKey = HotKey.Preset.optionSpace.rawValue
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var error: String?
 
@@ -104,6 +105,12 @@ private struct GeneralSettingsView: View {
             Toggle(isOn: $allDisplays) {
                 Text("Show notch on all displays")
                 Text("Displays without a hardware notch get a virtual one at the top center.")
+            }
+            Picker(selection: $hotKey) {
+                ForEach(HotKey.Preset.allCases) { preset in Text(preset.title).tag(preset.rawValue) }
+            } label: {
+                Text("Open the notch with")
+                Text("From any app. Then ⌘1–9 switch apps, ↑/↓ and Return pick in lists, Esc closes.")
             }
             LabeledContent {
                 HStack {

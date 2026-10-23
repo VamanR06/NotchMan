@@ -40,6 +40,19 @@ show at once, sized to their content.
 `activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
 `openSettings()`, `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`),
 `notify(title:body:payload:)` for macOS notifications, and `isVisible`. Apps keep running when not selected.
+`send(_:to:reveal: false)` delivers a message without bringing the other app up, and `showTransient(_:)` briefly
+shows a status (icon plus text or a level bar) in place of the chips.
+
+To share data without importing each other, apps publish `BoardItem`s (events, tasks, deadlines, agents,
+approvals) and Claude Code `BoardProject`s to `NotchBoard.shared`; the Today and Shelf apps read them. Keyboard
+support: implement `handleKey(_:)` and keep a `NotchListSelection` for ↑/↓/Return in lists.
+
+## Keyboard
+
+Press **⌥Space** (change it in Settings → General) from any app to open the notch with the keyboard. Then
+**⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the selection, **⌘Return** runs its second
+action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
+closes the notch. Text fields, terminals and chats keep their keys while you type in them.
 
 ## Calendar setup (free)
 

@@ -154,6 +154,7 @@ struct TimelineSections: View {
                         }
                         ForEach(app.showPastEvents ? entry.items : upcoming) { item in
                             EventRow(app: app, item: item, now: app.now)
+                                .notchSelected(item.id == app.selectedItem?.id)
                         }
                         if kind == .today && upcoming.isEmpty {
                             Text(past.isEmpty ? "Nothing scheduled today" : "Nothing else today")
@@ -351,14 +352,7 @@ private struct EventRow: View {
         return "\(start) – \(end.formatted(date: .omitted, time: .shortened))"
     }
 
-    /// Opens in Notion Calendar if installed, else Google Calendar on the web.
-    private func open() {
-        if NotionLinks.hasNotionCalendar {
-            NotionLinks.openNotionCalendar()
-        } else if let url = item.url {
-            NSWorkspace.shared.open(url)
-        }
-    }
+    private func open() { app.open(item) }
 }
 
 /// Inline picker for a new start; the event keeps its length.

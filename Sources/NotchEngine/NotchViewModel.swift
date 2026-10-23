@@ -19,7 +19,10 @@ final class NotchViewModel {
     /// Apps asking to stay open while selected (`NotchContext.holdOpen`).
     @ObservationIgnored var heldApps: Set<String> = []
 
-    private var isHeld: Bool { heldApps.contains(selectedAppID) }
+    /// Opened with the global hotkey: stays open (on any app) until Esc, the hotkey again, or a click outside.
+    @ObservationIgnored var keyboardHeld = false
+
+    private var isHeld: Bool { keyboardHeld || heldApps.contains(selectedAppID) }
 
     // Layout constants.
     /// Collapsed layout: width of one chip slot, of each side of a split (media) activity, and the margin
@@ -222,6 +225,7 @@ final class NotchViewModel {
         attentionExpansion = false
         // Holds last for one opening: the next time, moving away closes the notch again until re-held.
         heldApps.removeAll()
+        keyboardHeld = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
     }
 

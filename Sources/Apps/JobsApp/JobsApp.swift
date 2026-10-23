@@ -120,6 +120,31 @@ public final class JobsApp: NotchApp {
 
     // MARK: - Actions
 
+    // MARK: - Keyboard
+
+    let selection = NotchListSelection()
+
+    /// Jobs in the order the list shows them.
+    var displayedJobs: [TrackedJob] {
+        let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
+        if filter == .active && !searching {
+            var seen = Set<TrackedJob.ID>()
+            return (board.comingUp.map(\.job) + board.inProgress + board.toApply).filter { seen.insert($0.id).inserted }
+        }
+        return board.jobs(for: filter == .active ? .all : filter, matching: query)
+    }
+
+    var selectedJob: TrackedJob? {
+        let shown = displayedJobs
+        return selection.index.flatMap { shown.indices.contains($0) ? shown[$0] : nil }
+    }
+
+    /// ↑/↓ select, Return opens the job in JobManager.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        let shown = displayedJobs
+        return selection.handle(event, count: shown.count, open: { self.open(shown[$0]) })
+    }
+
     func open(_ job: TrackedJob) {
         if let url = client.pageURL(for: job) { NSWorkspace.shared.open(url) }
     }

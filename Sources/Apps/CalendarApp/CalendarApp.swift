@@ -133,6 +133,39 @@ public final class CalendarApp: NotchApp {
         }
     }
 
+    // MARK: - Keyboard
+
+    let selection = NotchListSelection()
+
+    /// Events in the order the timeline shows them.
+    var displayedItems: [CalendarItem] {
+        CalendarDays.group(items, now: now).flatMap { entry in
+            showPastEvents ? entry.items : entry.items.filter { !$0.isPast(at: now) }
+        }
+    }
+
+    var selectedItem: CalendarItem? {
+        let shown = displayedItems
+        return selection.index.flatMap { shown.indices.contains($0) ? shown[$0] : nil }
+    }
+
+    /// ↑/↓ select, Return opens the event, ⌘Return joins its meeting.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        let shown = displayedItems
+        return selection.handle(event, count: shown.count, open: { self.open(shown[$0]) }, secondary: { index in
+            if let meeting = shown[index].meetingURL { NSWorkspace.shared.open(meeting) }
+        })
+    }
+
+    /// Opens in Notion Calendar if installed, else Google Calendar on the web.
+    func open(_ item: CalendarItem) {
+        if NotionLinks.hasNotionCalendar {
+            NotionLinks.openNotionCalendar()
+        } else if let url = item.url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func openSettings() {
         context?.openSettings()
     }

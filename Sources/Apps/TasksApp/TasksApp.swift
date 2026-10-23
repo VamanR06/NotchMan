@@ -232,6 +232,40 @@ public final class TasksApp: NotchApp {
     }
 
     /// Keep the notch open while a date picker is being used.
+    // MARK: - Keyboard
+
+    let selection = NotchListSelection()
+
+    func section(of task: NotionTask) -> TaskSection {
+        guard let due = task.due else { return .noDate }
+        let startOfToday = Calendar.current.startOfDay(for: now)
+        if task.dueIsAllDay ? due < startOfToday : due < now { return .overdue }
+        if Calendar.current.isDateInToday(due) { return .today }
+        return .upcoming
+    }
+
+    /// Tasks in the order the list shows them (by section).
+    var displayedTasks: [NotionTask] {
+        let grouped = Dictionary(grouping: tasks, by: section(of:))
+        return TaskSection.allCases.flatMap { grouped[$0] ?? [] }
+    }
+
+    var selectedTask: NotionTask? {
+        let shown = displayedTasks
+        return selection.index.flatMap { shown.indices.contains($0) ? shown[$0] : nil }
+    }
+
+    /// ↑/↓ select, Return opens in Notion, Space or ⌘Return checks off.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        let shown = displayedTasks
+        if event.keyCode == 49, let task = selectedTask {  // Space
+            if canCheckOff(task) { toggle(task) }
+            return true
+        }
+        return selection.handle(event, count: shown.count, open: { self.open(shown[$0]) },
+                                secondary: { if self.canCheckOff(shown[$0]) { self.toggle(shown[$0]) } })
+    }
+
     func setEditing(_ editing: Bool) {
         context?.holdOpen(editing)
     }

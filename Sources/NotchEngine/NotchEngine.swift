@@ -26,6 +26,7 @@ public final class NotchEngine {
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
     private var notifications: NotificationRouter?
+    private var hotKey: HotKey?
 
     public init(apps: [any NotchApp]) {
         self.apps = apps
@@ -63,6 +64,8 @@ public final class NotchEngine {
 
         rebuildNotches()
         installMouseMonitors()
+        hotKey = HotKey { [weak self] in self?.toggleFromHotKey() }
+        hotKey?.update()
         NotchFocus.startWatchingPopups { $0 is NotchPanel }
 
         observers.append(NotificationCenter.default.addObserver(
@@ -79,7 +82,10 @@ public final class NotchEngine {
         observers.append(NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rebuildNotches() }
+            MainActor.assumeIsolated {
+                self?.rebuildNotches()
+                self?.hotKey?.update()
+            }
         })
     }
 
@@ -208,14 +214,70 @@ public final class NotchEngine {
         }) {
             monitors.append(local)
         }
-        // Shared text shortcuts (⇧↩ = new line in multi-line fields) for every NotchMan window.
-        if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+        // Shared text shortcuts (⇧↩ = new line in multi-line fields) for every NotchMan window, then the notch's
+        // own keys (⌘1–9, Esc, list navigation).
+        if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             nonisolated(unsafe) let event = event
-            let handled = MainActor.assumeIsolated { TextShortcuts.handle(event) }
+            let handled = MainActor.assumeIsolated { TextShortcuts.handle(event) || self?.handleKey(event) == true }
             return handled ? nil : event
         }) {
             monitors.append(keys)
         }
+    }
+
+    // MARK: - Keyboard
+
+    /// The global hotkey opens the notch on the cursor's screen with the keyboard, or closes it again.
+    private func toggleFromHotKey() {
+        guard let model = attentionTarget, let notch = notches.values.first(where: { $0.model === model }) else { return }
+        if model.state == .expanded && model.keyboardHeld {
+            closeFromKeyboard(notch)
+            return
+        }
+        model.keyboardHeld = true
+        model.expand()
+        NotchFocus.activateForTyping()
+        notch.panel.makeKey()
+        notch.panel.makeFirstResponder(notch.panel.contentView)
+    }
+
+    private func closeFromKeyboard(_ notch: ScreenNotch) {
+        notch.model.collapse()
+        notch.panel.makeFirstResponder(nil)
+        notch.panel.resignKey()
+        NotchFocus.restore()
+    }
+
+    /// ⌘1–9 switch apps; Esc closes; anything else goes to the selected app unless something is being typed.
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard let panel = event.window as? NotchPanel,
+              let notch = notches.values.first(where: { $0.panel === panel }),
+              notch.model.state == .expanded else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == .command, let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit) {
+            guard digit <= apps.count else { return true }
+            notch.model.select(apps[digit - 1].id)
+            return true
+        }
+        guard !Self.isTyping(panel.firstResponder) else { return false }
+        if event.keyCode == 53 {  // Esc
+            closeFromKeyboard(notch)
+            return true
+        }
+        return notch.model.selectedApp?.handleKey(event) ?? false
+    }
+
+    /// Text fields, terminals and web pages want every key themselves.
+    static func isTyping(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+        if responder is NSTextView { return true }
+        var view = responder as? NSView
+        while let current = view {
+            let name = String(describing: type(of: current))
+            if name.contains("Terminal") || name.hasPrefix("WK") { return true }
+            view = current.superview
+        }
+        return false
     }
 
     private func handleMouse() {

@@ -84,38 +84,18 @@ private struct Summary: View {
 private struct TaskList: View {
     let app: TasksApp
 
-    private enum Section: Int, CaseIterable {
-        case overdue, today, upcoming, noDate
-
-        var title: String {
-            switch self {
-            case .overdue: "Overdue"
-            case .today: "Today"
-            case .upcoming: "Upcoming"
-            case .noDate: "No due date"
-            }
-        }
-    }
-
-    private func section(of task: NotionTask) -> Section {
-        guard let due = task.due else { return .noDate }
-        let now = app.now
-        let startOfToday = Calendar.current.startOfDay(for: now)
-        if task.dueIsAllDay ? due < startOfToday : due < now { return .overdue }
-        if Calendar.current.isDateInToday(due) { return .today }
-        return .upcoming
-    }
-
     var body: some View {
-        let grouped = Dictionary(grouping: app.tasks, by: section(of:))
+        let grouped = Dictionary(grouping: app.tasks, by: app.section(of:))
+        let selectedID = app.selectedTask?.id
         let showDatabase = Set(app.tasks.map(\.databaseID)).count > 1
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                ForEach(Section.allCases, id: \.self) { section in
+                ForEach(TaskSection.allCases, id: \.self) { section in
                     if let tasks = grouped[section] {
                         SwiftUI.Section {
                             ForEach(tasks) { task in
                                 TaskRow(app: app, task: task, overdue: section == .overdue, showDatabase: showDatabase)
+                                    .notchSelected(task.id == selectedID)
                             }
                         } header: {
                             Text("\(section.title) · \(tasks.count)")
