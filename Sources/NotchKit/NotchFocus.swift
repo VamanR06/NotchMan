@@ -130,4 +130,36 @@ public enum NotchFocus {
         }
         return true
     }
+
+    /// Process ids that own on-screen windows, from the window list (front to back).
+    static func onScreenWindowOwners() -> [pid_t] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return [] }
+        return list.compactMap { $0[kCGWindowOwnerPID as String] as? pid_t }
+    }
+
+    /// Password helpers with a window on screen, given the window owners and how to look up an app's bundle id.
+    static func visibleHelpers(owners: [pid_t], bundleID: (pid_t) -> String?) -> [pid_t] {
+        var seen = Set<pid_t>()
+        return owners.filter { pid in
+            guard seen.insert(pid).inserted, let id = bundleID(pid) else { return false }
+            return systemHelperBundleIDs.contains(id)
+        }
+    }
+
+    /// Clicking into the notch closes AutoFill / its unlock prompt, as clicking back into an app normally does:
+    /// they belong to separate helpers NotchMan can't close, so hide those helpers (like ⌘H; macOS shows them
+    /// again the next time AutoFill is used). Returns whether anything was hidden.
+    @discardableResult
+    public static func dismissSystemHelpers() -> Bool {
+        let helpers = visibleHelpers(owners: onScreenWindowOwners()) {
+            NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
+        }
+        for pid in helpers {
+            guard let app = NSRunningApplication(processIdentifier: pid) else { continue }
+            log.notice("Closing \(app.bundleIdentifier ?? "?", privacy: .public) (clicked into the notch)")
+            app.hide()
+        }
+        return !helpers.isEmpty
+    }
 }

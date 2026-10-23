@@ -191,7 +191,12 @@ public final class NotchEngine {
             monitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { [weak self] event in
-            MainActor.assumeIsolated { self?.handleMouse() }
+            let clickedNotch = event.type == .leftMouseDown && event.window is NotchPanel
+            MainActor.assumeIsolated {
+                self?.handleMouse()
+                // Clicking back into the notch closes macOS's password AutoFill, like clicking back into an app.
+                if clickedNotch { NotchFocus.dismissSystemHelpers() }
+            }
             return event
         }) {
             monitors.append(local)

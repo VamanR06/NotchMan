@@ -50,3 +50,13 @@ import Testing
         #expect(owner?.processIdentifier != ProcessInfo.processInfo.processIdentifier)
     }
 }
+
+@MainActor @Suite struct DismissHelpersTests {
+    @Test func findsOnlyVisiblePasswordHelpersOnce() {
+        let ids: [pid_t: String] = [10: "com.apple.AutoFillPanelService", 11: "com.google.Chrome",
+                                    12: "com.apple.LocalAuthentication.UIAgent"]
+        let found = NotchFocus.visibleHelpers(owners: [11, 10, 10, 12, 99], bundleID: { ids[$0] })
+        #expect(found == [10, 12])
+        #expect(NotchFocus.visibleHelpers(owners: [11], bundleID: { ids[$0] }).isEmpty)
+    }
+}
