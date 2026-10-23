@@ -132,6 +132,8 @@ final class ClaudeAgentsMonitor {
 
     /// Called with transitions after each refresh.
     @ObservationIgnored var onEvents: (([AgentEvent]) -> Void)?
+    /// Called after every snapshot.
+    @ObservationIgnored var onChange: (() -> Void)?
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var watcher: DirectoryWatcher?
@@ -234,6 +236,7 @@ final class ClaudeAgentsMonitor {
         }
         agents = ClaudeAgent.sorted(fresh)
         hasLoaded = true
+        onChange?()
         return events
     }
 

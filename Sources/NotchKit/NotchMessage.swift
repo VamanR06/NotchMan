@@ -25,6 +25,9 @@ public extension NotchMessage {
 
     /// Handled by Tasks ("tasks") and Calendar ("calendar"): create what a quick-add line described. Sent with
     /// `reveal: false`; the app confirms with a transient.
+    /// Handled by Today ("today"): put the cursor in its quick-add field.
+    static let focusQuickAddName = "quickadd.focus"
+
     static let quickAddTaskName = "quickadd.task"
     static let quickAddEventName = "quickadd.event"
 

@@ -1,6 +1,6 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Calendar, Tasks, Jobs, Agents, Now Playing) switchable from a dock.
+A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Today, Calendar, Tasks, Jobs, Agents, Now Playing) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
@@ -22,7 +22,7 @@ Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded 
 | --- | --- |
 | `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
 | `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Calendar, Tasks, Jobs, Agents, Now Playing) |
+| `Sources/Apps/*` | Notch apps (Today, Calendar, Tasks, Jobs, Agents, Now Playing, Shelf) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
 
 ## Writing a notch app
@@ -53,6 +53,24 @@ Press **⌥Space** (change it in Settings → General) from any app to open the 
 **⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the selection, **⌘Return** runs its second
 action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
 closes the notch. Text fields, terminals and chats keep their keys while you type in them.
+
+## Today
+
+The first dock app shows the day at a glance. It's gathered from the other apps, so there's nothing to set up:
+- **Needs you**: pending agent approvals and blocked agents
+- **Next up**: today's remaining meetings, with Join
+- **Due**: overdue and today's tasks, which you can check off right there
+- **Deadlines**: OA deadlines and interviews in the next three days
+
+**Quick add** is the field at the top (⌘N from Today, Tasks or Calendar). Type something like
+"Call recruiter fri 3pm for 30m" or "buy milk tmrw". A line under the field shows what will be created:
+- An **Event** if you gave a time. It goes on your primary Google calendar for 30 minutes, or for the length you
+  gave with "for …".
+- Otherwise a **Notion task**, due on the day you gave. It goes to the list chosen in Settings → Tasks, or to
+  another list if you tag it, e.g. `#school`.
+
+Flip Task/Event before pressing Return if the guess is wrong. Dates are read on your Mac with plain rules, so
+the preview is exactly what you'll get.
 
 ## Calendar setup (free)
 

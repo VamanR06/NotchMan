@@ -11,11 +11,15 @@ public final class TasksApp: NotchApp {
     public var expandedHeight: CGFloat { 190 }
 
     private(set) var databases: [TaskDatabase] = []
-    private(set) var tasks: [NotionTask] = []
+    private(set) var tasks: [NotionTask] = [] {
+        didSet { publishBoard() }
+    }
     private(set) var isConnected = false
     private(set) var isLoading = false
     private(set) var error: String?
-    private(set) var now = Date()
+    private(set) var now = Date() {
+        didSet { publishBoard() }
+    }
 
     /// Per database: `enabled`, `due` (date property, "" for none) and `done` (property, "" for none).
     /// A missing `due`/`done` key means "auto-detect".
@@ -232,6 +236,23 @@ public final class TasksApp: NotchApp {
     }
 
     /// Keep the notch open while a date picker is being used.
+    // MARK: - Board
+
+    /// Overdue and today's open tasks, for the Today app; checking off works in place.
+    private func publishBoard() {
+        let due = tasks.filter { !$0.isDone && [.overdue, .today].contains(section(of: $0)) }
+        NotchBoard.shared.publish(due.map { task in
+            let overdue = section(of: task) == .overdue
+            return BoardItem(id: "task:\(task.id)", kind: .task, title: task.title,
+                             subtitle: overdue ? "Overdue" : task.databaseTitle,
+                             date: task.due, isAllDay: task.dueIsAllDay, tint: overdue ? .red : .white,
+                             primary: canCheckOff(task) ? BoardAction("Done", systemImage: "checkmark.circle") { [weak self] in
+                                 self?.toggle(task)
+                             } : nil,
+                             open: BoardAction("Open", systemImage: "arrow.up.right") { [weak self] in self?.open(task) })
+        }, from: id)
+    }
+
     // MARK: - Quick add
 
     /// Database new tasks go to unless the text names another with `#tag`.
@@ -311,6 +332,10 @@ public final class TasksApp: NotchApp {
 
     /// ↑/↓ select, Return opens in Notion, Space or ⌘Return checks off.
     public func handleKey(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "n" {
+            context?.send(NotchMessage(name: NotchMessage.focusQuickAddName), to: "today")
+            return true
+        }
         let shown = displayedTasks
         if event.keyCode == 49, let task = selectedTask {  // Space
             if canCheckOff(task) { toggle(task) }

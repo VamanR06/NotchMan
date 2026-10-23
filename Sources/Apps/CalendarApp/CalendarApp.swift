@@ -116,6 +116,7 @@ public final class CalendarApp: NotchApp {
 
     private func tick() {
         now = Date()
+        publishBoard()
         // The heads-up ends a minute after the meeting starts.
         if let current = headsUp, now.timeIntervalSince(current.start) > 60 { headsUp = nil }
         guard headsUpLead > 0 else { return }
@@ -185,6 +186,22 @@ public final class CalendarApp: NotchApp {
         }
     }
 
+    // MARK: - Board
+
+    /// Today's remaining events, for the Today app.
+    private func publishBoard() {
+        let today = items.filter { Calendar.current.isDateInToday($0.start) && !$0.isPast(at: now) && !$0.declined }
+        NotchBoard.shared.publish(today.map { item in
+            BoardItem(id: item.id, kind: .event, title: item.title,
+                      subtitle: conflicts[item.id] != nil ? "⚠ \(item.calendarName)" : item.calendarName,
+                      date: item.start, isAllDay: item.isAllDay, tint: item.color,
+                      primary: item.meetingURL.map { url in
+                          BoardAction("Join", systemImage: "video.fill") { NSWorkspace.shared.open(url) }
+                      },
+                      open: BoardAction("Open", systemImage: "arrow.up.right") { [weak self] in self?.open(item) })
+        }, from: id)
+    }
+
     // MARK: - Quick add
 
     /// Creates the event a quick-add line described: 30 minutes unless it said "for …"; a bare day is all-day.
@@ -233,6 +250,10 @@ public final class CalendarApp: NotchApp {
 
     /// ↑/↓ select, Return opens the event, ⌘Return joins its meeting.
     public func handleKey(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "n" {
+            context?.send(NotchMessage(name: NotchMessage.focusQuickAddName), to: "today")
+            return true
+        }
         let shown = displayedItems
         return selection.handle(event, count: shown.count, open: { self.open(shown[$0]) }, secondary: { index in
             if let meeting = shown[index].meetingURL { NSWorkspace.shared.open(meeting) }

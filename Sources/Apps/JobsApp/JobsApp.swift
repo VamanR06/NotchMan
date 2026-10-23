@@ -115,6 +115,7 @@ public final class JobsApp: NotchApp {
             let jobs = try await client.jobs()
             now = Date()
             board = JobBoard(jobs: jobs, now: now)
+            publishBoard()
             hasLoaded = true
             error = nil
             context?.logger.notice("Loaded \(jobs.count, privacy: .public) jobs")
@@ -133,6 +134,28 @@ public final class JobsApp: NotchApp {
     }
 
     // MARK: - Actions
+
+    // MARK: - Board
+
+    /// OA deadlines and interviews in the next three days, for the Today app.
+    private func publishBoard() {
+        let soon = board.comingUp.filter { $0.date.timeIntervalSince(now) < 72 * 3600 }
+        NotchBoard.shared.publish(soon.map { action in
+            let job = action.job
+            let link = action.kind == .oaDeadline ? job.oaLink : job.interviewLink
+            return BoardItem(id: "job:\(job.id):\(action.kind)", kind: .deadline,
+                             title: job.company,
+                             subtitle: action.kind == .oaDeadline ? "OA due · \(job.title)" : "Interview · \(job.title)",
+                             date: action.date, tint: job.status.color,
+                             primary: link.map { url in
+                                 BoardAction(action.kind == .oaDeadline ? "Open OA" : "Join",
+                                             systemImage: action.kind == .oaDeadline ? "doc.text" : "video.fill") {
+                                     NSWorkspace.shared.open(url)
+                                 }
+                             },
+                             open: BoardAction("Open", systemImage: "arrow.up.right") { [weak self] in self?.open(job) })
+        }, from: id)
+    }
 
     // MARK: - Add from browser
 

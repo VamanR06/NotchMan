@@ -121,6 +121,10 @@ public final class ChatApp: NotchApp {
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
+        agentMonitor.onChange = { [weak self] in self?.publishBoard() }
+        NotchBoard.shared.insertIntoSession = { [weak self] project, text in
+            self?.insert(text, intoSessionAt: project.cwd) ?? false
+        }
         agentMonitor.start()
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
@@ -173,6 +177,11 @@ public final class ChatApp: NotchApp {
     // MARK: - Prompts from other apps
 
     public func receive(_ message: NotchMessage) {
+        if message.name == Self.openAgentMessage {
+            showingOverview = true
+            if let agent = agentMonitor.agents.first(where: { $0.id == message.payload["agent"] }) { open(agent) }
+            return
+        }
         if message.name == NotchMessage.notificationOpenedName {
             if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) {
                 show(opened)
@@ -275,6 +284,39 @@ public final class ChatApp: NotchApp {
     }
 
     // MARK: - Claude Code agents
+
+    /// Sent to ourselves (so the engine brings the Agents app up) to open an agent from the Today app.
+    static let openAgentMessage = "agents.open"
+
+    /// Active sessions' folders (for the Shelf's project drop) and agents that need you (for Today).
+    func publishBoard() {
+        let active = agentMonitor.agents.filter { $0.phase != .done }
+        var seen = Set<String>()
+        // Background agents first, so a folder with both offers typing into the notch terminal.
+        let projects = active.sorted { ($0.kind == .background ? 0 : 1) < ($1.kind == .background ? 0 : 1) }
+            .filter { seen.insert($0.cwd).inserted }
+            .map { BoardProject(name: $0.name, cwd: $0.cwd, agentID: $0.shortID) }
+        NotchBoard.shared.publishProjects(projects)
+
+        let items = agentMonitor.agents.filter { $0.phase == .needsYou }.map { agent in
+            BoardItem(id: "agent:\(agent.id)", kind: .agent, title: agent.name,
+                      subtitle: "Needs you · \(agent.project)", tint: .orange,
+                      primary: BoardAction("Open", systemImage: "terminal") { [weak self] in
+                          self?.context?.send(NotchMessage(name: Self.openAgentMessage, payload: ["agent": agent.id]), to: "chat")
+                      })
+        }
+        NotchBoard.shared.publish(items + approvalBoardItems, from: id)
+    }
+
+    /// Types `text` into the Claude terminal of the open notch workspace for `cwd`, without pressing Return.
+    func insert(_ text: String, intoSessionAt cwd: String) -> Bool {
+        guard let terminal = terminals.values.first(where: { $0.agent.cwd == cwd && $0.isRunning }) else { return false }
+        terminal.view.send(txt: text)
+        return true
+    }
+
+    /// Pending tool approvals, for the board (filled in by approvals support).
+    var approvalBoardItems: [BoardItem] { [] }
 
     private func handle(_ events: [AgentEvent]) {
         guard !isLookingAtOverview else { return }
