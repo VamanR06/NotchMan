@@ -28,6 +28,19 @@ public final class JobsApp: NotchApp {
         didSet { context?.defaults.set(defaultProjectURL, forKey: "defaultProjectURL") }
     }
 
+    /// The last status change, offered for undo for a few seconds.
+    private(set) var lastChange: StatusChange?
+    /// Jobs with a status change in flight.
+    private(set) var updating: Set<TrackedJob.ID> = []
+
+    struct StatusChange: Equatable {
+        let jobID: TrackedJob.ID
+        let company: String
+        let status: JobStatus
+        let eventID: Int
+    }
+
+    @ObservationIgnored private var undoExpiry: Task<Void, Never>?
     @ObservationIgnored private(set) var client: JobManagerClient!
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var timers: [Task<Void, Never>] = []
@@ -119,6 +132,46 @@ public final class JobsApp: NotchApp {
     }
 
     // MARK: - Actions
+
+    // MARK: - Status
+
+    func setStatus(_ status: JobStatus, for job: TrackedJob) {
+        guard status != job.status || status == .interview, !updating.contains(job.id) else { return }
+        updating.insert(job.id)
+        Task {
+            defer { updating.remove(job.id) }
+            do {
+                let eventID = try await client.setStatus(status, for: job)
+                offerUndo(StatusChange(jobID: job.id, company: job.company, status: status, eventID: eventID))
+                await refresh()
+            } catch {
+                self.error = "Couldn't change status: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func undoLastChange() {
+        guard let change = lastChange else { return }
+        lastChange = nil
+        Task {
+            do {
+                try await client.deleteEvent(change.eventID)
+                await refresh()
+            } catch {
+                self.error = "Couldn't undo: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func offerUndo(_ change: StatusChange) {
+        lastChange = change
+        undoExpiry?.cancel()
+        undoExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled, self?.lastChange == change else { return }
+            withAnimation { self?.lastChange = nil }
+        }
+    }
 
     // MARK: - Keyboard
 

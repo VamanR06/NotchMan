@@ -19,6 +19,9 @@ struct JobsView: View {
                 VStack(spacing: 6) {
                     FilterBar(app: app)
                     JobList(app: app)
+                    if let change = app.lastChange {
+                        UndoBar(app: app, change: change)
+                    }
                 }
             }
         }
@@ -36,6 +39,29 @@ struct JobsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// "Moved Acme to Interview · Undo", for a few seconds after a status change.
+private struct UndoBar: View {
+    let app: JobsApp
+    let change: JobsApp.StatusChange
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(change.status.color)
+            Text("\(change.company) → \(change.status.name)")
+                .lineLimit(1)
+                .foregroundStyle(.white.opacity(0.8))
+            Spacer()
+            Button("Undo", action: app.undoLastChange)
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Capsule().fill(.white.opacity(0.08)))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
@@ -311,7 +337,23 @@ private struct JobRow: View {
         .onHover { hovering = $0 }
         .onTapGesture { app.open(job) }
         .help("Open in JobManager")
+        .opacity(app.updating.contains(job.id) ? 0.5 : 1)
         .contextMenu {
+            Menu("Set Status") {
+                ForEach(JobStatus.allCases, id: \.self) { status in
+                    Button {
+                        app.setStatus(status, for: job)
+                    } label: {
+                        if status == job.status {
+                            Label(status == .interview ? "Interview (next round)" : status.name, systemImage: "checkmark")
+                        } else {
+                            Text(status.name)
+                        }
+                    }
+                    .disabled(status == job.status && status != .interview)
+                }
+            }
+            Divider()
             if job.status == .toApply && !app.templates.isEmpty {
                 Section("Job prompts") {
                     ForEach(app.templates) { template in

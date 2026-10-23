@@ -82,6 +82,10 @@ the 30-day session. Shows upcoming OA deadlines and interviews (with Open OA / J
 progress, and ones still to apply to; click a row to open it in JobManager. A local server without a password
 works too (`http://localhost:3000`, empty password). Plain `http://` is refused for anything but localhost.
 
+Right-click a job → **Set Status** to move it along (Applied → OA → Interview → Offer/Rejected…). This logs a
+status event in JobManager just like the web app; choosing Interview on a job already interviewing starts the
+next round. An **Undo** bar shows for a few seconds afterwards.
+
 Jobs you haven't applied to have a ✨ menu of ChatGPT prompts (fit & tailoring, cover letter, interview prep, or
 your own in Settings → Jobs). Picking one switches to the Chat app and types the prompt — filled with the job's
 title, company, link, location and saved description — into a new ChatGPT chat without sending it. The prompt is

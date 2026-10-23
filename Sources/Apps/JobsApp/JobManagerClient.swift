@@ -109,27 +109,60 @@ final class JobManagerClient {
         return try JSONDecoder().decode(JobPosting?.self, from: data)
     }
 
+    /// Logs `status` for `job` (JobManager keeps status as a log of events) and returns the new event's id, so
+    /// it can be undone. Moving an interview to another interview starts the next round.
+    func setStatus(_ status: JobStatus, for job: TrackedJob) async throws -> Int {
+        let body = Self.statusEventBody(status, for: job)
+        let data = try await authorized("POST", "api/events", json: body, accept: [200, 201])
+        struct Created: Decodable { let id: Int }
+        return try JSONDecoder().decode(Created.self, from: data).id
+    }
+
+    static func statusEventBody(_ status: JobStatus, for job: TrackedJob) -> [String: Any] {
+        var body: [String: Any] = ["job_id": job.id, "status": status.rawValue]
+        if status == .interview {
+            body["interview_round"] = job.status == .interview ? (job.round ?? 1) + 1 : 1
+        }
+        return body
+    }
+
+    /// Removes a status event (undo).
+    func deleteEvent(_ id: Int) async throws {
+        _ = try await authorized("DELETE", "api/events/\(id)", json: nil, accept: [200, 204])
+    }
+
     /// GET with the session cookie, signing in again once if the session expired.
     private func authorizedGet(_ path: String) async throws -> Data {
+        try await authorized("GET", path, json: nil, accept: [200])
+    }
+
+    /// A request with the session cookie, signing in again once if the session expired. No `Origin` header is
+    /// sent: JobManager refuses cross-site writes, and a native request without one passes its check.
+    private func authorized(_ method: String, _ path: String, json: [String: Any]?, accept: Set<Int>) async throws -> Data {
         let base = try Self.validate(serverURL)
         guard isSignedIn else { throw ClientError.notSignedIn }
 
-        var (data, status) = try await get(path, base: base)
+        var (data, status) = try await send(method, path, json: json, base: base)
         if status == 401, let password = keychain.string(for: "password") {
             // Session expired or the password changed on the server: sign in again once.
             let cookie = try await login(base: base, password: password)
             keychain.set(cookie, for: "session")
-            (data, status) = try await get(path, base: base)
+            (data, status) = try await send(method, path, json: json, base: base)
         }
         if status == 401 { throw ClientError.notSignedIn }
-        guard status == 200 else { throw ClientError.http(status) }
+        guard accept.contains(status) else { throw ClientError.http(status) }
         return data
     }
 
-    private func get(_ path: String, base: URL) async throws -> (Data, Int) {
+    private func send(_ method: String, _ path: String, json: [String: Any]?, base: URL) async throws -> (Data, Int) {
         var request = URLRequest(url: base.appending(path: path))
+        request.httpMethod = method
         if let cookie = keychain.string(for: "session"), !cookie.isEmpty {
             request.setValue("\(Self.cookieName)=\(cookie)", forHTTPHeaderField: "Cookie")
+        }
+        if let json {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: json)
         }
         let (data, response) = try await session.data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
