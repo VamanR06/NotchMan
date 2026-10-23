@@ -118,6 +118,16 @@ public enum NotchFocus {
         log.notice("Handing keyboard to \(id, privacy: .public)")
         if NSApp.isActive { NSApp.yieldActivation(to: app) }
         app.activate()
+        // Step back too: if NotchMan stays active, macOS keeps it in front of the helper.
+        NSApp.deactivate()
+        let target = id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            MainActor.assumeIsolated {
+                let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+                let ourKey = NSApp.keyWindow.map { String(describing: Swift.type(of: $0)) } ?? "none"
+                log.notice("After hand-off to \(target, privacy: .public): front=\(front, privacy: .public) ourKeyWindow=\(ourKey, privacy: .public)")
+            }
+        }
         return true
     }
 }

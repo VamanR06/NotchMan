@@ -174,7 +174,17 @@ public final class NotchEngine {
                 let point = NSEvent.mouseLocation
                 // Clicking macOS's password AutoFill / unlock prompt: give it the keyboard, keep the notch open.
                 if self?.notches.values.contains(where: { $0.model.state == .expanded }) == true,
-                   NotchFocus.handOffToSystemHelper(at: point) { return }
+                   NotchFocus.handOffToSystemHelper(at: point) {
+                    // The notch panel takes typing even while NotchMan isn't active, so it must give up the
+                    // keyboard explicitly or keystrokes keep landing in the page behind the helper.
+                    self?.notches.values.forEach { notch in
+                        if notch.panel.isKeyWindow {
+                            notch.panel.makeFirstResponder(nil)
+                            notch.panel.resignKey()
+                        }
+                    }
+                    return
+                }
                 self?.notches.values.forEach { $0.model.clickedOutside(at: point) }
             }
         }) {
