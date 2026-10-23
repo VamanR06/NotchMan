@@ -27,6 +27,10 @@ public final class NotchEngine {
     private var observers: [NSObjectProtocol] = []
     private var notifications: NotificationRouter?
     private var hotKey: HotKey?
+    private var dragTimer: Timer?
+    /// The drag pasteboard's change count when the mouse button went down; a change means a new drag.
+    private var dragChangeCount = 0
+    private var mouseWasDown = false
 
     public init(apps: [any NotchApp]) {
         self.apps = apps
@@ -68,6 +72,7 @@ public final class NotchEngine {
         installMouseMonitors()
         hotKey = HotKey { [weak self] in self?.toggleFromHotKey() }
         hotKey?.update()
+        startWatchingFileDrags()
         NotchFocus.startWatchingPopups { $0 is NotchPanel }
 
         observers.append(NotificationCenter.default.addObserver(
@@ -224,6 +229,41 @@ public final class NotchEngine {
             return handled ? nil : event
         }) {
             monitors.append(keys)
+        }
+    }
+
+    // MARK: - File drags
+
+    /// Files dragged from anywhere (Finder, a browser, Mail) toward the notch open the app that takes them.
+    /// Polls lightly while the button is down: other apps' drags don't reliably reach event monitors.
+    private func startWatchingFileDrags() {
+        guard apps.contains(where: \.acceptsFileDrags) else { return }
+        dragTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkFileDrag() }
+        }
+    }
+
+    private func checkFileDrag() {
+        let down = NSEvent.pressedMouseButtons & 1 != 0
+        let pasteboard = NSPasteboard(name: .drag)
+        defer { mouseWasDown = down }
+        if down && !mouseWasDown { dragChangeCount = pasteboard.changeCount }
+        if !down {
+            // Drag over: release the hold; the usual hover rules close the notch once the mouse leaves.
+            if mouseWasDown { notches.values.forEach { $0.model.dragHeld = false } }
+            return
+        }
+        guard pasteboard.changeCount != dragChangeCount,
+              pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]),
+              let target = apps.first(where: \.acceptsFileDrags) else { return }
+        let point = NSEvent.mouseLocation
+        for notch in notches.values where !notch.model.dragHeld {
+            // Generous target: the notch plus a band below it.
+            guard notch.model.contains(point, slack: 40) else { continue }
+            notch.model.dragHeld = true
+            notch.model.select(target.id)
+            notch.model.expand()
+            notch.panel.ignoresMouseEvents = false
         }
     }
 

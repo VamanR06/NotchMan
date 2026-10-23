@@ -168,6 +168,25 @@ not sent. In Settings → Chat set the prompt wording (`{item}` = the item's det
 default project; **Load from ChatGPT/Claude** reads project names and links from the signed-in sidebar.
 Apps opt in with `.askable { "description" }` or `AskMenuItems` inside an existing context menu.
 
+## Shelf
+
+Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens on the Shelf.
+
+- **Keep on the shelf:** drop them in the big area to hold them for later. You can drag them back out anywhere,
+  double-click to open, or right-click to AirDrop, reveal or remove. The chip shows how many are waiting.
+- **Drop into a Claude Code project:** the right side lists the folders of your running Claude Code sessions.
+  - Drop on a project to put files in its root, or hold the drag over it to open its folders. Hold over a
+    folder to go deeper, or over ‹ to go back up, then drop on **Drop here** or on a folder.
+  - Files are copied (hold ⌥ to move them). If a name already exists you choose Keep Both (`name 2.ext`),
+    Replace (the old file goes to the Trash) or Skip.
+  - Afterwards the `@path/to/file` reference is on the clipboard, ready to paste into the session. If that
+    agent's terminal is open in the notch, **Insert in Session** types it there for you.
+  - Shelved files can be sent too: right-click → **Copy to Project**.
+- **Downloads:** recent files in ~/Downloads, with progress while Safari, Chrome or Firefox downloads, and a
+  ✓ in the notch when one finishes.
+- **Long commands:** install `notchman-run` in Settings → Shelf, then run `notchman-run make release`. It
+  shows in the notch while running, pings when it ends, and also notifies you if it took more than 10 seconds.
+
 ## Now Playing
 
 Controls Spotify via AppleScript. The first time, macOS asks to let NotchMan control Spotify — allow it

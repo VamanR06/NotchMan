@@ -35,6 +35,9 @@ public protocol NotchApp: AnyObject {
     /// Optional settings pane shown in the NotchMan settings window.
     func makeSettingsView() -> AnyView?
 
+    /// Files dragged to the notch open this app (the first one that accepts them) so it can take the drop.
+    var acceptsFileDrags: Bool { get }
+
     /// Handles a message sent by another app via `NotchContext.send(_:to:)`.
     func receive(_ message: NotchMessage)
 
@@ -48,6 +51,7 @@ public extension NotchApp {
     var expandedWidth: CGFloat { 620 }
     var activity: NotchActivity? { nil }
     var dockBadge: NotchBadge? { nil }
+    var acceptsFileDrags: Bool { false }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}
