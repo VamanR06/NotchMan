@@ -145,6 +145,63 @@ struct AgentSections: View {
     }
 }
 
+/// Plan limit bars ("Current session", "Current week") from `claude -p "/usage"` — the numbers that actually
+/// decide when you'll be rate-limited, not just token counts.
+private struct LimitsRow: View {
+    let app: ChatApp
+
+    var body: some View {
+        let agent = app.agentMonitor
+        HStack(alignment: .top, spacing: 16) {
+            if let limits = agent?.limits, !limits.windows.isEmpty {
+                ForEach(limits.windows) { window in
+                    LimitBar(window: window)
+                }
+            } else if let error = agent?.limitsError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+            } else {
+                HStack(spacing: 5) {
+                    NotchSpinner(size: 9, color: .white.opacity(0.5), lineWidth: 1.4)
+                    Text("Checking plan limits…").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct LimitBar: View {
+    let window: ClaudeLimitWindow
+
+    private var tint: Color {
+        window.isAtLimit ? .red : (window.isNearLimit ? .orange : .white)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(window.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                Text("\(window.percent)%").font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(tint)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.15))
+                    Capsule().fill(tint).frame(width: geo.size.width * CGFloat(min(window.percent, 100)) / 100)
+                }
+            }
+            .frame(width: 92, height: 4)
+            Text("resets \(window.resetsText)")
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.4))
+                .lineLimit(1)
+        }
+        .help(window.label + ": " + "\(window.percent)% used, resets \(window.resetsText)")
+    }
+}
+
 /// Claude Code token usage: last 5 hours, today and 7 days; expands into a 7-day breakdown.
 struct UsageCard: View {
     @Bindable var app: ChatApp
@@ -189,6 +246,8 @@ struct UsageCard: View {
             .buttonStyle(.plain)
             .help("Tokens used by Claude Code on this Mac (input + output + cache writes)")
 
+            LimitsRow(app: app)
+
             if app.showUsageBreakdown {
                 breakdownView(summary)
             }
@@ -197,7 +256,7 @@ struct UsageCard: View {
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
         .task {
-            // Fresh on appear, then every minute while on screen.
+            // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
             while !Task.isCancelled {
                 await app.refreshUsage()
                 try? await Task.sleep(for: .seconds(60))

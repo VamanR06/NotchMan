@@ -125,6 +125,10 @@ final class ClaudeAgentsMonitor {
     private(set) var agents: [ClaudeAgent] = []
     private(set) var hasLoaded = false
     private(set) var error: String?
+    private(set) var limits: ClaudeLimits?
+    private(set) var limitsError: String?
+    @ObservationIgnored private var limitsFetchedAt: Date?
+    @ObservationIgnored private var limitsRunning = false
 
     /// Called with transitions after each refresh.
     @ObservationIgnored var onEvents: (([AgentEvent]) -> Void)?
@@ -231,6 +235,27 @@ final class ClaudeAgentsMonitor {
         agents = ClaudeAgent.sorted(fresh)
         hasLoaded = true
         return events
+    }
+
+    /// Runs `claude -p "/usage"` (a free local command; piped stdout also skips the folder-trust prompt) and
+    /// parses it. Cached for 2 minutes unless `force`.
+    func refreshLimits(force: Bool = false) async {
+        guard !limitsRunning else { return }
+        if !force, let limitsFetchedAt, Date().timeIntervalSince(limitsFetchedAt) < 120 { return }
+        limitsRunning = true
+        defer { limitsRunning = false }
+        guard let path = await claudePath() else {
+            limitsError = "Couldn't find the claude command."
+            return
+        }
+        do {
+            let output = try await Shell.run(path, ["-p", "/usage"], timeout: 30)
+            limits = ClaudeLimits.parse(output)
+            limitsError = nil
+        } catch {
+            limitsError = error.localizedDescription
+        }
+        limitsFetchedAt = Date()
     }
 
     /// Project folders seen in current sessions, most recent first (for "New agent").

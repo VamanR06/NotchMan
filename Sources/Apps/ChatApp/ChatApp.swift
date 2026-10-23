@@ -42,7 +42,9 @@ public final class ChatApp: NotchApp {
 
     func refreshUsage(force: Bool = false) async {
         let names = Dictionary((agentMonitor?.agents ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
-        await usageMonitor.refresh(force: force) { names[$0] }
+        async let tokens: () = usageMonitor.refresh(force: force) { names[$0] }
+        async let limits: () = agentMonitor.refreshLimits(force: force)
+        _ = await (tokens, limits)
     }
     /// Agents that needed you or finished while you weren't looking at the Overview.
     private(set) var unseenAgents: Set<String> = []
