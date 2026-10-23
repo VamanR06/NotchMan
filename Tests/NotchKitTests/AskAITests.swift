@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import NotchKit
 
@@ -26,5 +27,26 @@ import Testing
         let p = AskProject(name: "Jobs", url: "https://chatgpt.com/g/g-p-1/project")
         #expect(AskService(id: "chatgpt", name: "ChatGPT", projects: [p], defaultProjectURL: p.url).defaultProject == p)
         #expect(AskService(id: "chatgpt", name: "ChatGPT", projects: [p]).defaultProject == nil)
+    }
+}
+
+@MainActor @Suite struct NotchFocusTests {
+    @Test func convertsCocoaPointsToWindowCoordinates() {
+        #expect(NotchFocus.cgCoordinates(CGPoint(x: 100, y: 1000), mainDisplayHeight: 1080) == CGPoint(x: 100, y: 80))
+        #expect(NotchFocus.cgCoordinates(CGPoint(x: 2400, y: 1080), mainDisplayHeight: 1080) == CGPoint(x: 2400, y: 0))
+    }
+
+    @Test func knowsTheSystemPasswordHelpers() {
+        #expect(NotchFocus.systemHelperBundleIDs.contains("com.apple.AutoFillPanelService"))
+        #expect(NotchFocus.systemHelperBundleIDs.contains("com.apple.LocalAuthentication.UIAgent"))
+        #expect(!NotchFocus.systemHelperBundleIDs.contains("com.google.Chrome"))
+    }
+
+    @Test func findsTheOwnerOfAWindowUnderThePointer() throws {
+        // Some app's window is under the middle of the main display in any normal session; it's never NotchMan's
+        // test runner (which has no windows), so an owner should come back.
+        guard let screen = NSScreen.screens.first else { return }
+        let owner = NotchFocus.otherAppWindowOwner(at: CGPoint(x: screen.frame.midX, y: screen.frame.midY))
+        #expect(owner?.processIdentifier != ProcessInfo.processInfo.processIdentifier)
     }
 }

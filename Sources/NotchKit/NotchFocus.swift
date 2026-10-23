@@ -15,7 +15,12 @@ public enum NotchFocus {
     public static func activateForTyping() {
         guard !NSApp.isActive else { return }
         let front = NSWorkspace.shared.frontmostApplication
-        previous = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : front
+        // Remember the app to return to — but not a password helper (clicking back into the notch from AutoFill
+        // shouldn't make AutoFill the app focus returns to), and keep the original if we already have one.
+        if let front, front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+           !systemHelperBundleIDs.contains(front.bundleIdentifier ?? ""), previous == nil {
+            previous = front
+        }
         NSApp.activate()
     }
 
@@ -66,5 +71,53 @@ public enum NotchFocus {
             let id = app?.bundleIdentifier ?? "?"
             log.notice("App activated: \(id, privacy: .public)")
         })
+    }
+
+    // MARK: - System password helpers
+
+    /// macOS shows password AutoFill and its unlock prompt from separate helper processes. Their panels only take
+    /// the keyboard while their own process is active, and clicking them doesn't activate it — so after you click
+    /// back into the notch, typing would keep going to NotchMan.
+    static let systemHelperBundleIDs: Set<String> = [
+        "com.apple.AutoFillPanelService",
+        "com.apple.LocalAuthentication.UIAgent",
+        "com.apple.Passwords",
+        "com.apple.SecurityAgent",
+        "com.apple.coreautha",
+    ]
+
+    /// The app owning the frontmost window under `point` (Cocoa screen coordinates), other than NotchMan.
+    /// Window owners and bounds are readable without Screen Recording permission.
+    public static func otherAppWindowOwner(at point: CGPoint) -> NSRunningApplication? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let cgPoint = cgCoordinates(point)
+        let me = ProcessInfo.processInfo.processIdentifier
+        for window in list {  // front to back
+            guard let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), rect.contains(cgPoint),
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t else { continue }
+            if pid == me { return nil }  // our own window is on top here
+            return NSRunningApplication(processIdentifier: pid)
+        }
+        return nil
+    }
+
+    /// Cocoa (origin bottom-left of the main display) → Core Graphics window coordinates (origin top-left).
+    static func cgCoordinates(_ point: CGPoint, mainDisplayHeight: CGFloat? = nil) -> CGPoint {
+        let height = mainDisplayHeight ?? NSScreen.screens.first?.frame.height ?? 0
+        return CGPoint(x: point.x, y: height - point.y)
+    }
+
+    /// If the click at `point` landed on a system password helper's window, give that helper the keyboard and
+    /// return true (the click wasn't "outside" — the notch should stay open).
+    public static func handOffToSystemHelper(at point: CGPoint) -> Bool {
+        guard let app = otherAppWindowOwner(at: point), let id = app.bundleIdentifier,
+              systemHelperBundleIDs.contains(id) else { return false }
+        log.notice("Handing keyboard to \(id, privacy: .public)")
+        if NSApp.isActive { NSApp.yieldActivation(to: app) }
+        app.activate()
+        return true
     }
 }

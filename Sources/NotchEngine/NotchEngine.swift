@@ -170,7 +170,12 @@ public final class NotchEngine {
             let isClick = event.type == .leftMouseDown
             MainActor.assumeIsolated {
                 self?.handleMouse()
-                if isClick { self?.notches.values.forEach { $0.model.clickedOutside(at: NSEvent.mouseLocation) } }
+                guard isClick else { return }
+                let point = NSEvent.mouseLocation
+                // Clicking macOS's password AutoFill / unlock prompt: give it the keyboard, keep the notch open.
+                if self?.notches.values.contains(where: { $0.model.state == .expanded }) == true,
+                   NotchFocus.handOffToSystemHelper(at: point) { return }
+                self?.notches.values.forEach { $0.model.clickedOutside(at: point) }
             }
         }) {
             monitors.append(global)
