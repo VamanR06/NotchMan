@@ -27,6 +27,16 @@ final class NotchViewModel {
 
     private var isHeld: Bool { keyboardHeld || dragHeld || heldApps.contains(selectedAppID) }
 
+    /// The user is pointing at the notch, so it should take the keyboard (⌘1–9, arrows, Esc) from the app
+    /// they were in. Called once per opening; never for openings the user didn't ask for (meeting heads-up).
+    @ObservationIgnored var onWantsKeyboard: (() -> Void)?
+    /// The notch closed; give the keyboard back.
+    @ObservationIgnored var onCollapse: (() -> Void)?
+    @ObservationIgnored private var tookKeyboard = false
+    /// After switching apps the shape can shrink out from under the cursor. While the cursor is still where
+    /// the previous (larger) shape was, that doesn't count as leaving.
+    @ObservationIgnored private var selectionGraceRect: CGRect?
+
     // Layout constants.
     /// Collapsed layout: width of one chip slot, of each side of a split (media) activity, and the margin
     /// kept clear of the shape's outer edge so content doesn't crowd the rounded corners.
@@ -168,6 +178,10 @@ final class NotchViewModel {
     /// pushed against the top (as it is under the physical notch) reports y == maxY, which
     /// `CGRect.contains` treats as outside.
     func contains(_ point: CGPoint, slack: CGFloat = 0) -> Bool {
+        Self.contains(hitRect, point, slack: slack)
+    }
+
+    static func contains(_ hitRect: CGRect, _ point: CGPoint, slack: CGFloat) -> Bool {
         var rect = hitRect.insetBy(dx: -slack, dy: -slack)
         rect.size.height += 4
         return rect.contains(point)
@@ -195,6 +209,7 @@ final class NotchViewModel {
                     guard !Task.isCancelled else { return }
                     self?.pendingExpand = nil
                     self?.expand()
+                    self?.takeKeyboard()
                 }
             } else {
                 pendingExpand?.cancel()
@@ -204,9 +219,16 @@ final class NotchViewModel {
             // Same slack as the collapsed hover target, so the two states can't fight over the edge.
             if contains(point, slack: 4) {
                 attentionExpansion = false
+                selectionGraceRect = nil
+                pendingCollapse?.cancel()
+                pendingCollapse = nil
+                takeKeyboard()
+            } else if let grace = selectionGraceRect, Self.contains(grace, point, slack: 4) {
+                // Still inside where the notch was before switching apps.
                 pendingCollapse?.cancel()
                 pendingCollapse = nil
             } else if !attentionExpansion, !isPinned, !isMenuOpen, !isHeld, pendingCollapse == nil {
+                selectionGraceRect = nil
                 scheduleCollapse(after: .milliseconds(250))
             }
         }
@@ -216,6 +238,12 @@ final class NotchViewModel {
     func clickedOutside(at point: CGPoint) {
         guard state == .expanded, isHeld, !isPinned, !contains(point, slack: 4) else { return }
         collapse()
+    }
+
+    private func takeKeyboard() {
+        guard state == .expanded, !tookKeyboard else { return }
+        tookKeyboard = true
+        onWantsKeyboard?()
     }
 
     func expand() {
@@ -230,7 +258,11 @@ final class NotchViewModel {
         heldApps.removeAll()
         keyboardHeld = false
         dragHeld = false
+        selectionGraceRect = nil
+        let hadKeyboard = tookKeyboard
+        tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
+        if hadKeyboard { onCollapse?() }
     }
 
     private func scheduleCollapse(after delay: Duration) {
@@ -244,6 +276,10 @@ final class NotchViewModel {
     }
 
     func select(_ appID: String) {
+        if state == .expanded, appID != selectedAppID {
+            // Remember the larger of the old shape and any earlier grace area, so quick switches chain.
+            selectionGraceRect = selectionGraceRect.map { $0.union(hitRect) } ?? hitRect
+        }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selectedAppID = appID }
     }
 

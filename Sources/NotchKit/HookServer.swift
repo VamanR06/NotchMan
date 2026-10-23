@@ -45,7 +45,12 @@ public final class HookServer: @unchecked Sendable {
     /// The shared secret callers must send.
     public let token: String
 
-    init() {
+    /// The port this instance listens on (`HookServer.port` for the shared one).
+    let listenPort: UInt16
+
+    /// `port` other than the default is for tests, which mustn't collide with a running NotchMan.
+    init(port: UInt16 = HookServer.port) {
+        listenPort = port
         token = Self.loadOrCreateToken()
     }
 
@@ -60,7 +65,7 @@ public final class HookServer: @unchecked Sendable {
     private func startIfNeeded() {
         guard listener == nil else { return }
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: Self.port)!)
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: listenPort)!)
         params.allowLocalEndpointReuse = true
         guard let listener = try? NWListener(using: params) else { return }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }

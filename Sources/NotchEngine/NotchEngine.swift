@@ -152,6 +152,25 @@ public final class NotchEngine {
         panel.contentView = FirstMouseHostingView(rootView: root)
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
+        // A nonactivating panel can take typing without making NotchMan the active app, so the app you were
+        // in stays active and gets the keyboard back as soon as the notch closes.
+        model.onWantsKeyboard = { [weak panel] in
+            guard let panel, !panel.isKeyWindow else { return }
+            panel.makeKey()
+            panel.makeFirstResponder(panel.contentView)
+        }
+        model.onCollapse = { [weak panel] in
+            guard let panel, panel.isKeyWindow else { return }
+            panel.makeFirstResponder(nil)
+            if NSApp.isActive {
+                // One of NotchMan's own windows (Settings, a popped-out chat) had it; anything else is handled by
+                // NotchFocus.restore once the notch is closed.
+                NSApp.windows.first { $0 !== panel && $0.isVisible && $0.styleMask.contains(.titled) }?.makeKey()
+            } else {
+                panel.resignKey()
+                NSWorkspace.shared.frontmostApplication?.activate()
+            }
+        }
         layout(notch)
         panel.orderFrontRegardless()
         return notch
@@ -302,6 +321,8 @@ public final class NotchEngine {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         if modifiers == .command, let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit) {
             guard digit <= apps.count else { return true }
+            // Switching by keyboard: keep the notch open until Esc or a click outside, wherever the mouse is.
+            notch.model.keyboardHeld = true
             notch.model.select(apps[digit - 1].id)
             return true
         }

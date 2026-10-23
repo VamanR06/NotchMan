@@ -14,10 +14,12 @@ import Testing
     }
 
     @Test func servesRoutesOnlyWithTheToken() async throws {
-        let server = HookServer.shared
+        // Its own port, so a running NotchMan on the default one doesn't answer instead.
+        let port = UInt16.random(in: 50_000...59_999)
+        let server = HookServer(port: port)
         server.route("/test-echo") { request in HookServer.Response(body: request.body) }
         try await Task.sleep(for: .milliseconds(300))
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(HookServer.port)/test-echo")!)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/test-echo")!)
         request.httpMethod = "POST"
         request.httpBody = Data("ping".utf8)
 
