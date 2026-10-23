@@ -46,6 +46,21 @@ public final class ChatApp: NotchApp {
         async let limits: () = agentMonitor.refreshLimits(force: force)
         _ = await (tokens, limits)
     }
+    /// Tool calls waiting for Allow / Deny (from the PermissionRequest hook), oldest first.
+    private(set) var approvals: [ApprovalRequest] = []
+    @ObservationIgnored private var approvalWaiters: [String: CheckedContinuation<ApprovalDecision, Never>] = [:]
+    /// How long a request waits in the notch before Claude Code asks in its terminal instead.
+    var approvalWait: Double = 60 {
+        didSet { context?.defaults.set(approvalWait, forKey: "approvalWait") }
+    }
+    /// Ask in the notch for interactive sessions too (normally only background agents, whose terminal you're
+    /// usually not looking at).
+    var approvalsForAllSessions = false {
+        didSet { context?.defaults.set(approvalsForAllSessions, forKey: "approvalsForAllSessions") }
+    }
+    private(set) var approvalHookInstalled = false
+    private(set) var approvalHookError: String?
+
     /// Agents that needed you or finished while you weren't looking at the Overview.
     private(set) var unseenAgents: Set<String> = []
     var editor: AgentEditor = .vscode {
@@ -126,6 +141,12 @@ public final class ChatApp: NotchApp {
             self?.insert(text, intoSessionAt: project.cwd) ?? false
         }
         agentMonitor.start()
+        approvalWait = context.defaults.object(forKey: "approvalWait") as? Double ?? 60
+        approvalsForAllSessions = context.defaults.bool(forKey: "approvalsForAllSessions")
+        approvalHookInstalled = ApprovalHook.isInstalled(in: ApprovalHook.readSettings())
+        HookServer.shared.route("/permission") { [weak self] request in
+            await self?.handlePermissionRequest(request.body) ?? .empty
+        }
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
                let saved = try? JSONDecoder().decode([AskProject].self, from: data) {
@@ -183,6 +204,14 @@ public final class ChatApp: NotchApp {
             return
         }
         if message.name == NotchMessage.notificationOpenedName {
+            if let approval = message.payload["approval"] {
+                switch message.payload["action"] {
+                case "allow": resolveApproval(approval, .allow)
+                case "deny": resolveApproval(approval, .deny)
+                default: showingOverview = true
+                }
+                return
+            }
             if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) {
                 show(opened)
             } else if message.payload["agent"] != nil {
@@ -315,8 +344,82 @@ public final class ChatApp: NotchApp {
         return true
     }
 
-    /// Pending tool approvals, for the board (filled in by approvals support).
-    var approvalBoardItems: [BoardItem] { [] }
+    // MARK: - Approvals
+
+    /// A PermissionRequest hook call: show it, wait for Allow / Deny (or the wait to run out), and answer.
+    func handlePermissionRequest(_ body: Data) async -> HookServer.Response {
+        guard let request = ApprovalRequest.decode(body) else { return .empty }
+        let agent = agentMonitor.agents.first { $0.id == request.sessionID }
+        // Only sessions we know are background agents, unless asked otherwise; the rest ask in their terminal.
+        guard approvalsForAllSessions || agent?.kind == .background else { return .empty }
+
+        approvals.append(request)
+        publishBoard()
+        let who = agent?.name ?? request.project
+        context?.notify(title: "\(who) wants to use \(request.toolName)",
+                        body: (request.risk.map { "⚠ \($0) · " } ?? "") + request.summary,
+                        payload: ["approval": request.id],
+                        actions: [NotchNotificationAction(id: "allow", title: "Allow"),
+                                  NotchNotificationAction(id: "deny", title: "Deny", isDestructive: true)])
+        context?.requestAttention(.pulse)
+
+        let wait = approvalWait
+        let decision = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                approvalWaiters[request.id] = continuation
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(wait))
+                    self?.resolveApproval(request.id, .terminal)
+                }
+            }
+        } onCancel: {
+            // Claude Code hung up (interrupted, or its hook timeout passed).
+            Task { @MainActor [weak self] in self?.resolveApproval(request.id, .terminal) }
+        }
+        return ApprovalHook.output(decision).map(HookServer.Response.json) ?? .empty
+    }
+
+    func resolveApproval(_ id: String, _ decision: ApprovalDecision) {
+        approvals.removeAll { $0.id == id }
+        approvalWaiters.removeValue(forKey: id)?.resume(returning: decision)
+        publishBoard()
+    }
+
+    /// Adds (or removes) NotchMan's hook in ~/.claude/settings.json, keeping a backup of the file.
+    func setApprovalHookInstalled(_ install: Bool) {
+        do {
+            let settings = ApprovalHook.readSettings()
+            // Claude Code's hook timeout sits a little past ours, so NotchMan always answers first.
+            let updated = install
+                ? ApprovalHook.installing(into: settings, token: HookServer.shared.token, timeout: Int(approvalWait) + 10)
+                : ApprovalHook.removing(from: settings)
+            try ApprovalHook.writeSettings(updated)
+            approvalHookInstalled = install
+            approvalHookError = nil
+        } catch {
+            approvalHookError = error.localizedDescription
+        }
+    }
+
+    /// Re-writes the hook so its timeout follows a changed wait.
+    func approvalWaitChanged() {
+        if approvalHookInstalled { setApprovalHookInstalled(true) }
+    }
+
+    /// Pending approvals for the Today app, with Allow / Deny in place.
+    var approvalBoardItems: [BoardItem] {
+        approvals.map { request in
+            BoardItem(id: "approval:\(request.id)", kind: .approval, title: "\(request.toolName): \(request.summary)",
+                      subtitle: (request.risk.map { "⚠ \($0) · " } ?? "") + request.project,
+                      tint: request.risk == nil ? .orange : .red,
+                      primary: BoardAction("Allow", systemImage: "checkmark") { [weak self] in
+                          self?.resolveApproval(request.id, .allow)
+                      },
+                      secondary: BoardAction("Deny", systemImage: "xmark") { [weak self] in
+                          self?.resolveApproval(request.id, .deny)
+                      })
+        }
+    }
 
     private func handle(_ events: [AgentEvent]) {
         guard !isLookingAtOverview else { return }
@@ -495,6 +598,12 @@ public final class ChatApp: NotchApp {
 
     /// Collapsed-notch chip for all AI activity; outranks music so it isn't hidden while something plays.
     public var activity: NotchActivity? {
+        if let first = approvals.first {
+            let label = approvals.count == 1 ? "Allow \(first.toolName)?" : "\(approvals.count) to allow"
+            return NotchActivity(priority: 25) {
+                NotchChip(label, systemImage: "hand.raised.fill", tint: first.risk == nil ? .orange : .red)
+            }
+        }
         guard let summary = currentSummary else { return nil }
         switch summary.kind {
         case .needsYou:
@@ -513,7 +622,8 @@ public final class ChatApp: NotchApp {
     }
 
     public var dockBadge: NotchBadge? {
-        switch currentSummary?.kind {
+        if !approvals.isEmpty { return .dot(.orange) }
+        return switch currentSummary?.kind {
         case .needsYou: .dot(.orange)
         case .working: .busy
         case .ready: .dot(.green)

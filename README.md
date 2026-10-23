@@ -133,6 +133,21 @@ a shell. Interactive sessions open their folder in VS Code/Cursor.
 **New Agent** starts `claude --bg "<prompt>"` in a project folder. You're notified when an agent needs you or
 finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
 
+**Approvals in the notch:** in Settings → Agents → Approvals, click **Install Approval Hook**. When a background
+agent wants permission for a tool (a command, an edit, a fetch), you can answer from:
+- the chip, which shows "Allow Bash?"
+- the card at the top of the Overview, with the command or file and **Allow**, **Deny** or **Ask in terminal**
+- the Today app
+- the notification's Allow/Deny buttons
+
+Claude Code waits for NotchMan before showing its own prompt. If you don't answer within the wait (1 minute by
+default), or NotchMan isn't running, the terminal asks as usual. Interactive sessions skip the notch unless you
+turn that on. Commands matching risky patterns (`rm -rf`, `sudo`, force-push, `curl … | sh`, writes outside the
+project) are marked red, and nothing is ever allowed automatically.
+
+The hook is an HTTP hook to `127.0.0.1:43822` that carries a secret token. It's added next to your existing
+hooks in `~/.claude/settings.json`, and a backup of the file is saved as `settings.json.notchman-backup`.
+
 ### Chat tabs
 
 The real chatgpt.com, claude.ai and muse.ai, embedded in the notch with a toggle. Sign in once with your own accounts

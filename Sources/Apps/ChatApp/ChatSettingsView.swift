@@ -38,6 +38,35 @@ struct ChatSettingsView: View {
             }
 
             Section {
+                LabeledContent("Approval hook") {
+                    HStack {
+                        if app.approvalHookInstalled {
+                            Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                            Button("Remove") { app.setApprovalHookInstalled(false) }
+                        } else {
+                            Button("Install Approval Hook") { app.setApprovalHookInstalled(true) }
+                        }
+                    }
+                }
+                Picker("Wait in the notch for", selection: $app.approvalWait) {
+                    Text("30 seconds").tag(30.0)
+                    Text("1 minute").tag(60.0)
+                    Text("2 minutes").tag(120.0)
+                    Text("5 minutes").tag(300.0)
+                }
+                .onChange(of: app.approvalWait) { _, _ in app.approvalWaitChanged() }
+                Toggle("Also ask for interactive sessions", isOn: $app.approvalsForAllSessions)
+                if let error = app.approvalHookError {
+                    Text(error).foregroundStyle(.red).font(.caption)
+                }
+            } header: {
+                Text("Approvals")
+            } footer: {
+                Text("When a background agent wants permission for a tool, Allow / Deny shows on the notch chip, in Today, on the Overview and in the notification. Claude Code waits for NotchMan first, so if you don't answer within the wait (or NotchMan isn't running) it asks in its terminal as usual. Risky-looking commands (rm -rf, sudo, force-push, curl | sh…) are marked red; nothing is ever allowed automatically. Installing adds an HTTP hook to ~/.claude/settings.json next to your other hooks and saves a backup as settings.json.notchman-backup.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
                 TextEditor(text: $template)
                     .font(.system(size: 12))
                     .frame(minHeight: 60)

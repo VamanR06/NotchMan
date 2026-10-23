@@ -15,7 +15,7 @@ public final class NotchContext {
     private let openSettingsHandler: () -> Void
     private let sendHandler: (NotchMessage, String, Bool) -> Void
     private let visibleHandler: () -> Bool
-    private let notifyHandler: (String, String, [String: String]) -> Void
+    private let notifyHandler: (String, String, [String: String], [NotchNotificationAction]) -> Void
     private let holdHandler: (Bool) -> Void
     private let transientHandler: (NotchTransient) -> Void
 
@@ -25,7 +25,7 @@ public final class NotchContext {
         openSettings: @escaping () -> Void,
         send: @escaping (NotchMessage, String, Bool) -> Void = { _, _, _ in },
         isVisible: @escaping () -> Bool = { false },
-        notify: @escaping (String, String, [String: String]) -> Void = { _, _, _ in },
+        notify: @escaping (String, String, [String: String], [NotchNotificationAction]) -> Void = { _, _, _, _ in },
         holdOpen: @escaping (Bool) -> Void = { _ in },
         transient: @escaping (NotchTransient) -> Void = { _ in }
     ) {
@@ -52,9 +52,10 @@ public final class NotchContext {
     public var isVisible: Bool { visibleHandler() }
 
     /// Posts a macOS notification (asking for permission the first time). Clicking it brings this app up in
-    /// the notch and calls `receive(_:)` with `NotchMessage.notificationOpened` carrying `payload`.
-    public func notify(title: String, body: String, payload: [String: String] = [:]) {
-        notifyHandler(title, body, payload)
+    /// the notch and calls `receive(_:)` with `NotchMessage.notificationOpened` carrying `payload`. Choosing one of
+    /// `actions` instead delivers the same message in the background with the action's id under `"action"`.
+    public func notify(title: String, body: String, payload: [String: String] = [:], actions: [NotchNotificationAction] = []) {
+        notifyHandler(title, body, payload, actions)
     }
 
     /// Delivers `message` to the app with id `appID`. With `reveal` (the default) that app is brought up in the

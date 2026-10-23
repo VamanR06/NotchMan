@@ -12,6 +12,9 @@ struct AgentsOverview: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ChatStrip(app: app)
+                ForEach(app.approvals) { request in
+                    ApprovalCard(app: app, request: request)
+                }
                 UsageCard(app: app)
                 if app.composingAgent {
                     NewAgentForm(app: app)
@@ -21,6 +24,49 @@ struct AgentsOverview: View {
             }
             .onAppear { app.markOverviewSeen() }
         }
+    }
+}
+
+/// A tool call waiting for permission: what it wants, why it might be risky, and the answer buttons.
+private struct ApprovalCard: View {
+    let app: ChatApp
+    let request: ApprovalRequest
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "hand.raised.fill")
+                .foregroundStyle(request.risk == nil ? .orange : .red)
+                .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(request.toolName).font(.system(size: 12, weight: .semibold))
+                    Text(request.project).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    if let risk = request.risk {
+                        Text("⚠ \(risk)").font(.system(size: 10, weight: .semibold)).foregroundStyle(.red)
+                    }
+                }
+                Text(request.summary)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 6) {
+                    Button("Deny") { app.resolveApproval(request.id, .deny) }
+                    Button("Allow") { app.resolveApproval(request.id, .allow) }
+                        .keyboardShortcut(.defaultAction)
+                }
+                .controlSize(.small)
+                Button("Ask in terminal") { app.resolveApproval(request.id, .terminal) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill((request.risk == nil ? Color.orange : .red).opacity(0.12)))
     }
 }
 

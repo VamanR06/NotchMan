@@ -35,7 +35,9 @@ public final class NotchEngine {
 
     public func start() {
         notifications = NotificationRouter { [weak self] appID, payload in
-            self?.deliver(NotchMessage(name: NotchMessage.notificationOpenedName, payload: payload), to: appID)
+            // An action button (Allow, Deny) is handled in the background; a click brings the app up.
+            self?.deliver(NotchMessage(name: NotchMessage.notificationOpenedName, payload: payload), to: appID,
+                          reveal: payload["action"] == nil)
         }
         // "Ask ChatGPT / Claude / Muse" menus anywhere in the notch go to the Chat app.
         AskAI.shared.deliver = { [weak self] message in self?.deliver(message, to: "chat") }
@@ -49,8 +51,8 @@ public final class NotchEngine {
                 isVisible: { [weak self] in
                     self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
                 },
-                notify: { [weak self] title, body, payload in
-                    self?.notifications?.post(appID: appID, title: title, body: body, payload: payload)
+                notify: { [weak self] title, body, payload, actions in
+                    self?.notifications?.post(appID: appID, title: title, body: body, payload: payload, actions: actions)
                 },
                 holdOpen: { [weak self] hold in
                     self?.notches.values.forEach { notch in

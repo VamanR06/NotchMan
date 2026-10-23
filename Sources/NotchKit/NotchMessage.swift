@@ -12,6 +12,19 @@ public struct NotchMessage: Sendable, Equatable {
     }
 }
 
+/// A button on a notification (e.g. Allow / Deny).
+public struct NotchNotificationAction: Sendable, Hashable {
+    public let id: String
+    public let title: String
+    public let isDestructive: Bool
+
+    public init(id: String, title: String, isDestructive: Bool = false) {
+        self.id = id
+        self.title = title
+        self.isDestructive = isDestructive
+    }
+}
+
 // MARK: - Well-known messages
 
 public extension NotchMessage {
