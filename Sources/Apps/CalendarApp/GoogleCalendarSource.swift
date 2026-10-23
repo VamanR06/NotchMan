@@ -312,6 +312,17 @@ final class GoogleCalendarSource {
             let hangoutLink: String?
             let location: String?
             let conferenceData: ConferenceData?
+            let attendees: [Attendee]?
+
+            struct Attendee: Decodable {
+                let `self`: Bool?
+                let responseStatus: String?
+            }
+
+            /// You're on the guest list and said no.
+            var declinedBySelf: Bool {
+                attendees?.contains { $0.`self` == true && $0.responseStatus == "declined" } ?? false
+            }
         }
 
         /// Meet, and add-ons like Zoom/Teams/Webex, put their join links here.
@@ -358,7 +369,8 @@ final class GoogleCalendarSource {
                     url: event.htmlLink.flatMap(URL.init(string:)),
                     meetingURL: MeetingLinks.link(conferenceVideo: event.conferenceData?.videoLink,
                                                   hangoutLink: event.hangoutLink, location: event.location),
-                    location: event.location
+                    location: event.location,
+                    declined: event.declinedBySelf
                 ))
             }
         }

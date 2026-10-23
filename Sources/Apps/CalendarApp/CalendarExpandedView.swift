@@ -22,7 +22,12 @@ struct CalendarExpandedView: View {
                 .font(.system(size: 12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Timeline(app: app)
+                VStack(spacing: 6) {
+                    if let meeting = app.headsUp {
+                        HeadsUpBanner(app: app, item: meeting)
+                    }
+                    Timeline(app: app)
+                }
             }
         }
         .task { await app.refreshIfStale() }
@@ -79,6 +84,60 @@ private struct DaySummary: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// The meeting about to start: live countdown, a big Join button, and any overlap.
+private struct HeadsUpBanner: View {
+    let app: CalendarApp
+    let item: CalendarItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2).fill(item.color).frame(width: 4, height: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let left = item.start.timeIntervalSince(context.date)
+                    Text(left > 0 ? String(format: "Starts in %d:%02d", Int(left) / 60, Int(left) % 60) : "Starting now")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.orange)
+                }
+                if let others = app.conflicts[item.id], let first = others.first {
+                    Label("Overlaps with \(first.title)\(others.count > 1 ? " +\(others.count - 1)" : "")",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.yellow)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 6)
+            if let meeting = item.meetingURL {
+                Button {
+                    NSWorkspace.shared.open(meeting)
+                    app.dismissHeadsUp()
+                } label: {
+                    Label("Join", systemImage: "video.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Capsule().fill(.green))
+                        .foregroundStyle(.black)
+                }
+                .buttonStyle(.plain)
+            }
+            Button(action: app.dismissHeadsUp) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.08)))
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 
@@ -287,6 +346,12 @@ private struct EventRow: View {
                 .foregroundStyle(.white.opacity(0.55))
             }
             Spacer(minLength: 4)
+            if let others = app.conflicts[item.id] {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.yellow)
+                    .help("Overlaps with " + others.map(\.title).joined(separator: ", "))
+            }
             if item.isOngoing(at: now) {
                 Text("NOW")
                     .font(.system(size: 9, weight: .bold))

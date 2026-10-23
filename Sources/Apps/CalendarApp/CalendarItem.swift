@@ -19,6 +19,8 @@ struct CalendarItem: Identifiable, Hashable {
     let url: URL?
     let meetingURL: URL?
     let location: String?
+    /// You declined this invitation.
+    var declined = false
 
     /// Finished: timed events whose end (or start, with no end) has passed. All-day events never count.
     func isPast(at now: Date) -> Bool {

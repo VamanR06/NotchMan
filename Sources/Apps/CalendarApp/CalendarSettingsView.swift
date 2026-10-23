@@ -11,6 +11,18 @@ struct CalendarSettingsView: View {
     var body: some View {
         Form {
             googleSection
+            Section {
+                Picker("Heads-up before meetings", selection: Binding(get: { app.headsUpLead }, set: { app.headsUpLead = $0 })) {
+                    Text("Off").tag(0.0)
+                    Text("1 minute").tag(60.0)
+                    Text("90 seconds").tag(90.0)
+                    Text("2 minutes").tag(120.0)
+                    Text("3 minutes").tag(180.0)
+                }
+            } footer: {
+                Text("The notch opens with a countdown and a Join button. Overlapping events are marked ⚠, and you're notified once a day if tomorrow is double-booked.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear {

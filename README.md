@@ -65,6 +65,11 @@ date and time); it keeps its length, and guests are emailed as in Google Calenda
 events — if you signed in before it existed, use **Reconnect** in Settings → Calendar. Only calendars you own or
 can edit offer it.
 
+**Meeting heads-up:** 90 seconds before a meeting (change or turn off in Settings → Calendar) the notch opens
+with a banner: a live countdown, a big **Join** button and any overlap. The chip counts down by the second for
+the last two minutes. Events that overlap another you haven't declined are marked ⚠ (the same meeting on two of
+your calendars doesn't count), and you're notified once a day if tomorrow is double-booked.
+
 ## Tasks (Notion)
 
 Create an internal integration at notion.so/profile/integrations with *Read* and *Update content*, paste its

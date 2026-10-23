@@ -24,6 +24,15 @@ public final class CalendarApp: NotchApp {
     @ObservationIgnored private var context: NotchContext?
     @ObservationIgnored private var timers: [Task<Void, Never>] = []
     @ObservationIgnored private var alertedEventIDs: Set<String> = []
+    /// The meeting about to start, shown as a banner with a countdown and Join until shortly after it starts.
+    private(set) var headsUp: CalendarItem?
+    @ObservationIgnored private var dismissedHeadsUpIDs: Set<String> = []
+    /// Overlapping events, by event id.
+    private(set) var conflicts: [String: [CalendarItem]] = [:]
+    /// How long before a meeting the notch opens with the heads-up (0 = off).
+    var headsUpLead: Double = 90 {
+        didSet { context?.defaults.set(headsUpLead, forKey: "headsUpLead") }
+    }
     @ObservationIgnored private var refreshQueued = false
 
     /// How far ahead the timeline looks.
@@ -35,6 +44,7 @@ public final class CalendarApp: NotchApp {
         self.context = context
         google = GoogleCalendarSource(keychain: context.keychain, defaults: context.defaults)
         showPastEvents = context.defaults.bool(forKey: "showPastEvents")
+        headsUpLead = context.defaults.object(forKey: "headsUpLead") as? Double ?? 90
 
         timers.append(Task { [weak self] in
             while !Task.isCancelled {
@@ -44,7 +54,8 @@ public final class CalendarApp: NotchApp {
         })
         timers.append(Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                // Every 5s while a meeting is close, so the heads-up lands on time; else every 30s.
+                try? await Task.sleep(for: .seconds(self?.tickInterval ?? 30))
                 self?.tick()
             }
         })
@@ -85,6 +96,8 @@ public final class CalendarApp: NotchApp {
         }
 
         items = collected.sorted { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+        conflicts = Conflicts.find(items)
+        notifyTomorrowConflicts()
         self.errors = errors
         lastRefresh = Date()
         tick()
@@ -96,16 +109,47 @@ public final class CalendarApp: NotchApp {
         await refresh()
     }
 
+    private var tickInterval: Double {
+        let soon = items.contains { !$0.isAllDay && $0.start > now && $0.start.timeIntervalSince(now) < max(headsUpLead, 60) + 90 }
+        return soon || headsUp != nil ? 5 : 30
+    }
+
     private func tick() {
         now = Date()
-        // Pop the notch open once, a minute before each timed event.
-        if let next = nextEvent, !alertedEventIDs.contains(next.id) {
+        // The heads-up ends a minute after the meeting starts.
+        if let current = headsUp, now.timeIntervalSince(current.start) > 60 { headsUp = nil }
+        guard headsUpLead > 0 else { return }
+        // Pop the notch open once per meeting, `headsUpLead` before it starts.
+        if let next = upcomingTimedEvent, !alertedEventIDs.contains(next.id) {
             let until = next.start.timeIntervalSince(now)
-            if until > 0, until <= 60 {
+            if until > 0, until <= headsUpLead {
                 alertedEventIDs.insert(next.id)
-                context?.requestAttention(.expand(duration: 6))
+                if !dismissedHeadsUpIDs.contains(next.id) { headsUp = next }
+                context?.requestAttention(.expand(duration: until + 30))
             }
         }
+    }
+
+    /// The next timed event that hasn't started (declined ones don't count).
+    private var upcomingTimedEvent: CalendarItem? {
+        items.first { !$0.isAllDay && !$0.declined && $0.start > now }
+    }
+
+    func dismissHeadsUp() {
+        if let headsUp { dismissedHeadsUpIDs.insert(headsUp.id) }
+        withAnimation { headsUp = nil }
+    }
+
+    /// Once a day, a notification if tomorrow has double-bookings.
+    private func notifyTomorrowConflicts() {
+        guard let context, let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) else { return }
+        let day = DateParsing.dayString(tomorrow)
+        guard context.defaults.string(forKey: "conflictsNotifiedFor") != day else { return }
+        let clashing = items.filter { conflicts[$0.id] != nil && Calendar.current.isDate($0.start, inSameDayAs: tomorrow) }
+        guard !clashing.isEmpty else { return }
+        context.defaults.set(day, forKey: "conflictsNotifiedFor")
+        let names = clashing.prefix(3).map(\.title).joined(separator: ", ")
+        context.notify(title: "Double-booked tomorrow", body: names)
     }
 
     /// The ongoing or next timed event within the next hour.
@@ -124,11 +168,19 @@ public final class CalendarApp: NotchApp {
         let ongoing = event.isOngoing(at: now)
         let minutes = Int(ceil(event.start.timeIntervalSince(now) / 60))
         let soon = ongoing || minutes <= 10
+        let start = event.start
         return NotchActivity(priority: soon ? 20 : 5) {
-            NotchChip(ongoing ? "now" : "\(minutes)m", tint: soon ? .orange : .white) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(event.color)
+            // The last two minutes count down by the second.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let left = start.timeIntervalSince(context.date)
+                let text = ongoing || left <= 0 ? "now"
+                    : left <= 120 ? String(format: "%d:%02d", Int(left) / 60, Int(left) % 60)
+                    : "\(minutes)m"
+                NotchChip(text, tint: soon ? .orange : .white) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(event.color)
+                }
             }
         }
     }
