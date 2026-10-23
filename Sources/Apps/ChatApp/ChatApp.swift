@@ -35,6 +35,15 @@ public final class ChatApp: NotchApp {
 
     /// Claude Code sessions.
     @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
+    /// Claude Code token usage, from session transcripts.
+    @ObservationIgnored let usageMonitor = ClaudeUsageMonitor()
+    /// The usage breakdown is expanded on the Overview.
+    var showUsageBreakdown = false
+
+    func refreshUsage(force: Bool = false) async {
+        let names = Dictionary((agentMonitor?.agents ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        await usageMonitor.refresh(force: force) { names[$0] }
+    }
     /// Agents that needed you or finished while you weren't looking at the Overview.
     private(set) var unseenAgents: Set<String> = []
     var editor: AgentEditor = .vscode {

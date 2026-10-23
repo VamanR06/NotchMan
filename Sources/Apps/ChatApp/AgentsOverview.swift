@@ -12,6 +12,7 @@ struct AgentsOverview: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ChatStrip(app: app)
+                UsageCard(app: app)
                 if app.composingAgent {
                     NewAgentForm(app: app)
                 }
@@ -140,6 +141,126 @@ struct AgentSections: View {
         case .working: "Working"
         case .done: "Done"
         case .idle: "Idle"
+        }
+    }
+}
+
+/// Claude Code token usage: last 5 hours, today and 7 days; expands into a 7-day breakdown.
+struct UsageCard: View {
+    @Bindable var app: ChatApp
+    @State private var breakdown: Breakdown
+
+    init(app: ChatApp, initialBreakdown: Breakdown = .model) {
+        self.app = app
+        _breakdown = State(initialValue: initialBreakdown)
+    }
+
+    enum Breakdown: String, CaseIterable, Identifiable {
+        case model = "Models", project = "Projects", session = "Sessions"
+        var id: Self { self }
+    }
+
+    private var monitor: ClaudeUsageMonitor { app.usageMonitor }
+
+    var body: some View {
+        let summary = monitor.summary
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { app.showUsageBreakdown.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "chart.bar.fill").font(.system(size: 11)).foregroundStyle(.orange)
+                    Text("Claude Code usage").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    Spacer()
+                    if monitor.hasLoaded {
+                        stat("5h", summary.lastFiveHours.work)
+                        stat("Today", summary.today.work)
+                        stat("7 days", summary.week.work)
+                    } else {
+                        NotchSpinner(size: 10, lineWidth: 1.5)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(app.showUsageBreakdown ? 90 : 0))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Tokens used by Claude Code on this Mac (input + output + cache writes)")
+
+            if app.showUsageBreakdown {
+                breakdownView(summary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+        .task {
+            // Fresh on appear, then every minute while on screen.
+            while !Task.isCancelled {
+                await app.refreshUsage()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    private func stat(_ label: String, _ tokens: Int) -> some View {
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(.white.opacity(0.5))
+            Text(UsageSummary.format(tokens)).foregroundStyle(.white).monospacedDigit()
+        }
+        .font(.system(size: 11, weight: .medium))
+    }
+
+    @ViewBuilder
+    private func breakdownView(_ summary: UsageSummary) -> some View {
+        let slices: [UsageSlice] = switch breakdown {
+        case .model: summary.byModel
+        case .project: summary.byProject
+        case .session: summary.bySession
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                ForEach(Breakdown.allCases) { option in
+                    Button { breakdown = option } label: {
+                        Text(option.rawValue)
+                            .font(.system(size: 10, weight: breakdown == option ? .semibold : .regular))
+                            .padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(Capsule().fill(.white.opacity(breakdown == option ? 0.2 : 0)))
+                            .foregroundStyle(.white.opacity(breakdown == option ? 1 : 0.6))
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+                Text("last 7 days").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+            }
+            if slices.isEmpty {
+                Text("No Claude Code usage in the last 7 days.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            }
+            let top = max(slices.first?.work ?? 1, 1)
+            ForEach(slices) { slice in
+                HStack(spacing: 8) {
+                    Text(slice.label)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                        .frame(width: 170, alignment: .leading)
+                    GeometryReader { geo in
+                        Capsule().fill(.orange.opacity(0.75))
+                            .frame(width: max(3, geo.size.width * CGFloat(slice.work) / CGFloat(top)))
+                    }
+                    .frame(height: 6)
+                    Text(UsageSummary.format(slice.work))
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: 46, alignment: .trailing)
+                }
+            }
+            let w = summary.week
+            Text("Input \(UsageSummary.format(w.input)) · Output \(UsageSummary.format(w.output)) · Cache writes \(UsageSummary.format(w.cacheWrite)) · Cache reads \(UsageSummary.format(w.cacheRead))")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.45))
         }
     }
 }
