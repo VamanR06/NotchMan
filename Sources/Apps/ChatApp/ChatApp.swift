@@ -61,6 +61,11 @@ public final class ChatApp: NotchApp {
     private(set) var approvalHookInstalled = false
     private(set) var approvalHookError: String?
 
+    /// When each agent last finished (this run of NotchMan), so Today can show what just completed.
+    @ObservationIgnored private var finishedAt: [String: Date] = [:]
+    /// Finished sessions stay on Today this long.
+    static let recentlyFinished: TimeInterval = 2 * 3600
+
     /// Agents that needed you or finished while you weren't looking at the Overview.
     private(set) var unseenAgents: Set<String> = []
     var editor: AgentEditor = .vscode {
@@ -327,14 +332,31 @@ public final class ChatApp: NotchApp {
             .map { BoardProject(name: $0.name, cwd: $0.cwd, agentID: $0.shortID) }
         NotchBoard.shared.publishProjects(projects)
 
-        let items = agentMonitor.agents.filter { $0.phase == .needsYou }.map { agent in
-            BoardItem(id: "agent:\(agent.id)", kind: .agent, title: agent.name,
-                      subtitle: "Needs you · \(agent.project)", tint: .orange,
-                      primary: BoardAction("Open", systemImage: "terminal") { [weak self] in
-                          self?.context?.send(NotchMessage(name: Self.openAgentMessage, payload: ["agent": agent.id]), to: "chat")
-                      })
+        func openAction(_ agent: ClaudeAgent) -> BoardAction {
+            BoardAction("Open", systemImage: "terminal") { [weak self] in
+                self?.context?.send(NotchMessage(name: Self.openAgentMessage, payload: ["agent": agent.id]), to: "chat")
+            }
         }
-        NotchBoard.shared.publish(items + approvalBoardItems, from: id)
+        let agents = agentMonitor.agents
+        let needsYou = agents.filter { $0.phase == .needsYou }.map { agent in
+            BoardItem(id: "agent:\(agent.id)", kind: .agent, title: agent.name,
+                      subtitle: agent.project, tint: .orange, primary: openAction(agent))
+        }
+        let working = agents.filter { $0.phase == .working }.map { agent in
+            BoardItem(id: "session:\(agent.id)", kind: .session, title: agent.name, subtitle: agent.project,
+                      date: agent.startedAt, isWorking: true, open: openAction(agent))
+        }
+        // Just finished: in the last couple of hours, or not yet looked at.
+        let now = Date()
+        let finished = agents.filter { $0.phase == .done || $0.phase == .idle }.compactMap { agent -> BoardItem? in
+            let when = finishedAt[agent.id]
+            let recent = when.map { now.timeIntervalSince($0) < Self.recentlyFinished } ?? false
+            guard recent || (agent.phase == .done && unseenAgents.contains(agent.id)) else { return nil }
+            return BoardItem(id: "session:\(agent.id)", kind: .session, title: agent.name, subtitle: agent.project,
+                             date: when, tint: .green, open: openAction(agent))
+        }
+        .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        NotchBoard.shared.publish(needsYou + approvalBoardItems + working + finished, from: id)
     }
 
     /// Types `text` into the Claude terminal of the open notch workspace for `cwd`, without pressing Return.
@@ -422,6 +444,8 @@ public final class ChatApp: NotchApp {
     }
 
     private func handle(_ events: [AgentEvent]) {
+        for case .finished(let agent) in events { finishedAt[agent.id] = Date() }
+        publishBoard()
         guard !isLookingAtOverview else { return }
         for event in events {
             unseenAgents.insert(event.agent.id)
@@ -449,6 +473,7 @@ public final class ChatApp: NotchApp {
 
     func markOverviewSeen() {
         unseenAgents.removeAll()
+        publishBoard()
     }
 
     /// Background agents open attached in a terminal (in the notch or Terminal, per settings); interactive

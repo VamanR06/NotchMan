@@ -65,9 +65,15 @@ Accessibility again after every rebuild.
 
 ## Today
 
-The first dock app shows the day at a glance. It's gathered from the other apps, so there's nothing to set up:
+The first dock app shows the day at a glance, in two columns so it fits without scrolling. It's gathered from
+the other apps, so there's nothing to set up. Each item is one line, and longer lists fold behind "+N more".
+
+The left column is what's happening:
+- **Next up**: the next meeting as a card with Join, then today's other meetings
 - **Needs you**: pending agent approvals and blocked agents
-- **Next up**: today's remaining meetings, with Join
+- **Sessions**: Claude Code sessions that are working (spinner) or finished in the last two hours (✓)
+
+The right column is what's due:
 - **Due**: overdue and today's tasks, which you can check off right there
 - **Deadlines**: OA deadlines and interviews in the next three days
 
@@ -186,8 +192,10 @@ Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens
 - **Drop into a Claude Code project:** the right side lists the folders of your running Claude Code sessions.
   - Drop on a project to put files in its root, or hold the drag over it to open its folders. Hold over a
     folder to go deeper, or over ‹ to go back up, then drop on **Drop here** or on a folder.
-  - Files are copied (hold ⌥ to move them). If a name already exists you choose Keep Both (`name 2.ext`),
-    Replace (the old file goes to the Trash) or Skip.
+  - The **Copy / Move** switch sets what a drop does (hold ⌥ while dropping for the other one). If a name
+    already exists you choose Keep Both (`name 2.ext`), Replace (the old file goes to the Trash) or Skip.
+  - The folder button makes a **new folder** where you are and opens it. With Move selected, you can drag one
+    folder in the browser onto another to reorganize.
   - Afterwards the `@path/to/file` reference is on the clipboard, ready to paste into the session. If that
     agent's terminal is open in the notch, **Insert in Session** types it there for you.
   - Shelved files can be sent too: right-click → **Copy to Project**.

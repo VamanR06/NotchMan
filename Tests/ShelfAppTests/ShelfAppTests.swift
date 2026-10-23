@@ -32,6 +32,20 @@ import Testing
         #expect(ProjectDrop.freeName(for: root.appending(path: "new.txt")).lastPathComponent == "new.txt")
     }
 
+    @Test func foldersCantGoInsideThemselves() {
+        let src = URL(fileURLWithPath: "/p/src")
+        #expect(ProjectDrop.isInside(URL(fileURLWithPath: "/p/src"), src))
+        #expect(ProjectDrop.isInside(URL(fileURLWithPath: "/p/src/assets"), src))
+        #expect(!ProjectDrop.isInside(URL(fileURLWithPath: "/p/srcs"), src))
+        #expect(!ProjectDrop.isInside(URL(fileURLWithPath: "/p"), src))
+    }
+
+    @Test func folderNamesAreChecked() {
+        #expect(ProjectDrop.folderName("  assets ") == "assets")
+        #expect(ProjectDrop.folderName("My Docs") == "My Docs")
+        for bad in ["", "  ", ".", "..", "a/b", "a:b"] { #expect(ProjectDrop.folderName(bad) == nil) }
+    }
+
     @Test func referencesAreProjectRelative() {
         let root = URL(fileURLWithPath: "/Users/me/my-app")
         #expect(ProjectDrop.reference(for: root.appending(path: "src/assets/logo.png"), in: root) == "@src/assets/logo.png")

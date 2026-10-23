@@ -24,6 +24,12 @@ public final class ShelfApp: NotchApp {
     /// The last drop into a project, offered for "Insert in session".
     private(set) var lastDrop: ProjectDropResult?
     private(set) var runInstalled = NotchmanRun.isInstalled
+    /// Dropping into a project moves files instead of copying them (⌥ while dropping does the other one).
+    var moveFiles = false {
+        didSet { context?.defaults.set(moveFiles, forKey: "moveFiles") }
+    }
+    /// Bumped when the open folder's contents change, so the browser re-lists it.
+    private(set) var folderRevision = 0
 
     struct Browsing: Equatable {
         let project: BoardProject
@@ -51,6 +57,7 @@ public final class ShelfApp: NotchApp {
     public func activate(context: NotchContext) {
         self.context = context
         items = (context.defaults.array(forKey: "shelf") as? [Data] ?? []).compactMap(Self.resolve)
+        moveFiles = context.defaults.bool(forKey: "moveFiles")
         refreshDownloads()
         watcher = DirectoryWatcher(paths: [DownloadsFolder.url.path]) { [weak self] in self?.refreshDownloads() }
         watchProgress()
@@ -134,12 +141,17 @@ public final class ShelfApp: NotchApp {
     /// Copies `urls` into `folder` of `project` (⌥ held: moves), asking before replacing anything; then copies
     /// the `@path` references for the session.
     func drop(_ urls: [URL], into folder: URL, of project: BoardProject) {
-        let move = NSEvent.modifierFlags.contains(.option)
+        let move = moveFiles != NSEvent.modifierFlags.contains(.option)
         let fm = FileManager.default
         var placed: [URL] = []
         for source in urls {
             var (target, exists) = ProjectDrop.target(for: source, in: folder)
             if source.standardizedFileURL == target.standardizedFileURL { placed.append(target); continue }
+            if ProjectDrop.isInside(folder, source) {
+                context?.showTransient(NotchTransient(id: "shelf", systemImage: "exclamationmark.triangle.fill",
+                                                      text: "Can't go inside itself", tint: .orange, duration: 2.5))
+                continue
+            }
             if exists {
                 switch askAboutConflict(name: target.lastPathComponent, folder: ProjectDrop.label(for: folder, in: URL(fileURLWithPath: project.cwd))) {
                 case .replace:
@@ -159,6 +171,7 @@ public final class ShelfApp: NotchApp {
                                                       text: "Couldn't add", tint: .orange, duration: 2.5))
             }
         }
+        folderRevision += 1
         guard !placed.isEmpty else { return }
         let root = URL(fileURLWithPath: project.cwd)
         let references = placed.map { ProjectDrop.reference(for: $0, in: root) }.joined(separator: " ")
@@ -167,6 +180,28 @@ public final class ShelfApp: NotchApp {
         lastDrop = ProjectDropResult(project: project, files: placed, references: references)
         context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",
                                               text: "@ copied", tint: .green, duration: 2))
+    }
+
+    /// Makes a folder in the folder being browsed ("name 2" if taken) and opens it, ready for a drop.
+    @discardableResult
+    func createFolder(named typed: String) -> Bool {
+        guard let browsing, let name = ProjectDrop.folderName(typed) else { return false }
+        let url = ProjectDrop.freeName(for: browsing.folder.appending(path: name))
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            folderRevision += 1
+            self.browsing?.folder = url
+            return true
+        } catch {
+            context?.showTransient(NotchTransient(id: "shelf", systemImage: "exclamationmark.triangle.fill",
+                                                  text: "Couldn't create", tint: .orange, duration: 2.5))
+            return false
+        }
+    }
+
+    /// Keeps the notch open while a folder name is being typed.
+    func setTyping(_ typing: Bool) {
+        context?.holdOpen(typing)
     }
 
     /// Types the last drop's references into the project's notch terminal (without Return).

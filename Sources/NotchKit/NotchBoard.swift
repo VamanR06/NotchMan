@@ -3,7 +3,8 @@ import SwiftUI
 /// Something an app wants surfaced outside itself (the Today app shows these): a meeting, a task due, a job
 /// deadline, an agent that needs you, a pending approval.
 public struct BoardItem: Identifiable {
-    public enum Kind: Sendable { case event, task, deadline, agent, approval }
+    /// `agent`: a session that needs you; `session`: one working or just finished.
+    public enum Kind: Sendable { case event, task, deadline, agent, approval, session }
 
     public var id: String
     public var kind: Kind
@@ -12,6 +13,8 @@ public struct BoardItem: Identifiable {
     public var date: Date?
     public var isAllDay: Bool
     public var tint: Color
+    /// Something is in progress (a working session): shown with a spinner.
+    public var isWorking: Bool
     /// Runs in place (check off, Allow, Join) without leaving the app showing the item.
     public var primary: BoardAction?
     public var secondary: BoardAction?
@@ -19,7 +22,7 @@ public struct BoardItem: Identifiable {
     public var open: BoardAction?
 
     public init(id: String, kind: Kind, title: String, subtitle: String? = nil, date: Date? = nil,
-                isAllDay: Bool = false, tint: Color = .white, primary: BoardAction? = nil,
+                isAllDay: Bool = false, tint: Color = .white, isWorking: Bool = false, primary: BoardAction? = nil,
                 secondary: BoardAction? = nil, open: BoardAction? = nil) {
         self.id = id
         self.kind = kind
@@ -28,6 +31,7 @@ public struct BoardItem: Identifiable {
         self.date = date
         self.isAllDay = isAllDay
         self.tint = tint
+        self.isWorking = isWorking
         self.primary = primary
         self.secondary = secondary
         self.open = open

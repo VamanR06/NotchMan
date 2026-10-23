@@ -120,6 +120,8 @@ struct NotchRootView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: model.geometry.notchSize.height)
+            // Above the app's content, so dock name labels can hang over it.
+            .zIndex(1)
 
             if let app = model.selectedApp {
                 app.makeExpandedView()

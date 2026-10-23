@@ -165,7 +165,7 @@ private struct ShelfTile: View {
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Button("AirDrop") { app.airDrop([url]) }
             if !app.projects.isEmpty {
-                Menu("Copy to Project") {
+                Menu(app.moveFiles ? "Move to Project" : "Copy to Project") {
                     ForEach(app.projects) { project in
                         Button(project.folderName) { app.drop([url], into: URL(fileURLWithPath: project.cwd), of: project) }
                     }
@@ -188,10 +188,14 @@ private struct ProjectColumn: View {
             if let browsing = app.browsing {
                 FolderBrowser(app: app, browsing: browsing)
             } else {
-                Text("Drop into a project")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .textCase(.uppercase)
+                HStack {
+                    Text("Drop into a project")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .textCase(.uppercase)
+                    Spacer()
+                    CopyMoveSwitch(app: app)
+                }
                 if app.projects.isEmpty {
                     Text("Projects of running Claude Code sessions show here.")
                         .font(.system(size: 11))
@@ -240,10 +244,31 @@ private struct ProjectTile: View {
     }
 }
 
-/// One folder of a project: drop on the header to put files here, or hover a drag over a subfolder to open it.
+/// Copy or Move for drops into projects (⌥ while dropping does the other).
+private struct CopyMoveSwitch: View {
+    @Bindable var app: ShelfApp
+
+    var body: some View {
+        Picker("", selection: $app.moveFiles) {
+            Text("Copy").tag(false)
+            Text("Move").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.mini)
+        .fixedSize()
+        .help("What dropping into a project does. Hold ⌥ while dropping for the other.")
+    }
+}
+
+/// One folder of a project: drop on "Drop here" to put files in it, hover a drag over a subfolder to open it,
+/// make a new folder, or drag folders onto each other to reorganize (with Move).
 private struct FolderBrowser: View {
     let app: ShelfApp
     let browsing: ShelfApp.Browsing
+    @State private var naming = false
+    @State private var newName = ""
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         let label = ProjectDrop.label(for: browsing.folder, in: browsing.root)
@@ -256,6 +281,29 @@ private struct FolderBrowser: View {
                 Image(systemName: "folder.fill").foregroundStyle(.orange)
                 Text(label).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.head)
                 Spacer(minLength: 0)
+                Button {
+                    newName = ""
+                    naming = true
+                } label: { Image(systemName: "folder.badge.plus") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .help("New folder here")
+                CopyMoveSwitch(app: app)
+            }
+            if naming {
+                HStack(spacing: 6) {
+                    TextField("Folder name", text: $newName)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .focused($nameFocused)
+                        .onSubmit(create)
+                        .onExitCommand { naming = false }
+                    Button("Create", action: create)
+                        .controlSize(.small)
+                        .disabled(ProjectDrop.folderName(newName) == nil)
+                }
+                .onAppear { nameFocused = true }
+                .onChange(of: nameFocused) { _, typing in app.setTyping(typing) }
             }
             Text("Drop here")
                 .font(.system(size: 11, weight: .medium))
@@ -265,7 +313,8 @@ private struct FolderBrowser: View {
                 .fileDropTarget { app.drop($0, into: browsing.folder, of: browsing.project) }
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(ProjectDrop.subfolders(of: browsing.folder), id: \.self) { folder in
+                    let _ = app.folderRevision
+                ForEach(ProjectDrop.subfolders(of: browsing.folder), id: \.self) { folder in
                         Button { app.open(folder: folder) } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "folder").foregroundStyle(.white.opacity(0.6))
@@ -277,12 +326,22 @@ private struct FolderBrowser: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .draggableFile(folder)
                         .fileDropTarget(cornerRadius: 6, spring: { app.open(folder: folder) }) { files in
                             app.drop(files, into: folder, of: browsing.project)
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+extension FolderBrowser {
+    private func create() {
+        if app.createFolder(named: newName) {
+            naming = false
+            app.setTyping(false)
         }
     }
 }

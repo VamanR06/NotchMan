@@ -39,6 +39,20 @@ enum ProjectDrop {
         }
     }
 
+    /// Whether `target` is `source` itself or inside it (a folder can't be copied or moved into itself).
+    static func isInside(_ target: URL, _ source: URL) -> Bool {
+        let source = source.standardizedFileURL.path
+        let target = target.standardizedFileURL.path
+        return target == source || target.hasPrefix(source.hasSuffix("/") ? source : source + "/")
+    }
+
+    /// A usable folder name from what was typed, or nil ("/" and ":" aren't allowed, nor "." or "..").
+    static func folderName(_ typed: String) -> String? {
+        let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains(":") else { return nil }
+        return name
+    }
+
     /// How a session refers to the file: `@src/assets/logo.png`, quoted when the path has spaces.
     static func reference(for file: URL, in project: URL) -> String {
         let root = project.standardizedFileURL.path

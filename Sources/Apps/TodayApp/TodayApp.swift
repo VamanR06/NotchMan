@@ -9,7 +9,8 @@ public final class TodayApp: NotchApp {
     public let id = "today"
     public let name = "Today"
     public let iconSystemName = "sun.max"
-    public var expandedHeight: CGFloat { 210 }
+    public var expandedHeight: CGFloat { 250 }
+    public var expandedWidth: CGFloat { 700 }
 
     /// Quick-add text and whether it becomes an event (else a task); nil follows what the text looks like.
     var quickText = ""
@@ -33,24 +34,45 @@ public final class TodayApp: NotchApp {
         let id: String
         let title: String
         let items: [BoardItem]
+        /// Rows shown before "+N more".
+        let limit: Int
     }
 
-    var sections: [Section] {
+    /// Sections the user opened past their limit.
+    var expandedSections: Set<String> = []
+
+    /// Left: what's happening (meetings, what needs you, sessions). Right: what's due.
+    var columns: (left: [Section], right: [Section]) {
         let now = Date()
         let events = board.items(.event).sorted { ($0.date ?? now) < ($1.date ?? now) }
         let needsYou = board.items(.approval) + board.items(.agent)
+        let sessions = board.items(.session).sorted { $0.isWorking && !$1.isWorking }
         let tasks = board.items(.task).sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
         let deadlines = board.items(.deadline).sorted { ($0.date ?? now) < ($1.date ?? now) }
-        return [
-            Section(id: "needs", title: "Needs you", items: needsYou),
-            Section(id: "events", title: "Next up", items: events),
-            Section(id: "tasks", title: "Due", items: tasks),
-            Section(id: "deadlines", title: "Deadlines", items: deadlines),
-        ].filter { !$0.items.isEmpty }
+        let left = [
+            Section(id: "events", title: "Next up", items: events, limit: 3),
+            Section(id: "needs", title: "Needs you", items: needsYou, limit: 3),
+            Section(id: "sessions", title: "Sessions", items: sessions, limit: 4),
+        ]
+        let right = [
+            Section(id: "tasks", title: "Due", items: tasks, limit: 6),
+            Section(id: "deadlines", title: "Deadlines", items: deadlines, limit: 3),
+        ]
+        return (left.filter { !$0.items.isEmpty }, right.filter { !$0.items.isEmpty })
     }
 
-    /// Items in display order, for keyboard selection.
-    var displayedItems: [BoardItem] { sections.flatMap(\.items) }
+    var sections: [Section] { columns.left + columns.right }
+
+    func visibleItems(_ section: Section) -> [BoardItem] {
+        expandedSections.contains(section.id) ? section.items : Array(section.items.prefix(section.limit))
+    }
+
+    func toggleExpanded(_ section: Section) {
+        if expandedSections.contains(section.id) { expandedSections.remove(section.id) } else { expandedSections.insert(section.id) }
+    }
+
+    /// Items in display order (left column, then right), for keyboard selection.
+    var displayedItems: [BoardItem] { sections.flatMap(visibleItems) }
 
     var selectedItemID: String? {
         let shown = displayedItems
