@@ -54,6 +54,15 @@ Press **⌥Space** (change it in Settings → General) from any app to open the 
 action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
 closes the notch. Text fields, terminals and chats keep their keys while you type in them.
 
+## System HUDs
+
+Volume, brightness, charging, low battery and headphones connecting show in the notch as a small icon with a
+level bar or text. Allow Accessibility in Settings → General and NotchMan takes over the volume and brightness
+keys, so macOS's own overlay doesn't appear (⌥⇧ gives finer steps, as in macOS). Without Accessibility, volume
+changes still show in the notch alongside macOS's overlay. An external display's brightness is left to macOS.
+Each HUD can be turned off. If NotchMan is signed ad-hoc (no Apple Development certificate), macOS asks for
+Accessibility again after every rebuild.
+
 ## Today
 
 The first dock app shows the day at a glance. It's gathered from the other apps, so there's nothing to set up:

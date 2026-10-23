@@ -85,6 +85,11 @@ private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
     @AppStorage(HotKey.defaultsKey) private var hotKey = HotKey.Preset.optionSpace.rawValue
+    @AppStorage(SystemHUDs.volumeKey) private var hudVolume = true
+    @AppStorage(SystemHUDs.brightnessKey) private var hudBrightness = true
+    @AppStorage(SystemHUDs.batteryKey) private var hudBattery = true
+    @AppStorage(SystemHUDs.bluetoothKey) private var hudBluetooth = true
+    @State private var hasAccessibility = SystemHUDs.hasAccessibility
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var error: String?
 
@@ -124,7 +129,36 @@ private struct GeneralSettingsView: View {
                 Text("Open after hovering for")
                 Text("Longer means brushing the top of the screen won't open the notch.")
             }
+            Section {
+                Toggle("Volume", isOn: $hudVolume)
+                Toggle("Brightness", isOn: $hudBrightness)
+                Toggle("Charging and low battery", isOn: $hudBattery)
+                Toggle("Headphones connecting", isOn: $hudBluetooth)
+                LabeledContent("Accessibility") {
+                    if hasAccessibility {
+                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        HStack {
+                            Button("Allow…") { SystemHUDs.requestAccessibility() }
+                            Button("Open System Settings") {
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("System HUDs")
+            } footer: {
+                Text("Shown in the notch. With Accessibility allowed, the volume and brightness keys are handled by NotchMan so macOS's own overlay doesn't appear (⌥⇧ for finer steps); without it, volume changes show in the notch alongside macOS's overlay. External displays' brightness is left to macOS.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .task {
+            while !Task.isCancelled {
+                hasAccessibility = SystemHUDs.hasAccessibility
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
     }
 }

@@ -27,6 +27,7 @@ public final class NotchEngine {
     private var observers: [NSObjectProtocol] = []
     private var notifications: NotificationRouter?
     private var hotKey: HotKey?
+    private var huds: SystemHUDs?
     private var dragTimer: Timer?
     /// The drag pasteboard's change count when the mouse button went down; a change means a new drag.
     private var dragChangeCount = 0
@@ -73,6 +74,9 @@ public final class NotchEngine {
         hotKey = HotKey { [weak self] in self?.toggleFromHotKey() }
         hotKey?.update()
         startWatchingFileDrags()
+        huds = SystemHUDs { [weak self] transient in self?.showTransient(transient) }
+        huds?.start()
+        huds?.waitForAccessibility()
         NotchFocus.startWatchingPopups { $0 is NotchPanel }
 
         observers.append(NotificationCenter.default.addObserver(

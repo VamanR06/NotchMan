@@ -22,6 +22,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NotchMan shows a notch HUD when your headphones connect.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>NotchMan controls Spotify to show and control what's playing, and reads your browser's current page to add it as a job.</string>
 </dict>
