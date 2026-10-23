@@ -19,6 +19,13 @@ import Testing
         #expect(SystemVolume.symbol(level: 0.9, muted: false) == "speaker.wave.3.fill")
     }
 
+    @Test func headphoneSymbols() {
+        #expect(SystemHUDs.headphonesSymbol("Vaman’s AirPods Pro") == "airpodspro")
+        #expect(SystemHUDs.headphonesSymbol("AirPods Max") == "airpodsmax")
+        #expect(SystemHUDs.headphonesSymbol("AirPods") == "airpods")
+        #expect(SystemHUDs.headphonesSymbol("WH-1000XM5") == "headphones")
+    }
+
     @Test func powerMessagesOnPlugAndThresholds() {
         #expect(SystemHUDs.powerMessage(before: (false, 50), now: (true, 50))?.text == "50%")
         #expect(SystemHUDs.powerMessage(before: (false, 50), now: (true, 50))?.symbol == "battery.100percent.bolt")

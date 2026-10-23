@@ -28,6 +28,7 @@ final class SystemHUDs: NSObject {
     private var batterySource: CFRunLoopSource?
     private var lastPower: (onAC: Bool, percent: Int)?
     private var bluetoothNotification: IOBluetoothUserNotification?
+    private var bluetoothWatchStarted = Date.distantFuture
     private var volumeListenerDevice: AudioDeviceID?
     /// Our own key presses also trip the volume listener; skip the echo.
     private var lastKeyChange = Date.distantPast
@@ -227,22 +228,34 @@ final class SystemHUDs: NSObject {
 
     private func installBluetoothWatcher() {
         guard Self.isOn(Self.bluetoothKey) else { return }
+        bluetoothWatchStarted = Date()
         bluetoothNotification = IOBluetoothDevice.register(forConnectNotifications: self, selector: #selector(deviceConnected(_:device:)))
     }
 
-    @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+    /// IOBluetooth calls this on its own queue (not the main thread), and right after registering once for every
+    /// device that's already connected. Read what's needed here, then hop to the main thread.
+    @objc nonisolated private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         // Audio devices only (headphones, speakers); keyboards and mice reconnect too often to be news.
-        guard Self.isOn(Self.bluetoothKey), device.deviceClassMajor == UInt32(kBluetoothDeviceClassMajorAudio) else { return }
+        guard device.deviceClassMajor == UInt32(kBluetoothDeviceClassMajorAudio) else { return }
         let name = device.name ?? "Headphones"
-        let lower = name.lowercased()
-        let symbol = lower.contains("airpods max") ? "airpodsmax"
-            : lower.contains("airpods pro") ? "airpodspro"
-            : lower.contains("airpods") ? "airpods" : "headphones"
-        show(NotchTransient(id: "bluetooth", systemImage: symbol, text: name, tint: .white, duration: 2.5))
-        device.register(forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { SystemHUDs.current?.headphonesConnected(name) }
+        }
     }
 
-    @objc private func deviceDisconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        notification.unregister()
+    private func headphonesConnected(_ name: String) {
+        // The burst for devices already connected when NotchMan starts isn't news.
+        guard Self.isOn(Self.bluetoothKey), Date().timeIntervalSince(bluetoothWatchStarted) > Self.launchBurst else { return }
+        show(NotchTransient(id: "bluetooth", systemImage: Self.headphonesSymbol(name), text: name, tint: .white, duration: 2.5))
+    }
+
+    static let launchBurst: TimeInterval = 3
+
+    static func headphonesSymbol(_ name: String) -> String {
+        let lower = name.lowercased()
+        if lower.contains("airpods max") { return "airpodsmax" }
+        if lower.contains("airpods pro") { return "airpodspro" }
+        if lower.contains("airpods") { return "airpods" }
+        return "headphones"
     }
 }

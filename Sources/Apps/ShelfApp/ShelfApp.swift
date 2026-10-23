@@ -255,19 +255,29 @@ public final class ShelfApp: NotchApp {
 
     /// Safari and Finder publish progress for files they're writing; subscribe for the Downloads folder.
     private func watchProgress() {
-        progressToken = Progress.addSubscriber(forFileURL: DownloadsFolder.url) { [weak self] progress in
-            nonisolated(unsafe) let progress = progress
-            let path = progress.fileURL?.path
+        progressToken = Self.subscribeToDownloads { [weak self] path, box in
             Task { @MainActor in
-                if let path { self?.progresses[path] = progress }
+                if let path { self?.progresses[path] = box.progress }
                 self?.refreshDownloads()
             }
-            return {
-                Task { @MainActor in
-                    if let path { self?.progresses[path] = nil }
-                    self?.refreshDownloads()
-                }
-            }
+        }
+    }
+
+    /// Carries a Progress across threads (it's thread-safe; it just isn't marked Sendable).
+    private final class ProgressBox: @unchecked Sendable {
+        let progress: Progress?
+        init(_ progress: Progress?) { self.progress = progress }
+    }
+
+    /// Foundation calls these handlers on its own threads, so they're built outside the main actor and only pass
+    /// what changed along (nil progress = finished).
+    nonisolated private static func subscribeToDownloads(
+        _ changed: @escaping @Sendable (String?, ProgressBox) -> Void
+    ) -> Any {
+        Progress.addSubscriber(forFileURL: DownloadsFolder.url) { progress in
+            let path = progress.fileURL?.path
+            changed(path, ProgressBox(progress))
+            return { changed(path, ProgressBox(nil)) }
         }
     }
 
