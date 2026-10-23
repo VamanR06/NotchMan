@@ -74,6 +74,8 @@ struct TaskDatabase: Identifiable, Hashable {
     let title: String
     let url: URL?
     let dateProperties: [String]
+    /// The page title property ("Name", "Task", …), needed to create tasks.
+    let titleProperty: String
     /// Candidate ways to tell if a task is done, best first.
     let doneRules: [DoneRule]
 
@@ -89,6 +91,7 @@ struct TaskDatabase: Identifiable, Hashable {
         self.url = (db["url"] as? String).flatMap(URL.init(string:))
 
         let properties = db["properties"] as? [String: [String: Any]] ?? [:]
+        titleProperty = properties.first { $0.value["type"] as? String == "title" }?.key ?? "Name"
         dateProperties = properties.filter { $0.value["type"] as? String == "date" }.keys.sorted { lhs, rhs in
             // Prefer properties that look like a due date.
             let rank = { (name: String) in name.lowercased().contains("due") ? 0 : 1 }

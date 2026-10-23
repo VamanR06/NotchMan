@@ -23,6 +23,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>NotchMan controls Spotify to show and control what's playing.</string>
+	<string>NotchMan controls Spotify to show and control what's playing, and reads your browser's current page to add it as a job.</string>
 </dict>
 </plist>

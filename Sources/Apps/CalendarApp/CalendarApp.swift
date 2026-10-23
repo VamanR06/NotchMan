@@ -133,6 +133,36 @@ public final class CalendarApp: NotchApp {
         }
     }
 
+    // MARK: - Quick add
+
+    /// Creates the event a quick-add line described: 30 minutes unless it said "for …"; a bare day is all-day.
+    func addEvent(_ item: QuickAdd) async {
+        guard let start = item.date else { return }
+        guard let calendar = google.defaultCalendarForNewEvents else {
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "exclamationmark.triangle.fill",
+                                                  text: "No calendar", tint: .orange, duration: 2.5))
+            return
+        }
+        let allDay = !item.hasTime
+        let end = allDay
+            ? Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+            : start.addingTimeInterval(item.duration ?? 30 * 60)
+        do {
+            try await google.insert(summary: item.title, calendarID: calendar.id, start: start, end: end, allDay: allDay)
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "calendar.badge.plus", text: "Added", tint: .green))
+            await refresh()
+        } catch {
+            errors = [error.localizedDescription]
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "exclamationmark.triangle.fill",
+                                                  text: "Not added", tint: .orange, duration: 2.5))
+        }
+    }
+
+    public func receive(_ message: NotchMessage) {
+        guard message.name == NotchMessage.quickAddEventName, let item = message.quickAdd else { return }
+        Task { await addEvent(item) }
+    }
+
     // MARK: - Keyboard
 
     let selection = NotchListSelection()

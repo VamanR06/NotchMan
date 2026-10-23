@@ -262,6 +262,31 @@ final class GoogleCalendarSource {
         }
     }
 
+    /// The calendar new events go to: the primary one if editable, else the first editable one.
+    var defaultCalendarForNewEvents: CalendarInfo? {
+        calendars.first { $0.isPrimary && $0.canEdit } ?? calendars.first(where: \.canEdit)
+    }
+
+    /// Creates an event (no guests, so nobody is emailed).
+    func insert(summary: String, calendarID: String, start: Date, end: Date, allDay: Bool) async throws {
+        guard canEditEvents else { throw MoveError.needsPermission }
+        let path = "/calendars/\(Self.pathComponent(calendarID))/events"
+        var request = URLRequest(url: URL(string: "https://www.googleapis.com/calendar/v3" + path)!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body = Self.moveBody(start: start, end: end, allDay: allDay)
+        body["summary"] = summary
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 || status == 201 else {
+            let text = String(data: data, encoding: .utf8) ?? ""
+            if status == 403, text.contains("insufficient") { throw MoveError.needsPermission }
+            throw GoogleError.http(status, text)
+        }
+    }
+
     static func moveBody(start: Date, end: Date, allDay: Bool) -> [String: Any] {
         if allDay {
             return ["start": ["date": DateParsing.dayString(start)], "end": ["date": DateParsing.dayString(end)]]

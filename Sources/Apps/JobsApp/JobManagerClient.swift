@@ -126,6 +126,36 @@ final class JobManagerClient {
         return body
     }
 
+    /// JobManager's parse of a posting page (title, company, location, description_md, …), or nil if it couldn't
+    /// read the page.
+    func parse(_ url: URL) async throws -> [String: Any]? {
+        let (data, status) = try await authorizedResponse("POST", "api/parse", json: ["url": url.absoluteString])
+        if status == 422 { return nil }
+        guard status == 200 else { throw ClientError.http(status) }
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    enum CreateResult: Equatable {
+        case created
+        /// Already tracked (same posting, or same company and title); JobManager's message.
+        case duplicate(String)
+    }
+
+    /// Adds a job to apply to. `posting` is a parse from `parse(_:)`, saved as the job's posting snapshot.
+    func createJob(company: String, title: String, url: URL, posting: [String: Any]?, allowDuplicate: Bool) async throws -> CreateResult {
+        var body: [String: Any] = ["company": company, "title": title, "url": url.absoluteString,
+                                   "initial_status": JobStatus.toApply.rawValue, "allow_duplicate": allowDuplicate]
+        body["posting"] = posting
+        let (data, status) = try await authorizedResponse("POST", "api/jobs", json: body)
+        switch status {
+        case 200, 201: return .created
+        case 409:
+            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            return .duplicate(message ?? "You're already tracking this job")
+        default: throw ClientError.http(status)
+        }
+    }
+
     /// Removes a status event (undo).
     func deleteEvent(_ id: Int) async throws {
         _ = try await authorized("DELETE", "api/events/\(id)", json: nil, accept: [200, 204])
@@ -139,6 +169,13 @@ final class JobManagerClient {
     /// A request with the session cookie, signing in again once if the session expired. No `Origin` header is
     /// sent: JobManager refuses cross-site writes, and a native request without one passes its check.
     private func authorized(_ method: String, _ path: String, json: [String: Any]?, accept: Set<Int>) async throws -> Data {
+        let (data, status) = try await authorizedResponse(method, path, json: json)
+        guard accept.contains(status) else { throw ClientError.http(status) }
+        return data
+    }
+
+    /// Like `authorized`, but returns any status but 401 for the caller to interpret.
+    private func authorizedResponse(_ method: String, _ path: String, json: [String: Any]?) async throws -> (Data, Int) {
         let base = try Self.validate(serverURL)
         guard isSignedIn else { throw ClientError.notSignedIn }
 
@@ -150,8 +187,7 @@ final class JobManagerClient {
             (data, status) = try await send(method, path, json: json, base: base)
         }
         if status == 401 { throw ClientError.notSignedIn }
-        guard accept.contains(status) else { throw ClientError.http(status) }
-        return data
+        return (data, status)
     }
 
     private func send(_ method: String, _ path: String, json: [String: Any]?, base: URL) async throws -> (Data, Int) {

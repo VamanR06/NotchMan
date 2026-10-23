@@ -232,6 +232,60 @@ public final class TasksApp: NotchApp {
     }
 
     /// Keep the notch open while a date picker is being used.
+    // MARK: - Quick add
+
+    /// Database new tasks go to unless the text names another with `#tag`.
+    var quickAddDatabaseID: String {
+        get { context?.defaults.string(forKey: "quickAddDatabase") ?? "" }
+        set { context?.defaults.set(newValue, forKey: "quickAddDatabase"); quickAddRevision += 1 }
+    }
+    private var quickAddRevision = 0
+
+    var enabledDatabases: [TaskDatabase] { databases.filter(isEnabled) }
+
+    /// Where a quick-add title goes: a `#tag` matching an enabled database's name (exact word, case-insensitive),
+    /// else the chosen default, else the first enabled database. Returns the title with the tag removed.
+    static func route(_ title: String, databases: [TaskDatabase], defaultID: String) -> (TaskDatabase, String)? {
+        guard !databases.isEmpty else { return nil }
+        var words = title.split(separator: " ").map(String.init)
+        if let index = words.firstIndex(where: { $0.hasPrefix("#") && $0.count > 1 }) {
+            let tag = words[index].dropFirst().lowercased()
+            if let db = databases.first(where: { db in
+                db.title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains { $0 == tag }
+            }) {
+                words.remove(at: index)
+                return (db, words.joined(separator: " "))
+            }
+        }
+        let fallback = databases.first { $0.id == defaultID } ?? databases[0]
+        return (fallback, title)
+    }
+
+    func addTask(title: String, due: Date?, allDay: Bool) async {
+        _ = quickAddRevision
+        guard let (db, title) = Self.route(title, databases: enabledDatabases, defaultID: quickAddDatabaseID) else {
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "exclamationmark.triangle.fill",
+                                                  text: "No task list", tint: .orange, duration: 2.5))
+            return
+        }
+        do {
+            let property = dueProperty(for: db)
+            if let task = try await client.createTask(in: db, title: title, dueProperty: property, due: due, allDay: allDay) {
+                tasks = (tasks + [task]).sorted(by: Self.order)
+            }
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "checklist", text: "Added", tint: .green))
+        } catch {
+            self.error = error.localizedDescription
+            context?.showTransient(NotchTransient(id: "quickadd", systemImage: "exclamationmark.triangle.fill",
+                                                  text: "Not added", tint: .orange, duration: 2.5))
+        }
+    }
+
+    public func receive(_ message: NotchMessage) {
+        guard message.name == NotchMessage.quickAddTaskName, let item = message.quickAdd else { return }
+        Task { await addTask(title: item.title, due: item.date, allDay: !item.hasTime) }
+    }
+
     // MARK: - Keyboard
 
     let selection = NotchListSelection()

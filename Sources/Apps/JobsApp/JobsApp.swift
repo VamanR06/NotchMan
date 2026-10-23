@@ -51,6 +51,7 @@ public final class JobsApp: NotchApp {
 
     public func activate(context: NotchContext) {
         self.context = context
+        BrowserTab.startTracking()
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
         defaultProjectURL = context.defaults.string(forKey: "defaultProjectURL") ?? ""
@@ -132,6 +133,105 @@ public final class JobsApp: NotchApp {
     }
 
     // MARK: - Actions
+
+    // MARK: - Add from browser
+
+    /// A job about to be added from the browser, shown for confirmation so the company and title can be fixed.
+    struct JobDraft {
+        var url: URL
+        var company: String
+        var title: String
+        /// JobManager's parse of the page, saved as the posting snapshot (nil if it couldn't read the page).
+        var posting: [String: Any]?
+        var duplicate: String?
+        var isSaving = false
+    }
+
+    var draft: JobDraft?
+    private(set) var isReadingTab = false
+
+    /// Reads the browser's current page, asks JobManager to parse it, and opens the confirm form.
+    func addFromBrowser() {
+        guard !isReadingTab else { return }
+        isReadingTab = true
+        context?.holdOpen(true)
+        Task {
+            defer { isReadingTab = false }
+            do {
+                let tab = try await BrowserTab.current()
+                let posting = try? await client.parse(tab.url)
+                let guess = Self.guess(from: tab)
+                draft = JobDraft(url: tab.url,
+                                 company: (posting?["company"] as? String).flatMap(Self.nonEmpty) ?? guess.company,
+                                 title: (posting?["title"] as? String).flatMap(Self.nonEmpty) ?? guess.title,
+                                 posting: posting)
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+                context?.holdOpen(false)
+            }
+        }
+    }
+
+    func saveDraft(allowDuplicate: Bool = false) {
+        guard var draft, !draft.isSaving else { return }
+        draft.isSaving = true
+        self.draft = draft
+        Task {
+            do {
+                let result = try await client.createJob(company: draft.company.trimmingCharacters(in: .whitespaces),
+                                                        title: draft.title.trimmingCharacters(in: .whitespaces),
+                                                        url: draft.url, posting: draft.posting, allowDuplicate: allowDuplicate)
+                switch result {
+                case .created:
+                    self.draft = nil
+                    context?.holdOpen(false)
+                    context?.showTransient(NotchTransient(id: "jobs", systemImage: "briefcase.fill", text: "Added", tint: .green))
+                    await refresh()
+                case .duplicate(let message):
+                    self.draft?.duplicate = message
+                    self.draft?.isSaving = false
+                }
+            } catch {
+                self.error = error.localizedDescription
+                self.draft?.isSaving = false
+            }
+        }
+    }
+
+    func cancelDraft() {
+        draft = nil
+        context?.holdOpen(false)
+    }
+
+    private static func nonEmpty(_ s: String) -> String? {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// A starting point when JobManager can't read the page: the tab title's first part, and the company from
+    /// the job board path (boards.greenhouse.io/acme, jobs.lever.co/acme, acme.wd5.myworkdayjobs.com) or the
+    /// site name. Shown for editing, never saved unseen.
+    static func guess(from tab: BrowserTab) -> (company: String, title: String) {
+        let title = tab.title
+            .components(separatedBy: CharacterSet(charactersIn: "|–—"))
+            .first?
+            .components(separatedBy: " - ").first?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        let host = tab.url.host() ?? ""
+        let boards = ["greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com"]
+        var company: String
+        if boards.contains(where: host.hasSuffix), let first = tab.url.pathComponents.dropFirst().first {
+            company = first
+        } else if host.contains("myworkdayjobs.com") {
+            company = String(host.split(separator: ".").first ?? "")
+        } else {
+            let parts = host.split(separator: ".").filter { !["www", "jobs", "careers", "boards", "apply"].contains($0) }
+            company = parts.count >= 2 ? String(parts[parts.count - 2]) : String(parts.first ?? "")
+        }
+        company = company.replacingOccurrences(of: "-", with: " ").capitalized
+        return (company, title)
+    }
 
     // MARK: - Status
 

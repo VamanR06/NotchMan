@@ -86,6 +86,19 @@ final class NotionClient {
         return tasks
     }
 
+    /// Creates a task page in `db` and returns it.
+    func createTask(in db: TaskDatabase, title: String, dueProperty: String?, due: Date?, allDay: Bool) async throws -> NotionTask? {
+        let body = Self.createBody(in: db, title: title, dueProperty: dueProperty, due: due, allDay: allDay)
+        let page = try await request("POST", "/pages", body: body)
+        return Self.task(from: page, db: db, dueProperty: dueProperty, doneRule: nil)
+    }
+
+    static func createBody(in db: TaskDatabase, title: String, dueProperty: String?, due: Date?, allDay: Bool) -> [String: Any] {
+        var properties: [String: Any] = [db.titleProperty: ["title": [["text": ["content": title]]]]]
+        if let dueProperty, let due { properties[dueProperty] = dateValue(due, allDay: allDay) }
+        return ["parent": ["database_id": db.id], "properties": properties]
+    }
+
     func setDone(_ task: NotionTask, done: Bool, rule: DoneRule) async throws {
         guard let value = rule.value(done: done, original: task.originalValue) else { return }
         try await request("PATCH", "/pages/\(task.id)", body: ["properties": [rule.property: value]])

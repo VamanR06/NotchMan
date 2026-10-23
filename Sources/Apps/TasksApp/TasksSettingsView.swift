@@ -45,11 +45,19 @@ struct TasksSettingsView: View {
                     ForEach(app.databases) { db in
                         DatabaseSettings(app: app, db: db)
                     }
+                    if !app.enabledDatabases.isEmpty {
+                        Picker("Quick add goes to", selection: Binding(
+                            get: { app.quickAddDatabaseID.isEmpty ? app.enabledDatabases[0].id : app.quickAddDatabaseID },
+                            set: { app.quickAddDatabaseID = $0 }
+                        )) {
+                            ForEach(app.enabledDatabases) { Text($0.title).tag($0.id) }
+                        }
+                    }
                     Button("Reload Databases") { Task { await app.refresh() } }
                 } header: {
                     Text("Task Databases")
                 } footer: {
-                    Text("Due date places tasks in Overdue / Today / Upcoming. Done is what the checkbox sets; done tasks are hidden.")
+                    Text("Due date places tasks in Overdue / Today / Upcoming. Done is what the checkbox sets; done tasks are hidden. Quick add (Today app) uses the list above, or another whose name you tag, e.g. “#school”.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

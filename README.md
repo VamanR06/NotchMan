@@ -86,6 +86,11 @@ Right-click a job → **Set Status** to move it along (Applied → OA → Interv
 status event in JobManager just like the web app; choosing Interview on a job already interviewing starts the
 next round. An **Undo** bar shows for a few seconds afterwards.
 
+The **⧉+** button under the counts adds the job open in your browser (Safari, Chrome, Arc, Brave or Edge — the
+one in front, or the one you used last). JobManager parses the page, and a short form shows the company and
+title to check before adding it to *To apply*, with the posting saved. If you already track it you're asked
+before adding it again. macOS asks once per browser to let NotchMan read it.
+
 Jobs you haven't applied to have a ✨ menu of ChatGPT prompts (fit & tailoring, cover letter, interview prep, or
 your own in Settings → Jobs). Picking one switches to the Chat app and types the prompt — filled with the job's
 title, company, link, location and saved description — into a new ChatGPT chat without sending it. The prompt is

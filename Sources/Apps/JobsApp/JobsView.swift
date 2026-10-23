@@ -17,8 +17,12 @@ struct JobsView: View {
                 placeholder(app.error ?? "Loading…", settings: app.error != nil)
             } else {
                 VStack(spacing: 6) {
-                    FilterBar(app: app)
-                    JobList(app: app)
+                    if app.draft != nil {
+                        AddJobForm(app: app)
+                    } else {
+                        FilterBar(app: app)
+                        JobList(app: app)
+                    }
                     if let change = app.lastChange {
                         UndoBar(app: app, change: change)
                     }
@@ -39,6 +43,66 @@ struct JobsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Confirms a job read from the browser before adding it to JobManager.
+private struct AddJobForm: View {
+    @Bindable var app: JobsApp
+
+    var body: some View {
+        if let draft = app.draft {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Add to apply")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text(draft.url.host() ?? "")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
+                field("Company", text: Binding(get: { app.draft?.company ?? "" }, set: { app.draft?.company = $0 }))
+                field("Title", text: Binding(get: { app.draft?.title ?? "" }, set: { app.draft?.title = $0 }))
+                if draft.posting == nil {
+                    Text("JobManager couldn't read this page; check the details.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+                if let duplicate = draft.duplicate {
+                    Text(duplicate)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+                HStack {
+                    Spacer()
+                    Button("Cancel", action: app.cancelDraft)
+                    if draft.duplicate != nil {
+                        Button("Add Anyway") { app.saveDraft(allowDuplicate: true) }
+                    } else {
+                        Button("Add") { app.saveDraft() }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(draft.company.trimmingCharacters(in: .whitespaces).isEmpty
+                                      || draft.title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(draft.isSaving)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private func field(_ label: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 52, alignment: .leading)
+            TextField(label, text: text)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+        }
     }
 }
 
@@ -98,6 +162,10 @@ private struct Pipeline: View {
                     .help("Refresh")
                 Button(action: app.openDashboard) { Image(systemName: "safari") }
                     .help("Open JobManager")
+                Button(action: app.addFromBrowser) {
+                    if app.isReadingTab { NotchSpinner(size: 10) } else { Image(systemName: "plus.rectangle.on.rectangle") }
+                }
+                .help("Add the job open in your browser")
                 if let error = app.error, app.hasLoaded {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).help(error)
                 }
