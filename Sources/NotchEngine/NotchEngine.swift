@@ -44,7 +44,7 @@ public final class NotchEngine {
                 appID: appID,
                 attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
                 openSettings: { [weak self] in self?.settings.show(appID: appID) },
-                send: { [weak self] message, target in self?.deliver(message, to: target) },
+                send: { [weak self] message, target, reveal in self?.deliver(message, to: target, reveal: reveal) },
                 isVisible: { [weak self] in
                     self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
                 },
@@ -55,7 +55,8 @@ public final class NotchEngine {
                     self?.notches.values.forEach { notch in
                         if hold { notch.model.heldApps.insert(appID) } else { notch.model.heldApps.remove(appID) }
                     }
-                }
+                },
+                transient: { [weak self] transient in self?.showTransient(transient) }
             )
             app.activate(context: context)
         }
@@ -144,10 +145,16 @@ public final class NotchEngine {
         notch.panel.setFrame(notch.model.geometry.rect(hanging: notch.model.windowSize), display: true)
     }
 
-    /// Switches the notch to `appID` first so its view is on screen, then hands it the message.
-    private func deliver(_ message: NotchMessage, to appID: String) {
+    /// Briefly shows `transient` on the notch the cursor is on (system HUDs, finished downloads, …).
+    func showTransient(_ transient: NotchTransient) {
+        attentionTarget?.show(transient)
+    }
+
+    /// Switches the notch to `appID` first so its view is on screen (unless `reveal` is off), then hands it the
+    /// message.
+    private func deliver(_ message: NotchMessage, to appID: String, reveal: Bool = true) {
         guard let app = apps.first(where: { $0.id == appID }) else { return }
-        if let model = attentionTarget {
+        if reveal, let model = attentionTarget {
             model.select(appID)
             if model.state == .collapsed { model.expand() }
         }

@@ -45,7 +45,12 @@ struct NotchRootView: View {
     @ViewBuilder
     private var collapsedContent: some View {
         let layout = model.collapsedLayout
-        if !layout.isEmpty {
+        if let transient = model.transient {
+            TransientView(transient: transient, sideWidth: model.transientSideWidth,
+                          notchWidth: model.geometry.notchSize.width)
+                .padding(.horizontal, model.topCornerRadius)
+                .frame(maxHeight: .infinity)
+        } else if !layout.isEmpty {
             HStack(spacing: 0) {
                 // Left side, outer edge → notch. Chips hug the notch side of their slot so gaps stay even.
                 HStack(spacing: model.activitySpacing) {
@@ -127,6 +132,44 @@ struct NotchRootView: View {
         .padding(.horizontal, model.topCornerRadius + 16)
         .padding(.bottom, model.expandedBottomPadding)
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// A HUD beside the collapsed notch: icon on the left wing, a level bar or text on the right.
+private struct TransientView: View {
+    let transient: NotchTransient
+    let sideWidth: CGFloat
+    let notchWidth: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: transient.systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(transient.tint)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: sideWidth, alignment: .center)
+            Color.clear.frame(width: notchWidth)
+            Group {
+                if let level = transient.level {
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.2))
+                            Capsule().fill(transient.tint).frame(width: proxy.size.width * level)
+                        }
+                    }
+                    .frame(height: 5)
+                    .animation(.easeOut(duration: 0.12), value: level)
+                } else if let text = transient.text {
+                    Text(text)
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(transient.tint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(width: sideWidth)
+        }
     }
 }
 

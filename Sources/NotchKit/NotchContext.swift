@@ -13,19 +13,21 @@ public final class NotchContext {
 
     private let attentionHandler: (NotchAttention) -> Void
     private let openSettingsHandler: () -> Void
-    private let sendHandler: (NotchMessage, String) -> Void
+    private let sendHandler: (NotchMessage, String, Bool) -> Void
     private let visibleHandler: () -> Bool
     private let notifyHandler: (String, String, [String: String]) -> Void
     private let holdHandler: (Bool) -> Void
+    private let transientHandler: (NotchTransient) -> Void
 
     public init(
         appID: String,
         attention: @escaping (NotchAttention) -> Void,
         openSettings: @escaping () -> Void,
-        send: @escaping (NotchMessage, String) -> Void = { _, _ in },
+        send: @escaping (NotchMessage, String, Bool) -> Void = { _, _, _ in },
         isVisible: @escaping () -> Bool = { false },
         notify: @escaping (String, String, [String: String]) -> Void = { _, _, _ in },
-        holdOpen: @escaping (Bool) -> Void = { _ in }
+        holdOpen: @escaping (Bool) -> Void = { _ in },
+        transient: @escaping (NotchTransient) -> Void = { _ in }
     ) {
         self.appID = appID
         self.defaults = UserDefaults(suiteName: "com.notchman.app.\(appID)") ?? .standard
@@ -37,6 +39,7 @@ public final class NotchContext {
         self.visibleHandler = isVisible
         self.notifyHandler = notify
         self.holdHandler = holdOpen
+        self.transientHandler = transient
     }
 
     /// While held, the notch stays expanded on this app when the mouse wanders off (e.g. while typing in a
@@ -54,9 +57,15 @@ public final class NotchContext {
         notifyHandler(title, body, payload)
     }
 
-    /// Delivers `message` to the app with id `appID` and shows that app in the notch.
-    public func send(_ message: NotchMessage, to appID: String) {
-        sendHandler(message, appID)
+    /// Delivers `message` to the app with id `appID`. With `reveal` (the default) that app is brought up in the
+    /// notch; without, it handles the message in the background.
+    public func send(_ message: NotchMessage, to appID: String, reveal: Bool = true) {
+        sendHandler(message, appID, reveal)
+    }
+
+    /// Briefly shows a status in place of the collapsed notch's chips (e.g. "✓ added to project").
+    public func showTransient(_ transient: NotchTransient) {
+        transientHandler(transient)
     }
 
     public func requestAttention(_ attention: NotchAttention = .pulse) {

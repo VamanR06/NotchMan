@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A pluggable app hosted inside the notch.
@@ -36,6 +37,10 @@ public protocol NotchApp: AnyObject {
 
     /// Handles a message sent by another app via `NotchContext.send(_:to:)`.
     func receive(_ message: NotchMessage)
+
+    /// A key pressed while the notch has the keyboard and no text field is typing. Return true if used
+    /// (↑/↓/Return in lists, ⌘N for quick add, …).
+    func handleKey(_ event: NSEvent) -> Bool
 }
 
 public extension NotchApp {
@@ -46,4 +51,5 @@ public extension NotchApp {
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}
+    func handleKey(_ event: NSEvent) -> Bool { false }
 }

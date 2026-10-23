@@ -33,6 +33,12 @@ final class NotchViewModel {
     let maxActivities = 3
     let expandedBottomPadding: CGFloat = 14
 
+    /// A short-lived status (HUD) shown in place of the chips while collapsed.
+    private(set) var transient: NotchTransient?
+    @ObservationIgnored private var transientExpiry: Task<Void, Never>?
+    /// Width of each side of the collapsed notch while a transient shows.
+    let transientSideWidth: CGFloat = 72
+
     @ObservationIgnored private var pendingCollapse: Task<Void, Never>?
     @ObservationIgnored private var pendingExpand: Task<Void, Never>?
     /// Set while an app-requested expansion is showing; cleared once the user hovers.
@@ -114,6 +120,9 @@ final class NotchViewModel {
         let notch = geometry.notchSize
         switch state {
         case .collapsed:
+            if transient != nil {
+                return CGSize(width: notch.width + 2 * topCornerRadius + 2 * transientSideWidth, height: notch.height)
+            }
             let layout = collapsedLayout
             return CGSize(width: notch.width + 2 * topCornerRadius + layout.leftWidth + layout.rightWidth,
                           height: notch.height)
@@ -139,7 +148,7 @@ final class NotchViewModel {
 
     /// How far the shape's center sits right of the notch's center (the collapsed sides can differ).
     var shapeOffsetX: CGFloat {
-        guard state == .collapsed else { return 0 }
+        guard state == .collapsed, transient == nil else { return 0 }
         let layout = collapsedLayout
         return (layout.rightWidth - layout.leftWidth) / 2
     }
@@ -228,6 +237,19 @@ final class NotchViewModel {
 
     func select(_ appID: String) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selectedAppID = appID }
+    }
+
+    // MARK: - Transients
+
+    /// Shows `transient` until its duration passes; a newer one replaces it and restarts the timer.
+    func show(_ transient: NotchTransient) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { self.transient = transient }
+        transientExpiry?.cancel()
+        transientExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(transient.duration))
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { self?.transient = nil }
+        }
     }
 
     // MARK: - Attention

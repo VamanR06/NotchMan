@@ -40,6 +40,17 @@ private final class FakeApp: NotchApp {
         }
     }
 
+    @Test func transientReplacesChipsSymmetrically() {
+        let model = NotchViewModel(apps: [FakeApp("tasks", activity: chip(3, "2 late", "checklist", .red))], geometry: geometry)
+        model.show(NotchTransient(id: "volume", systemImage: "speaker.wave.2.fill", level: 0.5))
+        #expect(model.transient?.id == "volume")
+        #expect(model.shapeOffsetX == 0)
+        #expect(model.shapeSize.width == geometry.notchSize.width + 2 * model.topCornerRadius + 2 * model.transientSideWidth)
+        // Levels are clamped.
+        model.show(NotchTransient(id: "volume", systemImage: "speaker.wave.3.fill", level: 1.4))
+        #expect(model.transient?.level == 1)
+    }
+
     @Test func singleChipExtendsOneSideOnly() throws {
         let model = NotchViewModel(apps: [FakeApp("tasks", activity: chip(3, "2 late", "checklist", .red))], geometry: geometry)
         let layout = model.collapsedLayout
