@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Keyboard focus for content in the notch.
 ///
@@ -27,5 +28,43 @@ public enum NotchFocus {
         if let key = NSApp.keyWindow, key.isVisible, key.styleMask.contains(.titled) { return }
         NSApp.yieldActivation(to: previous)
         previous.activate()
+    }
+
+    // MARK: - Pop-ups that need the keyboard
+
+    nonisolated private static let log = Logger(subsystem: "com.notchman", category: "focus")
+    private static var observers: [NSObjectProtocol] = []
+
+    /// Watches for pop-up windows (AutoFill, its unlock prompt) and gives them the keyboard when they appear,
+    /// and logs window/app changes while a pop-up flow is underway, to diagnose focus problems.
+    public static func startWatchingPopups(isNotchWindow: @escaping @MainActor (NSWindow) -> Bool) {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil,
+                                            queue: .main) { note in
+            // Delivered on the main queue.
+            nonisolated(unsafe) let object = note.object
+            MainActor.assumeIsolated {
+                guard let window = object as? NSWindow, window.isVisible,
+                      window.occlusionState.contains(.visible), !isNotchWindow(window) else { return }
+                let type = String(describing: Swift.type(of: window))
+                log.notice("""
+                    Window shown: \(type, privacy: .public) titled=\(window.styleMask.contains(.titled), privacy: .public) \
+                    canBecomeKey=\(window.canBecomeKey, privacy: .public) key=\(window.isKeyWindow, privacy: .public) \
+                    appActive=\(NSApp.isActive, privacy: .public)
+                    """)
+                // A pop-up from notch content that accepts typing gets the keyboard.
+                if !window.styleMask.contains(.titled), window.canBecomeKey, !window.isKeyWindow {
+                    if !NSApp.isActive { activateForTyping() }
+                    window.makeKeyAndOrderFront(nil)
+                }
+            }
+        })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let id = app?.bundleIdentifier ?? "?"
+            log.notice("App activated: \(id, privacy: .public)")
+        })
     }
 }

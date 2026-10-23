@@ -62,6 +62,7 @@ public final class NotchEngine {
 
         rebuildNotches()
         installMouseMonitors()
+        NotchFocus.startWatchingPopups { $0 is NotchPanel }
 
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main

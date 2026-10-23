@@ -48,11 +48,32 @@ enum ChatService: String, CaseIterable, Identifiable {
 final class NotchWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // Pages open pop-ups (password AutoFill and its unlock prompt, pickers) that can only take the keyboard if
+    // NotchMan is active — so any click into the page, or the page gaining focus, activates it.
     override func mouseDown(with event: NSEvent) {
-        // Pages open pop-ups (password AutoFill, pickers) that can only take the keyboard if NotchMan is active.
+        focusForTyping()
+        super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        focusForTyping()
+        super.rightMouseDown(with: event)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        focusForTyping()
+        super.otherMouseDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { NotchFocus.activateForTyping() }
+        return accepted
+    }
+
+    private func focusForTyping() {
         NotchFocus.activateForTyping()
         window?.makeKey()
-        super.mouseDown(with: event)
     }
 }
 
