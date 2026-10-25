@@ -139,7 +139,15 @@ A **This page** card at the top has:
   - Afterwards it lists what still needs you: essay questions, attestations, anything not in your Profile.
   - It never submits.
 - If the form is embedded from Greenhouse or similar on a company's own site, **Open Form** opens it on its
-  own so it can be filled.
+  own in the same browser, still as this job.
+
+A page doesn't have to be the exact link you saved:
+- **Following:** if the tab showing a job moves on to another job-looking page (Apply, the form's next step),
+  it keeps that job. These are labelled "followed from its page".
+- **Remembered:** pages tied to a job this way are remembered for later visits.
+- **Linking:** on a job-looking page NotchMan can't place, **Link…** lists your open applications, with ones
+  whose company appears in the page's address or title first. Pick one and that page is remembered.
+- **Not this job:** the slashed link button forgets a wrong match.
 
 Autofill needs your browser to allow it once:
 - Chrome, Arc, Brave or Edge: View → Developer → *Allow JavaScript from Apple Events*

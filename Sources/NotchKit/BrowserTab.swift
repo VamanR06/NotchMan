@@ -8,12 +8,16 @@ public struct BrowserTab: Equatable, Sendable {
     public let browser: String
     /// The browser's bundle id, to run scripts in the same tab later.
     public let bundleID: String
+    /// Identifies the tab while it's open (Chromium's tab id; Safari's window id and tab index), so a tab that
+    /// moves on from a page (Apply → the application form) can be recognized as the same tab.
+    public let tabID: String?
 
-    public init(url: URL, title: String, browser: String, bundleID: String = "") {
+    public init(url: URL, title: String, browser: String, bundleID: String = "", tabID: String? = nil) {
         self.url = url
         self.title = title
         self.browser = browser
         self.bundleID = bundleID
+        self.tabID = tabID
     }
 
     public enum TabError: LocalizedError {
@@ -44,10 +48,13 @@ public struct BrowserTab: Equatable, Sendable {
         var script: String {
             let tab = isSafari ? "current tab of front window" : "active tab of front window"
             let title = isSafari ? "name" : "title"
+            let tabID = isSafari
+                ? "((id of front window) as text) & \":\" & ((index of current tab of front window) as text)"
+                : "((id of active tab of front window) as text)"
             return """
             tell application id "\(bundleID)"
                 if (count of windows) is 0 then return ""
-                return (URL of \(tab)) & linefeed & (\(title) of \(tab))
+                return (URL of \(tab)) & linefeed & \(tabID) & linefeed & (\(title) of \(tab))
             end tell
             """
         }
@@ -95,11 +102,21 @@ public struct BrowserTab: Equatable, Sendable {
         } catch let error as ScriptError where error.notAuthorized {
             throw TabError.notAuthorized(browser.name)
         }
-        let lines = output.split(separator: "\n", maxSplits: 1).map(String.init)
+        let lines = output.split(separator: "\n", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         guard let first = lines.first, let url = URL(string: first), url.scheme?.hasPrefix("http") == true else {
             throw TabError.noTab
         }
-        return BrowserTab(url: url, title: lines.count > 1 ? lines[1] : "", browser: browser.name, bundleID: browser.bundleID)
+        return BrowserTab(url: url, title: lines.count > 2 ? lines[2] : "", browser: browser.name, bundleID: browser.bundleID,
+                          tabID: lines.count > 1 && !lines[1].isEmpty ? lines[1] : nil)
+    }
+
+    /// Opens `url` in this tab's browser (not the default browser), in a new tab.
+    @MainActor public func openInSameBrowser(_ url: URL) {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }
 
     /// Whether the app in front is a supported browser (the notch never takes that over).

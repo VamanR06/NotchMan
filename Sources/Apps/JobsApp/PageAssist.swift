@@ -3,8 +3,8 @@ import NotchKit
 
 // MARK: - JobManager API shapes (/api/apply/*)
 
-struct PageInfo: Decodable, Equatable {
-    struct Job: Decodable, Equatable {
+struct PageInfo: Codable, Equatable {
+    struct Job: Codable, Equatable {
         let id: Int
         let company: String
         let title: String
@@ -15,7 +15,7 @@ struct PageInfo: Decodable, Equatable {
     let cover_letter: PageDocument?
 }
 
-struct PageDocument: Decodable, Equatable {
+struct PageDocument: Codable, Equatable {
     let id: Int
     let name: String
 }
@@ -49,17 +49,40 @@ struct FillResult: Decodable, Equatable {
 struct PageMatch: Equatable {
     let tab: BrowserTabRef
     let info: PageInfo
+    var source: PageMatchSource = .tracked
+    /// A page JobManager matched to this job (to refresh documents from, and to carry into links).
+    var sourceURL: URL?
     var resumeFile: URL?
     var coverLetterFile: URL?
 
     var job: PageInfo.Job { info.job! }
 }
 
-/// Which page a match was made for (the full tab isn't Equatable-friendly to keep around).
+/// Which page a match was made for.
 struct BrowserTabRef: Equatable {
     let url: URL
     let bundleID: String
     let browser: String
+    var tabID: String?
+    var title: String = ""
+
+    init(_ tab: BrowserTab) {
+        url = tab.url
+        bundleID = tab.bundleID
+        browser = tab.browser
+        tabID = tab.tabID
+        title = tab.title
+    }
+
+    init(url: URL, bundleID: String, browser: String, tabID: String? = nil, title: String = "") {
+        self.url = url
+        self.bundleID = bundleID
+        self.browser = browser
+        self.tabID = tabID
+        self.title = title
+    }
+
+    var browserTab: BrowserTab { BrowserTab(url: url, title: title, browser: browser, bundleID: bundleID, tabID: tabID) }
 }
 
 /// What autofill did, to show under the card.

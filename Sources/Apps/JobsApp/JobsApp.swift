@@ -8,7 +8,7 @@ public final class JobsApp: NotchApp {
     public let id = "jobs"
     public let name = "Jobs"
     public let iconSystemName = "briefcase"
-    public var expandedHeight: CGFloat { pageMatch == nil ? 190 : 250 }
+    public var expandedHeight: CGFloat { pageMatch != nil ? 250 : unlinkedPage != nil ? 230 : 190 }
 
     private(set) var board = JobBoard.empty
     private(set) var isSignedIn = false
@@ -53,6 +53,7 @@ public final class JobsApp: NotchApp {
         self.context = context
         BrowserTab.startTracking()
         opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
+        loadLinks()
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
         defaultProjectURL = context.defaults.string(forKey: "defaultProjectURL") ?? ""
@@ -168,10 +169,16 @@ public final class JobsApp: NotchApp {
     var opensOnJobPages = true {
         didSet { context?.defaults.set(opensOnJobPages, forKey: "opensOnJobPages") }
     }
+    /// A job-looking page that isn't tied to any job yet: offer to link it.
+    private(set) var unlinkedPage: BrowserTabRef?
     /// Set when this opening started over a browser; the claim only applies to that opening.
     @ObservationIgnored private var openedOverBrowser = false
-    /// Pages already looked up (so hovering again doesn't ask JobManager each time).
-    @ObservationIgnored private var checkedPages: [URL: Date] = [:]
+    /// Pages JobManager didn't recognize recently (so hovering again doesn't ask each time).
+    @ObservationIgnored private var unrecognized: [URL: Date] = [:]
+    /// Pages tied to jobs, by `PageLinks.key`, remembered across launches.
+    @ObservationIgnored private var links: [String: LinkedPage] = [:]
+    /// The job each browser tab last showed, so a tab that moves on (Apply, an embedded form) keeps it.
+    @ObservationIgnored private var tabJobs: [String: (match: LinkedPage, at: Date)] = [:]
 
     public func notchWillOpen() {
         openedOverBrowser = isSignedIn && BrowserTab.frontmostIsBrowser
@@ -181,26 +188,134 @@ public final class JobsApp: NotchApp {
 
     public var claimsNotchOnOpen: Bool { opensOnJobPages && openedOverBrowser && pageMatch != nil }
 
-    /// Looks up the browser's page in JobManager; keeps the match while the page stays the same.
+    /// Works out which job the browser's page belongs to, in order:
+    /// 1. JobManager recognizes it (the saved posting, its form, or the same ATS posting);
+    /// 2. it was tied to a job before (followed, opened from the card, or picked);
+    /// 3. the same tab showed a job a moment ago and moved to a job-looking page (Apply, an embedded form).
+    /// Otherwise a job-looking page is offered for linking. Keeps the match while the page stays the same.
     func checkPage() async {
         guard isSignedIn, let tab = try? await BrowserTab.current() else { return }
         if pageMatch?.tab.url == tab.url { return }
-        if pageMatch != nil {
-            pageMatch = nil
-            autofillReport = nil
+        let ref = BrowserTabRef(tab)
+
+        if let info = await recognized(tab.url) {
+            await show(LinkedPage(info: info, sourceURL: tab.url), on: ref, source: .tracked)
+            return
         }
-        if let checked = checkedPages[tab.url], Date().timeIntervalSince(checked) < 60 { return }
-        checkedPages[tab.url] = Date()
+        if let linked = links[PageLinks.key(tab.url)] {
+            await show(linked, on: ref, source: .linked)
+            return
+        }
+        if let tabID = tab.tabID, let previous = tabJobs[tabID],
+           Date().timeIntervalSince(previous.at) < PageLinks.followWindow,
+           PageLinks.looksLikeJobPage(tab.url, title: tab.title) {
+            remember(previous.match, for: tab.url)
+            await show(previous.match, on: ref, source: .followed)
+            return
+        }
+        pageMatch = nil
+        autofillReport = nil
+        unlinkedPage = PageLinks.looksLikeJobPage(tab.url, title: tab.title) ? ref : nil
+    }
+
+    /// JobManager's match for a page; misses are remembered for a minute.
+    private func recognized(_ url: URL) async -> PageInfo? {
+        if let missed = unrecognized[url], Date().timeIntervalSince(missed) < 60 { return nil }
         // Older JobManager servers don't have this endpoint; that just means no match.
-        guard let info = try? await client.pageInfo(for: tab.url), info.job != nil else { return }
-        pageMatch = PageMatch(tab: BrowserTabRef(url: tab.url, bundleID: tab.bundleID, browser: tab.browser), info: info)
-        if let resume = info.resume { pageMatch?.resumeFile = try? await client.download(resume) }
-        if let cover = info.cover_letter { pageMatch?.coverLetterFile = try? await client.download(cover) }
+        if let info = try? await client.pageInfo(for: url), info.job != nil { return info }
+        unrecognized[url] = Date()
+        return nil
+    }
+
+    private func show(_ linked: LinkedPage, on tab: BrowserTabRef, source: PageMatchSource) async {
+        guard linked.info.job != nil else { return }
+        if pageMatch?.job.id != linked.info.job?.id { autofillReport = nil }
+        unlinkedPage = nil
+        pageMatch = PageMatch(tab: tab, info: linked.info, source: source, sourceURL: linked.sourceURL)
+        if let tabID = tab.tabID { tabJobs[tabID] = (linked, Date()) }
+        var info = linked.info
+        // A remembered link's documents may have changed since: refresh from a page JobManager knows.
+        if source != .tracked, let url = linked.sourceURL, let fresh = try? await client.pageInfo(for: url),
+           fresh.job?.id == info.job?.id {
+            info = fresh
+        }
+        if let resume = info.resume {
+            let file = try? await client.download(resume)
+            if pageMatch?.tab == tab { pageMatch?.resumeFile = file }
+        }
+        if let cover = info.cover_letter {
+            let file = try? await client.download(cover)
+            if pageMatch?.tab == tab { pageMatch?.coverLetterFile = file }
+        }
+    }
+
+    private func remember(_ linked: LinkedPage, for url: URL) {
+        let key = PageLinks.key(url)
+        links[key] = linked
+        // Bounded: past a few hundred, some other link is dropped (it can always be linked again).
+        if links.count > 300, let old = links.keys.first(where: { $0 != key }) { links[old] = nil }
+        saveLinks()
+    }
+
+    private func saveLinks() {
+        context?.defaults.set(try? JSONEncoder().encode(links), forKey: "pageLinks")
+    }
+
+    private func loadLinks() {
+        guard let data = context?.defaults.data(forKey: "pageLinks") else { return }
+        links = (try? JSONDecoder().decode([String: LinkedPage].self, from: data)) ?? [:]
+    }
+
+    /// Jobs to offer for linking the current page, best guess first.
+    var linkCandidates: [TrackedJob] {
+        guard let page = unlinkedPage else { return [] }
+        return PageLinks.candidates(board.jobs(for: .all, matching: ""), url: page.url, title: page.title)
+    }
+
+    /// Ties the unlinked page to `job` (and remembers it), then shows it.
+    func link(_ job: TrackedJob) {
+        guard let page = unlinkedPage else { return }
+        Task {
+            var linked = LinkedPage(info: PageInfo(job: .init(id: job.id, company: job.company, title: job.title, url: job.url),
+                                                   resume: nil, cover_letter: nil),
+                                    sourceURL: nil)
+            // The job's own posting tells JobManager which documents go with it.
+            if let posting = job.url.flatMap(URL.init(string:)), let info = try? await client.pageInfo(for: posting),
+               info.job?.id == job.id {
+                linked = LinkedPage(info: info, sourceURL: posting)
+            }
+            remember(linked, for: page.url)
+            await show(linked, on: page, source: .picked)
+        }
+    }
+
+    /// "Not this job": forgets the link for this page and stops the tab carrying the job.
+    func unlinkPage() {
+        guard let match = pageMatch else { return }
+        links[PageLinks.key(match.tab.url)] = nil
+        saveLinks()
+        if let tabID = match.tab.tabID { tabJobs[tabID] = nil }
+        pageMatch = nil
+        autofillReport = nil
+        unlinkedPage = PageLinks.looksLikeJobPage(match.tab.url, title: match.tab.title) ? match.tab : nil
     }
 
     func dismissPage() {
         pageMatch = nil
         autofillReport = nil
+        unlinkedPage = nil
+    }
+
+    /// Opens a form embedded from an ATS on its own, in the same browser, carrying the job over.
+    func openEmbeddedForm(_ url: URL) {
+        guard let match = pageMatch else { return }
+        remember(LinkedPage(info: match.info, sourceURL: match.sourceURL), for: url)
+        match.tab.browserTab.openInSameBrowser(url)
+        // The browser's front tab is now the form: show it as this job once it's there.
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            await checkPage()
+        }
     }
 
     /// Fills the application in the browser by JobManager's rules, attaching the job's resume. Never submits.
@@ -223,8 +338,8 @@ public final class JobsApp: NotchApp {
             // The page may have moved on (posting → its application form); it must still be this job.
             let current = try await BrowserTab.current()
             if current.url != match.tab.url {
-                let info = try await client.pageInfo(for: current.url)
-                guard info.job?.id == match.job.id else {
+                await checkPage()
+                guard pageMatch?.job.id == match.job.id else {
                     return AutofillReport(problem: "The browser is on a different page now. Open the application form for \(match.job.company).")
                 }
             }

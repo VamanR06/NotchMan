@@ -22,6 +22,8 @@ struct JobsView: View {
                     } else {
                         if let match = app.pageMatch {
                             ThisPageCard(app: app, match: match)
+                        } else if app.unlinkedPage != nil {
+                            UnlinkedPageRow(app: app)
                         }
                         FilterBar(app: app)
                         JobList(app: app)
@@ -63,7 +65,7 @@ private struct ThisPageCard: View {
                     .foregroundStyle(.white.opacity(0.6))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(match.job.company).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    Text(match.job.title).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                    Text(sourceLine).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 DocumentTile(label: "Resume", document: match.info.resume, file: match.resumeFile)
@@ -83,9 +85,17 @@ private struct ThisPageCard: View {
                 .buttonStyle(.plain)
                 .disabled(app.isAutofilling)
                 .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
-                Button(action: app.dismissPage) { Image(systemName: "xmark") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.4))
+                if match.source == .tracked {
+                    Button(action: app.dismissPage) { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white.opacity(0.4))
+                        .help("Hide")
+                } else {
+                    Button(action: app.unlinkPage) { Image(systemName: "link.badge.plus").symbolVariant(.slash) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .help("Not this job: forget the link for this page")
+                }
             }
             if let report = app.autofillReport {
                 HStack(spacing: 6) {
@@ -94,7 +104,7 @@ private struct ThisPageCard: View {
                     Text(report.summary).lineLimit(2)
                     Spacer(minLength: 4)
                     if let form = report.embeddedForm {
-                        Button("Open Form") { NSWorkspace.shared.open(form) }.buttonStyle(.plain).foregroundStyle(.orange)
+                        Button("Open Form") { app.openEmbeddedForm(form) }.buttonStyle(.plain).foregroundStyle(.orange)
                     }
                     if !report.needsYou.isEmpty || !report.check.isEmpty {
                         Button(showDetails ? "Hide" : "Details") { showDetails.toggle() }
@@ -116,6 +126,56 @@ private struct ThisPageCard: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.07)))
+    }
+}
+
+extension ThisPageCard {
+    /// The job's title, and how the page got tied to it when it isn't JobManager's own match.
+    fileprivate var sourceLine: String {
+        switch match.source {
+        case .tracked: match.job.title
+        case .followed: "\(match.job.title) · followed from its page"
+        case .linked: "\(match.job.title) · linked page"
+        case .picked: "\(match.job.title) · linked just now"
+        }
+    }
+}
+
+/// A job-looking page that isn't tied to a job: pick which one it is.
+private struct UnlinkedPageRow: View {
+    let app: JobsApp
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "questionmark.square.dashed").foregroundStyle(.white.opacity(0.5))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("This page isn't linked to a job").font(.system(size: 11, weight: .medium))
+                Text(app.unlinkedPage?.url.host() ?? "").font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+            }
+            Spacer()
+            Menu("Link…") {
+                let candidates = app.linkCandidates
+                ForEach(candidates.prefix(12)) { job in
+                    Button("\(job.company) — \(job.title)") { app.link(job) }
+                }
+                if candidates.count > 12 {
+                    Menu("More") {
+                        ForEach(candidates.dropFirst(12)) { job in
+                            Button("\(job.company) — \(job.title)") { app.link(job) }
+                        }
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Tie this page to one of your jobs to get its resume and Autofill here")
+            Button(action: app.dismissPage) { Image(systemName: "xmark") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.4))
+        }
+        .font(.system(size: 11))
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.05)))
     }
 }
 
