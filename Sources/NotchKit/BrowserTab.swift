@@ -21,7 +21,7 @@ public struct BrowserTab: Equatable, Sendable {
     }
 
     public enum TabError: LocalizedError {
-        case noBrowser, noTab, notAuthorized(String), javaScriptOff(String), script(String)
+        case noBrowser, noTab, notAuthorized(String), javaScriptOff(String), script(String), timedOut(String)
 
         public var errorDescription: String? {
             switch self {
@@ -35,6 +35,8 @@ public struct BrowserTab: Equatable, Sendable {
                     : "In \(browser), turn on View → Developer → Allow JavaScript from Apple Events."
             case .script(let message):
                 message
+            case .timedOut(let browser):
+                "\(browser) didn't answer in time. If the page is showing a dialog, close it and try again."
             }
         }
     }
@@ -136,6 +138,7 @@ public struct BrowserTab: Equatable, Sendable {
         do {
             return try await Self.runAppleScript(source, arguments: [javaScript])
         } catch let error as ScriptError {
+            if error.timedOut { throw TabError.timedOut(browser.name) }
             if error.notAuthorized { throw TabError.notAuthorized(browser.name) }
             let lower = error.message.lowercased()
             if lower.contains("javascript") && (lower.contains("turned off") || lower.contains("allow javascript") || lower.contains("apple events")) {
@@ -147,30 +150,75 @@ public struct BrowserTab: Equatable, Sendable {
 
     struct ScriptError: Error {
         let message: String
+        var timedOut = false
         /// -1743: the user hasn't allowed (or declined) Automation for this app.
         var notAuthorized: Bool { message.contains("-1743") || message.contains("Not authorized") }
     }
 
     /// Runs in an `osascript` child process so a slow browser or the consent prompt never blocks the UI.
-    private static func runAppleScript(_ source: String, arguments: [String] = []) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", source] + arguments
-            let out = Pipe(), err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            process.terminationHandler = { process in
-                let output = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: output)
-                } else {
-                    let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    continuation.resume(throwing: ScriptError(message: message))
+    ///
+    /// Output is read as it arrives: a page's form can come back as hundreds of KB, and a pipe nobody drains
+    /// stalls osascript once its buffer (64 KB) fills, so it would never finish. The call gives up after `timeout`,
+    /// and cancelling the calling task stops it.
+    static func runAppleScript(_ source: String, arguments: [String] = [], timeout: TimeInterval = 45) async throws -> String {
+        let run = ScriptRun()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                let process = run.process
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", source] + arguments
+                let out = Pipe(), err = Pipe()
+                process.standardOutput = out
+                process.standardError = err
+                out.fileHandleForReading.readabilityHandler = { run.output.append($0.availableData) }
+                err.fileHandleForReading.readabilityHandler = { run.errors.append($0.availableData) }
+                process.terminationHandler = { process in
+                    out.fileHandleForReading.readabilityHandler = nil
+                    err.fileHandleForReading.readabilityHandler = nil
+                    run.output.append(out.fileHandleForReading.readDataToEndOfFile())
+                    run.errors.append(err.fileHandleForReading.readDataToEndOfFile())
+                    if run.cancelled {
+                        continuation.resume(throwing: CancellationError())
+                    } else if run.timedOut {
+                        continuation.resume(throwing: ScriptError(message: "timed out", timedOut: true))
+                    } else if process.terminationStatus == 0 {
+                        continuation.resume(returning: run.output.string.trimmingCharacters(in: .whitespacesAndNewlines))
+                    } else {
+                        continuation.resume(throwing: ScriptError(message: run.errors.string))
+                    }
+                }
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                    guard process.isRunning else { return }
+                    run.timedOut = true
+                    process.terminate()
                 }
             }
-            do { try process.run() } catch { continuation.resume(throwing: error) }
+        } onCancel: {
+            run.cancelled = true
+            if run.process.isRunning { run.process.terminate() }
+        }
+    }
+
+    /// One osascript run's process and output, shared with its handlers (each touched under its own lock or
+    /// only once the process has ended).
+    private final class ScriptRun: @unchecked Sendable {
+        let process = Process()
+        let output = Buffer()
+        let errors = Buffer()
+        var timedOut = false
+        var cancelled = false
+
+        final class Buffer: @unchecked Sendable {
+            private var data = Data()
+            private let lock = NSLock()
+            func append(_ chunk: Data) { lock.withLock { data.append(chunk) } }
+            var string: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
         }
     }
 }

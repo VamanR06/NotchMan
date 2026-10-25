@@ -165,6 +165,7 @@ public final class JobsApp: NotchApp {
     private(set) var pageMatch: PageMatch?
     private(set) var autofillReport: AutofillReport?
     private(set) var isAutofilling = false
+    @ObservationIgnored private var autofillTask: Task<Void, Never>?
     /// Hovering the notch open while the browser shows a tracked job opens Jobs.
     var opensOnJobPages = true {
         didSet { context?.defaults.set(opensOnJobPages, forKey: "opensOnJobPages") }
@@ -324,12 +325,17 @@ public final class JobsApp: NotchApp {
         isAutofilling = true
         autofillReport = nil
         context?.holdOpen(true)
-        Task {
+        autofillTask = Task {
             let report = await runAutofill(match)
-            autofillReport = report
+            autofillReport = Task.isCancelled ? AutofillReport(problem: "Stopped. Fields filled so far stay filled.") : report
             isAutofilling = false
             context?.holdOpen(false)
         }
+    }
+
+    /// Stops a running Autofill (the browser call in flight is ended).
+    func stopAutofill() {
+        autofillTask?.cancel()
     }
 
     private func runAutofill(_ match: PageMatch) async -> AutofillReport {

@@ -72,19 +72,29 @@ private struct ThisPageCard: View {
                 if match.info.cover_letter != nil {
                     DocumentTile(label: "Cover letter", document: match.info.cover_letter, file: match.coverLetterFile)
                 }
-                Button(action: app.autofill) {
-                    HStack(spacing: 4) {
-                        if app.isAutofilling { NotchSpinner(size: 10, lineWidth: 1.6) } else { Image(systemName: "wand.and.stars") }
-                        Text(app.isAutofilling ? "Filling…" : "Autofill")
+                if app.isAutofilling {
+                    HStack(spacing: 5) {
+                        NotchSpinner(size: 10, lineWidth: 1.6)
+                        Text("Filling…").font(.system(size: 11, weight: .semibold))
+                        Button("Stop", action: app.stopAutofill)
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.orange)
                     }
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.accentColor))
-                    .foregroundStyle(.white)
+                } else {
+                    Button(action: app.autofill) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "wand.and.stars")
+                            Text("Autofill")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
                 }
-                .buttonStyle(.plain)
-                .disabled(app.isAutofilling)
-                .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
                 if match.source == .tracked {
                     Button(action: app.dismissPage) { Image(systemName: "xmark") }
                         .buttonStyle(.plain)
