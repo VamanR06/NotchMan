@@ -9,9 +9,9 @@ app:
 release:
 	scripts/bundle.sh release
 
+# Quits the running NotchMan and opens the new build; works from a shell inside NotchMan too.
 run: app
-	-pkill -x NotchMan
-	open build/NotchMan.app
+	scripts/relaunch.sh
 
 clean:
 	rm -rf .build build
