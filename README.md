@@ -129,6 +129,22 @@ one in front, or the one you used last). JobManager parses the page, and a short
 title to check before adding it to *To apply*, with the posting saved. If you already track it you're asked
 before adding it again. macOS asks once per browser to let NotchMan read it.
 
+**On a job's page** (needs JobManager v0.30+): when your browser shows a job you track, either its posting or
+its application form, hovering the notch open goes straight to Jobs. You can turn that off in Settings → Jobs.
+A **This page** card at the top has:
+- the job's linked **resume** and **cover letter**, ready to drag onto the site's upload box
+- **Autofill**, which fills the form using JobManager's own rules (the same ones as its ChatGPT autofill):
+  - Your Profile, explicit work-eligibility answers, saved answers and your demographic policy. No AI guessing.
+  - It attaches the resume and takes a second pass for follow-up questions your answers reveal.
+  - Afterwards it lists what still needs you: essay questions, attestations, anything not in your Profile.
+  - It never submits.
+- If the form is embedded from Greenhouse or similar on a company's own site, **Open Form** opens it on its
+  own so it can be filled.
+
+Autofill needs your browser to allow it once:
+- Chrome, Arc, Brave or Edge: View → Developer → *Allow JavaScript from Apple Events*
+- Safari: Develop → *Allow JavaScript from Apple Events*
+
 Jobs you haven't applied to have a ✨ menu of ChatGPT prompts (fit & tailoring, cover letter, interview prep, or
 your own in Settings → Jobs). Picking one switches to the Chat app and types the prompt — filled with the job's
 title, company, link, location and saved description — into a new ChatGPT chat without sending it. The prompt is

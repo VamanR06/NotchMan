@@ -25,6 +25,7 @@ final class JobManagerClient {
     private static let cookieName = "jm_session"
 
     private let keychain: Keychain
+    private var cachedScripts: ApplyScripts?
     private let defaults: UserDefaults
     /// Ephemeral, no automatic cookies or redirects: the login response's cookie and Location are read by hand.
     private let session = URLSession(configuration: {
@@ -154,6 +155,48 @@ final class JobManagerClient {
             return .duplicate(message ?? "You're already tracking this job")
         default: throw ClientError.http(status)
         }
+    }
+
+    // MARK: - The page in the browser (JobManager v0.30+)
+
+    /// The tracked job this posting or application page is, with its resume and cover letter.
+    func pageInfo(for url: URL) async throws -> PageInfo {
+        let data = try await authorized("POST", "api/apply/page", json: ["url": url.absoluteString], accept: [200])
+        return try JSONDecoder().decode(PageInfo.self, from: data)
+    }
+
+    /// The form scanner, the in-page filler and the embedded-form finder (fetched once per launch).
+    func applyScripts() async throws -> ApplyScripts {
+        if let cachedScripts { return cachedScripts }
+        let data = try await authorized("GET", "api/apply/scripts", json: nil, accept: [200])
+        let scripts = try JSONDecoder().decode(ApplyScripts.self, from: data)
+        cachedScripts = scripts
+        return scripts
+    }
+
+    /// What goes in each scanned field, by JobManager's autofill rules. `fields` is the scanner's output as is.
+    func resolve(jobID: Int, fields: Any) async throws -> (fill: Any, fields: [FieldPlan]) {
+        let data = try await authorized("POST", "api/apply/resolve", json: ["job_id": jobID, "fields": fields], accept: [200])
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let plans = try JSONDecoder().decode([FieldPlan].self,
+                                             from: JSONSerialization.data(withJSONObject: json["fields"] ?? []))
+        return (json["fill"] ?? [], plans)
+    }
+
+    /// A resume or cover letter saved locally (re-downloaded only if missing), to drag or attach.
+    func download(_ document: PageDocument) async throws -> URL {
+        let safeName = document.name.replacingOccurrences(of: "/", with: "_")
+        let folder = Self.documentsCache.appending(path: "\(document.id)")
+        let file = folder.appending(path: safeName)
+        if FileManager.default.fileExists(atPath: file.path) { return file }
+        let data = try await authorized("GET", "api/documents/\(document.id)/file", json: nil, accept: [200])
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try data.write(to: file, options: .atomic)
+        return file
+    }
+
+    static var documentsCache: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "NotchMan/documents")
     }
 
     /// Removes a status event (undo).

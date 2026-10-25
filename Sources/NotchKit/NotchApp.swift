@@ -35,6 +35,13 @@ public protocol NotchApp: AnyObject {
     /// Optional settings pane shown in the NotchMan settings window.
     func makeSettingsView() -> AnyView?
 
+    /// The pointer started resting on the collapsed notch (it opens after the hover delay). A chance to look
+    /// at what the user is doing, e.g. which page their browser shows.
+    func notchWillOpen()
+    /// When the notch opens by hover, the first app that claims it is shown instead of the last one used
+    /// (e.g. Jobs while the browser shows a tracked job). Checked at opening and once shortly after.
+    var claimsNotchOnOpen: Bool { get }
+
     /// Files dragged to the notch open this app (the first one that accepts them) so it can take the drop.
     var acceptsFileDrags: Bool { get }
 
@@ -52,6 +59,8 @@ public extension NotchApp {
     var activity: NotchActivity? { nil }
     var dockBadge: NotchBadge? { nil }
     var acceptsFileDrags: Bool { false }
+    func notchWillOpen() {}
+    var claimsNotchOnOpen: Bool { false }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}

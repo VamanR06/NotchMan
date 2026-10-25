@@ -204,12 +204,14 @@ final class NotchViewModel {
             // Slightly generous hover target so the notch is easy to hit.
             if contains(point, slack: 4) {
                 guard pendingExpand == nil else { return }
+                apps.forEach { $0.notchWillOpen() }
                 pendingExpand = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(Self.hoverDelay))
                     guard !Task.isCancelled else { return }
                     self?.pendingExpand = nil
                     self?.expand()
                     self?.takeKeyboard()
+                    self?.offerOpening()
                 }
             } else {
                 pendingExpand?.cancel()
@@ -238,6 +240,22 @@ final class NotchViewModel {
     func clickedOutside(at point: CGPoint) {
         guard state == .expanded, isHeld, !isPinned, !contains(point, slack: 4) else { return }
         collapse()
+    }
+
+    /// Shows the app that claims this opening, now and once a moment later (its check may still be running),
+    /// unless the user has picked an app themselves by then.
+    private func offerOpening() {
+        claimOpening()
+        let shown = selectedAppID
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard let self, self.state == .expanded, self.selectedAppID == shown else { return }
+            self.claimOpening()
+        }
+    }
+
+    private func claimOpening() {
+        if let app = apps.first(where: \.claimsNotchOnOpen), app.id != selectedAppID { select(app.id) }
     }
 
     private func takeKeyboard() {

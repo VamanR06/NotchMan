@@ -8,7 +8,7 @@ public final class JobsApp: NotchApp {
     public let id = "jobs"
     public let name = "Jobs"
     public let iconSystemName = "briefcase"
-    public var expandedHeight: CGFloat { 190 }
+    public var expandedHeight: CGFloat { pageMatch == nil ? 190 : 250 }
 
     private(set) var board = JobBoard.empty
     private(set) var isSignedIn = false
@@ -52,6 +52,7 @@ public final class JobsApp: NotchApp {
     public func activate(context: NotchContext) {
         self.context = context
         BrowserTab.startTracking()
+        opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
         defaultProjectURL = context.defaults.string(forKey: "defaultProjectURL") ?? ""
@@ -155,6 +156,108 @@ public final class JobsApp: NotchApp {
                              },
                              open: BoardAction("Open", systemImage: "arrow.up.right") { [weak self] in self?.open(job) })
         }, from: id)
+    }
+
+    // MARK: - The job open in the browser
+
+    /// The tracked job the browser is showing (posting or application form), with its documents.
+    private(set) var pageMatch: PageMatch?
+    private(set) var autofillReport: AutofillReport?
+    private(set) var isAutofilling = false
+    /// Hovering the notch open while the browser shows a tracked job opens Jobs.
+    var opensOnJobPages = true {
+        didSet { context?.defaults.set(opensOnJobPages, forKey: "opensOnJobPages") }
+    }
+    /// Set when this opening started over a browser; the claim only applies to that opening.
+    @ObservationIgnored private var openedOverBrowser = false
+    /// Pages already looked up (so hovering again doesn't ask JobManager each time).
+    @ObservationIgnored private var checkedPages: [URL: Date] = [:]
+
+    public func notchWillOpen() {
+        openedOverBrowser = isSignedIn && BrowserTab.frontmostIsBrowser
+        guard openedOverBrowser else { return }
+        Task { await checkPage() }
+    }
+
+    public var claimsNotchOnOpen: Bool { opensOnJobPages && openedOverBrowser && pageMatch != nil }
+
+    /// Looks up the browser's page in JobManager; keeps the match while the page stays the same.
+    func checkPage() async {
+        guard isSignedIn, let tab = try? await BrowserTab.current() else { return }
+        if pageMatch?.tab.url == tab.url { return }
+        if pageMatch != nil {
+            pageMatch = nil
+            autofillReport = nil
+        }
+        if let checked = checkedPages[tab.url], Date().timeIntervalSince(checked) < 60 { return }
+        checkedPages[tab.url] = Date()
+        // Older JobManager servers don't have this endpoint; that just means no match.
+        guard let info = try? await client.pageInfo(for: tab.url), info.job != nil else { return }
+        pageMatch = PageMatch(tab: BrowserTabRef(url: tab.url, bundleID: tab.bundleID, browser: tab.browser), info: info)
+        if let resume = info.resume { pageMatch?.resumeFile = try? await client.download(resume) }
+        if let cover = info.cover_letter { pageMatch?.coverLetterFile = try? await client.download(cover) }
+    }
+
+    func dismissPage() {
+        pageMatch = nil
+        autofillReport = nil
+    }
+
+    /// Fills the application in the browser by JobManager's rules, attaching the job's resume. Never submits.
+    func autofill() {
+        guard let match = pageMatch, !isAutofilling else { return }
+        isAutofilling = true
+        autofillReport = nil
+        context?.holdOpen(true)
+        Task {
+            let report = await runAutofill(match)
+            autofillReport = report
+            isAutofilling = false
+            context?.holdOpen(false)
+        }
+    }
+
+    private func runAutofill(_ match: PageMatch) async -> AutofillReport {
+        do {
+            let scripts = try await client.applyScripts()
+            // The page may have moved on (posting → its application form); it must still be this job.
+            let current = try await BrowserTab.current()
+            if current.url != match.tab.url {
+                let info = try await client.pageInfo(for: current.url)
+                guard info.job?.id == match.job.id else {
+                    return AutofillReport(problem: "The browser is on a different page now. Open the application form for \(match.job.company).")
+                }
+            }
+            let scan = try await PageForm.scan(in: current, script: scripts.scan)
+            if scan.fields.isEmpty {
+                let frames = try? await PageForm.embeddedForms(in: current, script: scripts.frames)
+                if let frame = frames?.first {
+                    return AutofillReport(problem: "This form is embedded from \(frame.host() ?? "another site"); open it on its own to fill it.",
+                                          embeddedForm: frame)
+                }
+                if let blocker = scan.blockers.first { return AutofillReport(problem: blocker) }
+                return AutofillReport(problem: scan.hasApplyButton
+                                      ? "Click Apply on the page to show the form, then Autofill again."
+                                      : "No application form on this page.")
+            }
+            let first = try await client.resolve(jobID: match.job.id, fields: scan.fields)
+            let files = PageForm.files(for: match)
+            var results = try await PageForm.fill(in: current, script: scripts.fill, steps: first.fill, files: files)
+            var plans = first.fields
+            // Answers can reveal follow-up questions; resolve and fill those once.
+            try await Task.sleep(for: .milliseconds(1200))
+            let again = try await PageForm.scan(in: current, script: scripts.scan)
+            let known = Set(plans.map(\.key))
+            let fresh = again.fields.filter { !known.contains($0["key"] as? String ?? "") }
+            if !fresh.isEmpty {
+                let second = try await client.resolve(jobID: match.job.id, fields: fresh)
+                results += try await PageForm.fill(in: current, script: scripts.fill, steps: second.fill, files: files)
+                plans += second.fields
+            }
+            return AutofillReport.from(plans: plans, results: results)
+        } catch {
+            return AutofillReport(problem: error.localizedDescription)
+        }
     }
 
     // MARK: - Add from browser

@@ -21,6 +21,25 @@ private final class SizedApp: NotchApp {
     func makeExpandedView() -> AnyView { AnyView(EmptyView()) }
 }
 
+@MainActor @Observable
+private final class ClaimingApp: NotchApp {
+    let id: String
+    let name: String
+    let iconSystemName = "briefcase"
+    var claims = false
+    var willOpenCalls = 0
+
+    init(_ id: String) {
+        self.id = id
+        self.name = id
+    }
+
+    func activate(context: NotchContext) {}
+    func makeExpandedView() -> AnyView { AnyView(EmptyView()) }
+    func notchWillOpen() { willOpenCalls += 1 }
+    var claimsNotchOnOpen: Bool { claims }
+}
+
 @MainActor @Suite(.serialized) struct FocusAndSwitchingTests {
     private let geometry = NotchGeometry(
         screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
@@ -45,7 +64,8 @@ private final class SizedApp: NotchApp {
 
         // Really leaving still closes it.
         model.mouseMoved(to: CGPoint(x: wide.midX, y: wide.minY - 200))
-        try await Task.sleep(for: .milliseconds(400))
+        // Closes after 250ms; give a busy test machine some room.
+        for _ in 0..<20 where model.state != .collapsed { try await Task.sleep(for: .milliseconds(100)) }
         #expect(model.state == .collapsed)
     }
 
@@ -62,6 +82,31 @@ private final class SizedApp: NotchApp {
         #expect(took == 1)  // once per opening
         model.collapse()
         #expect(gaveBack == 1)
+    }
+
+    @Test func anAppCanClaimAHoverOpening() async throws {
+        let jobs = ClaimingApp("jobs")
+        let model = NotchViewModel(apps: [SizedApp("agents", width: 620), jobs], geometry: geometry)
+        let center = CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5)
+        model.mouseMoved(to: center)
+        #expect(jobs.willOpenCalls == 1)
+        // Its check finishes after the notch has opened: the second look still picks it up.
+        try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
+        #expect(model.selectedAppID == "agents")
+        jobs.claims = true
+        try await Task.sleep(for: .seconds(1.3))
+        #expect(model.selectedAppID == "jobs")
+    }
+
+    @Test func aLateClaimDoesNotOverrideTheUsersChoice() async throws {
+        let jobs = ClaimingApp("jobs")
+        let model = NotchViewModel(apps: [SizedApp("agents", width: 620), SizedApp("music", width: 620), jobs], geometry: geometry)
+        model.mouseMoved(to: CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5))
+        try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
+        model.select("music")
+        jobs.claims = true
+        try await Task.sleep(for: .seconds(1.3))
+        #expect(model.selectedAppID == "music")
     }
 
     @Test func openingsTheUserDidNotAskForLeaveTheKeyboardAlone() {

@@ -10,6 +10,15 @@ struct JobsSettingsView: View {
     var body: some View {
         Form {
             Section {
+                Toggle("Open Jobs when the browser shows a tracked job", isOn: $app.opensOnJobPages)
+            } header: {
+                Text("On a job's page")
+            } footer: {
+                Text("Hovering the notch open on a job you track (its posting or application form) shows it in Jobs with its resume and cover letter to drag onto the page, and Autofill, which fills the form with your JobManager Profile and saved answers (never submits). Autofill needs your browser to allow it once: Chrome, Arc, Brave, Edge → View → Developer → Allow JavaScript from Apple Events; Safari → Develop → Allow JavaScript from Apple Events.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
                 if app.isSignedIn {
                     LabeledContent("Server", value: app.client.serverURL)
                     LabeledContent("Status") {

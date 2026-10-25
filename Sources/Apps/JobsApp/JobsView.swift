@@ -20,6 +20,9 @@ struct JobsView: View {
                     if app.draft != nil {
                         AddJobForm(app: app)
                     } else {
+                        if let match = app.pageMatch {
+                            ThisPageCard(app: app, match: match)
+                        }
                         FilterBar(app: app)
                         JobList(app: app)
                     }
@@ -30,6 +33,7 @@ struct JobsView: View {
             }
         }
         .task { await app.refreshIfStale() }
+        .task { await app.checkPage() }
     }
 
     private func placeholder(_ text: String, settings: Bool) -> some View {
@@ -43,6 +47,104 @@ struct JobsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The tracked job open in the browser: its resume and cover letter to drag onto the page, and Autofill.
+private struct ThisPageCard: View {
+    let app: JobsApp
+    let match: PageMatch
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Image(systemName: "safari")
+                    .foregroundStyle(.white.opacity(0.6))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(match.job.company).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Text(match.job.title).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                DocumentTile(label: "Resume", document: match.info.resume, file: match.resumeFile)
+                if match.info.cover_letter != nil {
+                    DocumentTile(label: "Cover letter", document: match.info.cover_letter, file: match.coverLetterFile)
+                }
+                Button(action: app.autofill) {
+                    HStack(spacing: 4) {
+                        if app.isAutofilling { NotchSpinner(size: 10, lineWidth: 1.6) } else { Image(systemName: "wand.and.stars") }
+                        Text(app.isAutofilling ? "Filling…" : "Autofill")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .disabled(app.isAutofilling)
+                .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
+                Button(action: app.dismissPage) { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            if let report = app.autofillReport {
+                HStack(spacing: 6) {
+                    Image(systemName: report.problem == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(report.problem == nil ? .green : .orange)
+                    Text(report.summary).lineLimit(2)
+                    Spacer(minLength: 4)
+                    if let form = report.embeddedForm {
+                        Button("Open Form") { NSWorkspace.shared.open(form) }.buttonStyle(.plain).foregroundStyle(.orange)
+                    }
+                    if !report.needsYou.isEmpty || !report.check.isEmpty {
+                        Button(showDetails ? "Hide" : "Details") { showDetails.toggle() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+                }
+                .font(.system(size: 10.5))
+                if showDetails {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(report.needsYou, id: \.self) { Text("• \($0)") }
+                        ForEach(report.check, id: \.self) { Text("• Check \($0)").foregroundStyle(.orange.opacity(0.9)) }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+                }
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.07)))
+    }
+}
+
+/// A document you can drag onto the page's upload box (or anywhere else).
+private struct DocumentTile: View {
+    let label: String
+    let document: PageDocument?
+    let file: URL?
+
+    var body: some View {
+        Group {
+            if let file {
+                HStack(spacing: 4) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 18, height: 18)
+                    Text(label).font(.system(size: 10, weight: .medium))
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.1)))
+                .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
+                .help("Drag \(file.lastPathComponent) onto the page's upload box")
+            } else if document != nil {
+                NotchSpinner(size: 10, lineWidth: 1.6).help("Downloading \(label.lowercased())…")
+            } else {
+                Text("No \(label.lowercased())")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .help("Link a \(label.lowercased()) to this job in JobManager")
+            }
+        }
     }
 }
 

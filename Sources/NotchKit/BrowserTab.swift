@@ -6,15 +6,18 @@ public struct BrowserTab: Equatable, Sendable {
     public let url: URL
     public let title: String
     public let browser: String
+    /// The browser's bundle id, to run scripts in the same tab later.
+    public let bundleID: String
 
-    public init(url: URL, title: String, browser: String) {
+    public init(url: URL, title: String, browser: String, bundleID: String = "") {
         self.url = url
         self.title = title
         self.browser = browser
+        self.bundleID = bundleID
     }
 
     public enum TabError: LocalizedError {
-        case noBrowser, noTab, notAuthorized(String)
+        case noBrowser, noTab, notAuthorized(String), javaScriptOff(String), script(String)
 
         public var errorDescription: String? {
             switch self {
@@ -22,6 +25,12 @@ public struct BrowserTab: Equatable, Sendable {
             case .noTab: "No page is open in the browser."
             case .notAuthorized(let browser):
                 "Allow NotchMan to control \(browser) in System Settings → Privacy & Security → Automation."
+            case .javaScriptOff(let browser):
+                browser == "Safari"
+                    ? "In Safari, turn on Develop → Allow JavaScript from Apple Events (Develop shows after Settings → Advanced → Show features for web developers)."
+                    : "In \(browser), turn on View → Developer → Allow JavaScript from Apple Events."
+            case .script(let message):
+                message
             }
         }
     }
@@ -90,7 +99,33 @@ public struct BrowserTab: Equatable, Sendable {
         guard let first = lines.first, let url = URL(string: first), url.scheme?.hasPrefix("http") == true else {
             throw TabError.noTab
         }
-        return BrowserTab(url: url, title: lines.count > 1 ? lines[1] : "", browser: browser.name)
+        return BrowserTab(url: url, title: lines.count > 1 ? lines[1] : "", browser: browser.name, bundleID: browser.bundleID)
+    }
+
+    /// Whether the app in front is a supported browser (the notch never takes that over).
+    @MainActor public static var frontmostIsBrowser: Bool {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        return browsers.contains { $0.bundleID == front }
+    }
+
+    /// Runs `javaScript` in this browser's front tab and returns its result as text. The script travels as an
+    /// argument, never spliced into AppleScript source. Browsers only allow this once the user turns on
+    /// "Allow JavaScript from Apple Events".
+    public func runJavaScript(_ javaScript: String) async throws -> String {
+        guard let browser = Self.browsers.first(where: { $0.bundleID == bundleID }) else { throw TabError.noBrowser }
+        let source = browser.isSafari
+            ? "on run argv\ntell application id \"\(bundleID)\" to do JavaScript (item 1 of argv) in current tab of front window\nend run"
+            : "on run argv\ntell application id \"\(bundleID)\" to tell active tab of front window to execute javascript (item 1 of argv)\nend run"
+        do {
+            return try await Self.runAppleScript(source, arguments: [javaScript])
+        } catch let error as ScriptError {
+            if error.notAuthorized { throw TabError.notAuthorized(browser.name) }
+            let lower = error.message.lowercased()
+            if lower.contains("javascript") && (lower.contains("turned off") || lower.contains("allow javascript") || lower.contains("apple events")) {
+                throw TabError.javaScriptOff(browser.name)
+            }
+            throw TabError.script(error.message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
     }
 
     struct ScriptError: Error {
@@ -100,11 +135,11 @@ public struct BrowserTab: Equatable, Sendable {
     }
 
     /// Runs in an `osascript` child process so a slow browser or the consent prompt never blocks the UI.
-    private static func runAppleScript(_ source: String) async throws -> String {
+    private static func runAppleScript(_ source: String, arguments: [String] = []) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", source]
+            process.arguments = ["-e", source] + arguments
             let out = Pipe(), err = Pipe()
             process.standardOutput = out
             process.standardError = err
