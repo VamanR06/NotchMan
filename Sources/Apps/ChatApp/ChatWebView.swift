@@ -102,15 +102,37 @@ final class ChatWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         let url = navigationAction.request.url
+        // Host and path only: query strings can carry sign-in tokens.
+        let place = "\(url?.scheme == "https" ? "" : (url?.scheme ?? "-") + ":")\(url?.host() ?? "")\(url?.path() ?? "")"
         if navigationAction.targetFrame?.isMainFrame == true {
-            // Host and path only: query strings can carry sign-in tokens.
-            logger.notice("Navigate \(url?.host() ?? "-", privacy: .public)\(url?.path() ?? "", privacy: .public)")
+            logger.notice("Navigate \(place, privacy: .public)")
+        } else {
+            // In-page frames (embedded viewers, previews) are where site features break most quietly.
+            logger.notice("Frame \(place, privacy: .public) (\(String(describing: navigationAction.navigationType.rawValue), privacy: .public))")
         }
         if url?.scheme == "about" || url?.scheme == "blob" || url?.scheme == "data" { return .allow }
         // Only user-clicked links leave the app; redirects during sign-in must stay.
         if navigationAction.navigationType == .linkActivated, !Self.staysInApp(url), let url {
             NSWorkspace.shared.open(url)
             return .cancel
+        }
+        return .allow
+    }
+
+    /// What came back for each load: logged when it isn't an ordinary page, or when WebKit can't show it (a
+    /// PDF in a frame, say), since those fail silently inside the page.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        let response = navigationResponse.response
+        let mime = response.mimeType ?? "-"
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let disposition = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")
+        if mime != "text/html" || !navigationResponse.canShowMIMEType || status >= 400 || !navigationResponse.isForMainFrame {
+            let place = "\(response.url?.host() ?? "")\(response.url?.path() ?? "")"
+            var line = "Response \(place): \(status) \(mime)"
+            if !navigationResponse.isForMainFrame { line += " in frame" }
+            if !navigationResponse.canShowMIMEType { line += " (WebKit can't show this)" }
+            if let disposition { line += " disposition: \(disposition.prefix(60))" }
+            logger.notice("\(line, privacy: .public)")
         }
         return .allow
     }

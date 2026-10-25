@@ -179,7 +179,10 @@ public final class ChatApp: NotchApp {
         ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] busy, title in
             self?.replyStateChanged(service, busy: busy, pageTitle: title)
         })
+        PageDiagnostics.install(in: config.userContentController, handler: DiagnosticsMessageProxy(logger: coordinator.logger))
         let view = NotchWebView(frame: .zero, configuration: config)
+        // Safari → Develop → (this Mac) → NotchMan can inspect the chat page, for debugging site problems.
+        view.isInspectable = true
         view.customUserAgent = Self.userAgent
         view.navigationDelegate = coordinator
         view.uiDelegate = coordinator
