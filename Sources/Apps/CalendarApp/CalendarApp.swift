@@ -87,19 +87,18 @@ public final class CalendarApp: NotchApp {
 
         let start = Calendar.current.startOfDay(for: Date())
         let end = Calendar.current.date(byAdding: .day, value: horizonDays, to: start)!
-        var collected: [CalendarItem] = []
-        var errors: [String] = []
-
-        do { collected += try await google.items(from: start, to: end) } catch {
-            errors.append(error.localizedDescription)
+        do {
+            let collected = try await google.items(from: start, to: end)
+            items = collected.sorted { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+            conflicts = Conflicts.find(items)
+            notifyTomorrowConflicts()
+            errors = []
+            lastRefresh = Date()
+        } catch {
+            // Offline or a Google hiccup: keep showing the last good list (and retry on the next open).
+            errors = [error.localizedDescription]
             context?.logger.error("Google refresh failed: \(error.localizedDescription, privacy: .public)")
         }
-
-        items = collected.sorted { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
-        conflicts = Conflicts.find(items)
-        notifyTomorrowConflicts()
-        self.errors = errors
-        lastRefresh = Date()
         tick()
     }
 
