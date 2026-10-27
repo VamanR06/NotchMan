@@ -31,16 +31,21 @@ public final class ShelfApp: NotchApp {
     /// Bumped when the open folder's contents change, so the browser re-lists it.
     private(set) var folderRevision = 0
 
+    /// The folder open in the drop browser. Browsing starts somewhere (a project, a place, a recent folder) and
+    /// can go anywhere from there.
     struct Browsing: Equatable {
-        let project: BoardProject
         var folder: URL
-        var root: URL { URL(fileURLWithPath: project.cwd) }
+        /// The Claude Code project the folder is in, if any (for labels and `@path` references).
+        var project: BoardProject?
+        var root: URL? { project.map { URL(fileURLWithPath: $0.cwd) } }
     }
 
     struct ProjectDropResult: Equatable {
-        let project: BoardProject
+        /// Set when the folder is inside a Claude Code project: then `references` holds the `@path`s.
+        let project: BoardProject?
+        let folder: URL
         let files: [URL]
-        let references: String
+        let references: String?
         var inserted = false
     }
 
@@ -119,28 +124,89 @@ public final class ShelfApp: NotchApp {
         return url
     }
 
-    // MARK: - Projects
+    // MARK: - Folders
 
     func browse(_ project: BoardProject) {
-        browsing = Browsing(project: project, folder: URL(fileURLWithPath: project.cwd))
+        browse(URL(fileURLWithPath: project.cwd))
+    }
+
+    /// Opens the drop browser at `folder`.
+    func browse(_ folder: URL) {
+        browsing = Browsing(folder: folder, project: project(containing: folder))
     }
 
     func open(folder: URL) {
-        browsing?.folder = folder
+        browsing = Browsing(folder: folder, project: project(containing: folder))
     }
 
+    /// The parent folder (stopping at the top of the disk).
     func up() {
-        guard let browsing else { return }
-        if browsing.folder.standardizedFileURL.path == browsing.root.standardizedFileURL.path {
-            self.browsing = nil
-        } else {
-            self.browsing?.folder = browsing.folder.deletingLastPathComponent()
-        }
+        guard let folder = browsing?.folder, folder.path != "/" else { return }
+        open(folder: folder.deletingLastPathComponent())
     }
 
-    /// Copies `urls` into `folder` of `project` (⌥ held: moves), asking before replacing anything; then copies
-    /// the `@path` references for the session.
-    func drop(_ urls: [URL], into folder: URL, of project: BoardProject) {
+    func closeBrowser() {
+        browsing = nil
+    }
+
+    /// Picks any folder on the Mac to start browsing from.
+    func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.directoryURL = browsing?.folder ?? recentFolders.first ?? FileManager.default.homeDirectoryForCurrentUser
+        context?.holdOpen(true)
+        NSApp.activate()
+        if panel.runModal() == .OK, let url = panel.url { browse(url) }
+        context?.holdOpen(false)
+    }
+
+    /// The running Claude Code project `url` is in (the deepest, when projects nest).
+    func project(containing url: URL) -> BoardProject? {
+        let path = url.standardizedFileURL.path
+        return projects
+            .filter { path == $0.cwd || path.hasPrefix($0.cwd.hasSuffix("/") ? $0.cwd : $0.cwd + "/") }
+            .max { $0.cwd.count < $1.cwd.count }
+    }
+
+    /// Folders to start from besides projects and recents.
+    static var places: [(name: String, symbol: String, url: URL)] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        return [
+            ("Home", "house", home),
+            ("Desktop", "menubar.dock.rectangle", fm.urls(for: .desktopDirectory, in: .userDomainMask)[0]),
+            ("Documents", "doc", fm.urls(for: .documentDirectory, in: .userDomainMask)[0]),
+            ("Downloads", "arrow.down.circle", fm.urls(for: .downloadsDirectory, in: .userDomainMask)[0]),
+        ].filter { fm.fileExists(atPath: $0.2.path) }
+    }
+
+    // MARK: Recents
+
+    /// Folders files were last dropped into, newest first (only ones that still exist).
+    var recentFolders: [URL] {
+        _ = recentRevision
+        return RecentFolders.load(context?.defaults).filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private var recentRevision = 0
+
+    private func remember(_ folder: URL) {
+        RecentFolders.add(folder, to: context?.defaults)
+        recentRevision += 1
+    }
+
+    func forgetRecent(_ folder: URL) {
+        RecentFolders.remove(folder, from: context?.defaults)
+        recentRevision += 1
+    }
+
+    /// Copies `urls` into `folder` (⌥ held: the other of Copy/Move), asking before replacing anything. Inside a
+    /// Claude Code project the `@path` references are copied for the session.
+    func drop(_ urls: [URL], into folder: URL) {
+        let project = project(containing: folder)
         let move = moveFiles != NSEvent.modifierFlags.contains(.option)
         let fm = FileManager.default
         var placed: [URL] = []
@@ -153,7 +219,8 @@ public final class ShelfApp: NotchApp {
                 continue
             }
             if exists {
-                switch askAboutConflict(name: target.lastPathComponent, folder: ProjectDrop.label(for: folder, in: URL(fileURLWithPath: project.cwd))) {
+                let place = project.map { ProjectDrop.label(for: folder, in: URL(fileURLWithPath: $0.cwd)) } ?? folder.lastPathComponent
+                switch askAboutConflict(name: target.lastPathComponent, folder: place) {
                 case .replace:
                     try? fm.trashItem(at: target, resultingItemURL: nil)
                 case .keepBoth:
@@ -173,11 +240,18 @@ public final class ShelfApp: NotchApp {
         }
         folderRevision += 1
         guard !placed.isEmpty else { return }
+        remember(folder)
+        guard let project else {
+            lastDrop = ProjectDropResult(project: nil, folder: folder, files: placed, references: nil)
+            context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",
+                                                  text: move ? "Moved" : "Copied", tint: .green, duration: 2))
+            return
+        }
         let root = URL(fileURLWithPath: project.cwd)
         let references = placed.map { ProjectDrop.reference(for: $0, in: root) }.joined(separator: " ")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(references, forType: .string)
-        lastDrop = ProjectDropResult(project: project, files: placed, references: references)
+        lastDrop = ProjectDropResult(project: project, folder: folder, files: placed, references: references)
         context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",
                                               text: "@ copied", tint: .green, duration: 2))
     }
@@ -206,8 +280,8 @@ public final class ShelfApp: NotchApp {
 
     /// Types the last drop's references into the project's notch terminal (without Return).
     func insertLastDrop() {
-        guard let drop = lastDrop else { return }
-        if NotchBoard.shared.insertIntoSession?(drop.project, drop.references + " ") == true {
+        guard let drop = lastDrop, let project = drop.project, let references = drop.references else { return }
+        if NotchBoard.shared.insertIntoSession?(project, references + " ") == true {
             lastDrop?.inserted = true
         }
     }

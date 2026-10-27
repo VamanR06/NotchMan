@@ -232,16 +232,29 @@ Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens
 
 - **Keep on the shelf:** drop them in the big area to hold them for later. You can drag them back out anywhere,
   double-click to open, or right-click to AirDrop, reveal or remove. The chip shows how many are waiting.
-- **Drop into a Claude Code project:** the right side lists the folders of your running Claude Code sessions.
-  - Drop on a project to put files in its root, or hold the drag over it to open its folders. Hold over a
-    folder to go deeper, or over ‹ to go back up, then drop on **Drop here** or on a folder.
+- **Drop into any folder:** the right side lists where files can go:
+  - **Recent:** the last 8 folders you dropped into
+  - **Claude Code projects:** your running sessions' folders
+  - **Places:** Home, Desktop, Documents and Downloads, plus **Choose Folder…** to start anywhere
+
+  Drop on one to put files straight in, click it to browse it, or hold the drag over it to open it.
+
+  While browsing:
+  - Go **up** past where you started, or click the path to jump to any enclosing folder.
+  - **Filter** the folder by name.
+  - Files show greyed out so you can see where you are. You can drag them out or double-click to open them.
+  - Hold a drag over a folder to go deeper, then drop on **Drop here** or onto a folder.
+  - Inside a project, build and dependency folders are hidden.
   - The **Copy / Move** switch sets what a drop does (hold ⌥ while dropping for the other one). If a name
     already exists you choose Keep Both (`name 2.ext`), Replace (the old file goes to the Trash) or Skip.
   - The folder button makes a **new folder** where you are and opens it. With Move selected, you can drag one
-    folder in the browser onto another to reorganize.
-  - Afterwards the `@path/to/file` reference is on the clipboard, ready to paste into the session. If that
-    agent's terminal is open in the notch, **Insert in Session** types it there for you.
-  - Shelved files can be sent too: right-click → **Copy to Project**.
+    folder onto another to reorganize.
+
+  After a drop:
+  - **Inside a Claude Code project,** the `@path/to/file` reference is on the clipboard, ready to paste into
+    the session. If that agent's terminal is open in the notch, **Insert in Session** types it there for you.
+  - **Elsewhere,** the bar says where the files went, with **Reveal**.
+  - Shelved files can be sent too: right-click → **Copy To**, which lists recent folders and projects.
 - **Downloads:** recent files in ~/Downloads, with progress while Safari, Chrome or Firefox downloads, and a
   ✓ in the notch when one finishes.
 - **Long commands:** install `notchman-run` in Settings → Shelf, then run `notchman-run make release`. It

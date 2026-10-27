@@ -9,13 +9,49 @@ enum ProjectDrop {
 
     /// Subfolders to offer, alphabetical.
     static func subfolders(of folder: URL, fileManager: FileManager = .default) -> [URL] {
+        entries(of: folder, hidingBuildFolders: true, fileManager: fileManager).folders
+    }
+
+    /// A folder's contents for the browser: folders (to open and drop into) and files (to see where you are),
+    /// alphabetical, hidden items left out. Inside projects, build and dependency folders are left out too.
+    static func entries(of folder: URL, hidingBuildFolders: Bool, matching filter: String = "",
+                        fileManager: FileManager = .default) -> (folders: [URL], files: [URL]) {
         let contents = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
                                                              options: [.skipsHiddenFiles])) ?? []
-        return contents.filter { url in
+        let needle = filter.trimmingCharacters(in: .whitespaces)
+        var folders: [URL] = [], files: [URL] = []
+        for url in contents {
+            if !needle.isEmpty && !url.lastPathComponent.localizedCaseInsensitiveContains(needle) { continue }
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-            return values?.isDirectory == true && values?.isPackage != true && !skipped.contains(url.lastPathComponent)
+            if values?.isDirectory == true && values?.isPackage != true {
+                if !(hidingBuildFolders && skipped.contains(url.lastPathComponent)) { folders.append(url) }
+            } else {
+                files.append(url)
+            }
         }
-        .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let byName: (URL, URL) -> Bool = { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        return (folders.sorted(by: byName), files.sorted(by: byName))
+    }
+
+    /// `folder` and the folders above it, nearest first (for jumping up from the path).
+    static func ancestors(of folder: URL) -> [URL] {
+        var out: [URL] = []
+        var current = folder.standardizedFileURL
+        while true {
+            out.append(current)
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path || current.path == "/" { break }
+            current = parent
+        }
+        return out
+    }
+
+    /// How a folder reads in the browser's path: relative to the project, else with the home folder as "~".
+    static func displayPath(_ folder: URL, project: BoardProjectRef?) -> String {
+        if let project, folder.path.hasPrefix(project.cwd) { return label(for: folder, in: URL(fileURLWithPath: project.cwd)) }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let path = folder.standardizedFileURL.path
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
     /// Where `source` would land in `folder`, and whether something is already there.
@@ -68,5 +104,33 @@ enum ProjectDrop {
         let path = folder.standardizedFileURL.path
         guard path.count > root.count, path.hasPrefix(root) else { return project.lastPathComponent }
         return project.lastPathComponent + String(path.dropFirst(root.count))
+    }
+}
+
+/// Just what `displayPath` needs from a project (keeps ProjectDrop free of NotchKit).
+struct BoardProjectRef {
+    let cwd: String
+}
+
+/// The folders files were last dropped into, newest first, kept in the app's preferences.
+enum RecentFolders {
+    static let key = "recentFolders"
+    static let limit = 8
+
+    static func load(_ defaults: UserDefaults?) -> [URL] {
+        (defaults?.stringArray(forKey: key) ?? []).map { URL(fileURLWithPath: $0) }
+    }
+
+    static func add(_ folder: URL, to defaults: UserDefaults?) {
+        let path = folder.standardizedFileURL.path
+        var paths = defaults?.stringArray(forKey: key) ?? []
+        paths.removeAll { $0 == path }
+        paths.insert(path, at: 0)
+        defaults?.set(Array(paths.prefix(limit)), forKey: key)
+    }
+
+    static func remove(_ folder: URL, from defaults: UserDefaults?) {
+        let path = folder.standardizedFileURL.path
+        defaults?.set((defaults?.stringArray(forKey: key) ?? []).filter { $0 != path }, forKey: key)
     }
 }
