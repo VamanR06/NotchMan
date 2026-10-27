@@ -57,11 +57,8 @@ struct ShelfView: View {
 
 // MARK: - Drop targets
 
-let shelfLog = Logger(subsystem: "com.notchman", category: "shelf")
-
 /// Takes dropped files; with `spring`, hovering a drag over it for a moment runs `spring` (opens the folder).
-/// Uses AppKit-style file URL item providers (`onDrop(of: [.fileURL])`), which take drags from Finder and other
-/// apps reliably; SwiftUI's `dropDestination(for: URL.self)` often received nothing from them.
+/// Takes file links and file contents alike (`DroppedItems`), so drags from any app work, not just Finder.
 private struct FileDropTarget: ViewModifier {
     let label: String
     let onDrop: ([URL]) -> Void
@@ -74,14 +71,13 @@ private struct FileDropTarget: ViewModifier {
         content
             .background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.accentColor.opacity(targeted ? 0.35 : 0)))
             .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(Color.accentColor.opacity(targeted ? 0.9 : 0), lineWidth: 1.5))
-            .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
+            .onDrop(of: DroppedItems.acceptedTypes, isTargeted: $targeted) { providers in
                 springTask?.cancel()
-                let wanted = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
-                shelfLog.notice("Drop on \(label, privacy: .public): \(wanted.count) of \(providers.count) items are files")
-                guard !wanted.isEmpty else { return false }
+                shelfLog.notice("Drop on \(label, privacy: .public): \(providers.count) items")
+                guard !providers.isEmpty else { return false }
                 Task { @MainActor in
-                    let urls = await Self.fileURLs(from: wanted)
-                    shelfLog.notice("Drop on \(label, privacy: .public): read \(urls.count) file URLs")
+                    let urls = await DroppedItems.fileURLs(from: providers)
+                    shelfLog.notice("Drop on \(label, privacy: .public): \(urls.count) files")
                     if !urls.isEmpty { onDrop(urls) }
                 }
                 return true
@@ -94,21 +90,6 @@ private struct FileDropTarget: ViewModifier {
                     if !Task.isCancelled { spring() }
                 }
             }
-    }
-
-    /// The file URLs the providers carry (in drop order).
-    static func fileURLs(from providers: [NSItemProvider]) async -> [URL] {
-        var urls: [URL] = []
-        for provider in providers {
-            let url: URL? = await withCheckedContinuation { continuation in
-                _ = provider.loadObject(ofClass: NSURL.self) { object, error in
-                    if let error { shelfLog.error("Couldn't read a dropped item: \(error.localizedDescription, privacy: .public)") }
-                    continuation.resume(returning: (object as? NSURL) as URL?)
-                }
-            }
-            if let url, url.isFileURL { urls.append(url) }
-        }
-        return urls
     }
 }
 
@@ -396,20 +377,11 @@ private struct FolderBrowser: View {
                 .onAppear { nameFocused = true }
                 .onChange(of: nameFocused) { _, typing in app.setTyping(typing) }
             }
-            HStack(spacing: 6) {
-                Text("Drop here")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4])))
-                    .fileDropTarget("Drop here") { app.drop($0, into: browsing.folder) }
-                TextField("Filter", text: $filter)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .frame(width: 80)
-                    .focused($filterFocused)
-                    .onChange(of: filterFocused) { _, typing in app.setTyping(typing) }
-            }
+            TextField("Filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .focused($filterFocused)
+                .onChange(of: filterFocused) { _, typing in app.setTyping(typing) }
             ScrollView(.vertical, showsIndicators: false) {
                 let _ = app.folderRevision
                 let entries = ProjectDrop.entries(of: browsing.folder, hidingBuildFolders: browsing.project != nil, matching: filter)

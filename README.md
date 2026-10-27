@@ -243,7 +243,7 @@ Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens
   - Go **up** past where you started, or click the path to jump to any enclosing folder.
   - **Filter** the folder by name.
   - Files show greyed out so you can see where you are. You can drag them out or double-click to open them.
-  - Hold a drag over a folder to go deeper, then drop on **Drop here** or onto a folder.
+  - Drop anywhere in the browser to put files in the folder you have open, or onto a folder row to put them there. Hold a drag over a folder to go deeper.
   - Inside a project, build and dependency folders are hidden.
   - The **Copy / Move** switch sets what a drop does (hold ⌥ while dropping for the other one). If a name
     already exists you choose Keep Both (`name 2.ext`), Replace (the old file goes to the Trash) or Skip.

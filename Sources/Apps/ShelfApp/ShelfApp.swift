@@ -207,10 +207,12 @@ public final class ShelfApp: NotchApp {
     /// Claude Code project the `@path` references are copied for the session.
     func drop(_ urls: [URL], into folder: URL) {
         let project = project(containing: folder)
-        let move = moveFiles != NSEvent.modifierFlags.contains(.option)
+        let chosenMove = moveFiles != NSEvent.modifierFlags.contains(.option)
         let fm = FileManager.default
         var placed: [URL] = []
         for source in urls {
+            // Dragged-in contents (not a file on disk) were saved to the holding folder: always move those.
+            let move = chosenMove || source.path.hasPrefix(DroppedItems.holdingFolder.path)
             var (target, exists) = ProjectDrop.target(for: source, in: folder)
             if source.standardizedFileURL == target.standardizedFileURL { placed.append(target); continue }
             if ProjectDrop.isInside(folder, source) {
@@ -245,7 +247,7 @@ public final class ShelfApp: NotchApp {
         guard let project else {
             lastDrop = ProjectDropResult(project: nil, folder: folder, files: placed, references: nil)
             context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",
-                                                  text: move ? "Moved" : "Copied", tint: .green, duration: 2))
+                                                  text: chosenMove ? "Moved" : "Added", tint: .green, duration: 2))
             return
         }
         let root = URL(fileURLWithPath: project.cwd)
