@@ -243,15 +243,44 @@ final class GoogleCalendarSource {
     /// Moves an event. Timed events get explicit local start/end times; all-day events use dates (end exclusive).
     /// Guests, if any, are emailed about the change, as Google Calendar does.
     func move(calendarID: String, eventID: String, start: Date, end: Date, allDay: Bool) async throws {
+        try await patch(calendarID: calendarID, eventID: eventID, body: Self.moveBody(start: start, end: end, allDay: allDay),
+                        notifyGuests: true)
+    }
+
+    /// An edited event. For all-day events `end` is exclusive, as Google stores it (the day after the last day).
+    struct EventEdit: Equatable {
+        var title: String
+        var start: Date
+        var end: Date
+        var allDay: Bool
+        var location: String
+        var notes: String
+    }
+
+    /// Saves an edited event. Guests are emailed only when its time changes; a new title, place or notes
+    /// isn't worth an email to everyone.
+    func update(calendarID: String, eventID: String, edit: EventEdit, timeChanged: Bool) async throws {
+        try await patch(calendarID: calendarID, eventID: eventID, body: Self.editBody(edit), notifyGuests: timeChanged)
+    }
+
+    static func editBody(_ edit: EventEdit) -> [String: Any] {
+        var body = moveBody(start: edit.start, end: edit.end, allDay: edit.allDay)
+        body["summary"] = edit.title
+        body["location"] = edit.location
+        body["description"] = edit.notes
+        return body
+    }
+
+    private func patch(calendarID: String, eventID: String, body: [String: Any], notifyGuests: Bool) async throws {
         guard canEditEvents else { throw MoveError.needsPermission }
         let path = "/calendars/\(Self.pathComponent(calendarID))/events/\(Self.pathComponent(eventID))"
         var components = URLComponents(string: "https://www.googleapis.com/calendar/v3" + path)!
-        components.queryItems = [.init(name: "sendUpdates", value: "all")]
+        components.queryItems = [.init(name: "sendUpdates", value: notifyGuests ? "all" : "none")]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: Self.moveBody(start: start, end: end, allDay: allDay))
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
@@ -311,6 +340,7 @@ final class GoogleCalendarSource {
             let htmlLink: String?
             let hangoutLink: String?
             let location: String?
+            let description: String?
             let conferenceData: ConferenceData?
             let attendees: [Attendee]?
 
@@ -370,6 +400,7 @@ final class GoogleCalendarSource {
                     meetingURL: MeetingLinks.link(conferenceVideo: event.conferenceData?.videoLink,
                                                   hangoutLink: event.hangoutLink, location: event.location),
                     location: event.location,
+                    notes: event.description,
                     declined: event.declinedBySelf
                 ))
             }

@@ -4,10 +4,10 @@ import SwiftUI
 /// A single event on the timeline.
 struct CalendarItem: Identifiable, Hashable {
     let id: String
-    let title: String
+    var title: String
     var start: Date
     var end: Date?
-    let isAllDay: Bool
+    var isAllDay: Bool
     let color: Color
     let calendarName: String
     /// Google ids, for changing the event.
@@ -18,7 +18,9 @@ struct CalendarItem: Identifiable, Hashable {
     /// Event page on Google Calendar web.
     let url: URL?
     let meetingURL: URL?
-    let location: String?
+    var location: String?
+    /// The event's description.
+    var notes: String? = nil
     /// You declined this invitation.
     var declined = false
 

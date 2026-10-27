@@ -7,7 +7,7 @@ public final class CalendarApp: NotchApp {
     public let id = "calendar"
     public let name = "Calendar"
     public let iconSystemName = "calendar"
-    public var expandedHeight: CGFloat { 190 }
+    public var expandedHeight: CGFloat { editingEventID == nil ? 190 : 270 }
 
     private(set) var items: [CalendarItem] = []
     private(set) var errors: [String] = []
@@ -254,6 +254,11 @@ public final class CalendarApp: NotchApp {
             context?.send(NotchMessage(name: NotchMessage.focusQuickAddName), to: "today")
             return true
         }
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty, event.charactersIgnoringModifiers == "e",
+           let item = selectedItem, canEdit(item) {
+            editingEventID = item.id
+            return true
+        }
         let shown = displayedItems
         return selection.handle(event, count: shown.count, open: { self.open(shown[$0]) }, secondary: { index in
             if let meeting = shown[index].meetingURL { NSWorkspace.shared.open(meeting) }
@@ -286,6 +291,45 @@ public final class CalendarApp: NotchApp {
 
     /// Moves an event to `newStart`, keeping its length. The timeline updates right away and reverts if Google
     /// refuses.
+    // MARK: - Editing
+
+    /// The event whose editor is open (pencil, Edit…, or E on the selected event).
+    var editingEventID: String?
+
+    /// Events on calendars you can change, once Google allows changing events.
+    func canEdit(_ item: CalendarItem) -> Bool {
+        item.canEdit && item.eventID != nil && canChangeEvents
+    }
+
+    /// Saves an edited event: shown at once, written to Google, put back if that fails.
+    func edit(_ item: CalendarItem, _ edit: GoogleCalendarSource.EventEdit) {
+        guard let calendarID = item.calendarID, let eventID = item.eventID,
+              let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let before = items[index]
+        let timeChanged = edit.start != item.start || edit.end != item.end || edit.allDay != item.isAllDay
+        withAnimation(.easeOut(duration: 0.2)) {
+            items[index].title = edit.title
+            items[index].start = edit.start
+            items[index].end = edit.end
+            items[index].isAllDay = edit.allDay
+            items[index].location = edit.location.isEmpty ? nil : edit.location
+            items[index].notes = edit.notes.isEmpty ? nil : edit.notes
+            items.sort { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+        }
+        editingEventID = nil
+        Task {
+            do {
+                try await google.update(calendarID: calendarID, eventID: eventID, edit: edit, timeChanged: timeChanged)
+                errors = []
+                await refresh()
+            } catch {
+                if let i = items.firstIndex(where: { $0.id == item.id }) { items[i] = before }
+                items.sort { ($0.start, $0.isAllDay ? 0 : 1) < ($1.start, $1.isAllDay ? 0 : 1) }
+                errors = [error.localizedDescription]
+            }
+        }
+    }
+
     func reschedule(_ item: CalendarItem, to newStart: Date) {
         guard let calendarID = item.calendarID, let eventID = item.eventID,
               let index = items.firstIndex(where: { $0.id == item.id }) else { return }

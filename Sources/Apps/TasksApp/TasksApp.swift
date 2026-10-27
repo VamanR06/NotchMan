@@ -8,7 +8,7 @@ public final class TasksApp: NotchApp {
     public let id = "tasks"
     public let name = "Tasks"
     public let iconSystemName = "checklist"
-    public var expandedHeight: CGFloat { 190 }
+    public var expandedHeight: CGFloat { editingTaskID == nil ? 190 : 240 }
 
     private(set) var databases: [TaskDatabase] = []
     private(set) var tasks: [NotionTask] = [] {
@@ -213,6 +213,45 @@ public final class TasksApp: NotchApp {
     /// Moves (or clears, with nil) a task's due date in Notion; updates the list right away, reverts on failure.
     func reschedule(_ task: NotionTask, to date: Date?, allDay: Bool) {
         apply([DueChange(task: task, due: date, allDay: allDay)])
+    }
+
+    // MARK: - Editing
+
+    /// The task whose editor is open (pencil, Edit…, or E on the selected task).
+    var editingTaskID: String?
+
+    func canEdit(_ task: NotionTask) -> Bool {
+        databases.contains { $0.id == task.databaseID }
+    }
+
+    /// Saves a task's title and due date: shown at once, written to Notion, put back if that fails.
+    func edit(_ task: NotionTask, title: String, due: Date?, allDay: Bool) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let db = databases.first(where: { $0.id == task.databaseID }),
+              let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let property = dueProperty(for: db)
+        let before = tasks[index]
+        withAnimation(.easeOut(duration: 0.2)) {
+            tasks[index].title = title
+            if property != nil {
+                tasks[index].due = due
+                tasks[index].dueIsAllDay = allDay
+            }
+            tasks.sort(by: Self.order)
+        }
+        editingTaskID = nil
+        Task {
+            do {
+                try await client.update(task, in: db, title: title, dueProperty: property, due: due, allDay: allDay)
+                error = nil
+            } catch {
+                if let i = tasks.firstIndex(where: { $0.id == task.id }) {
+                    tasks[i] = before
+                    tasks.sort(by: Self.order)
+                }
+                self.error = "Couldn't save “\(title)”: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// A new due date for one task.
@@ -457,6 +496,11 @@ public final class TasksApp: NotchApp {
         }
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "a" {
             selectAll()
+            return true
+        }
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty, event.charactersIgnoringModifiers == "e",
+           let task = selectedTask, canEdit(task) {
+            editingTaskID = task.id
             return true
         }
         if event.modifierFlags.contains(.shift), event.keyCode == 125 || event.keyCode == 126 {

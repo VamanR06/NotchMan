@@ -136,7 +136,9 @@ private struct TaskRow: View {
     var body: some View {
         VStack(spacing: 4) {
             row
-            if editingDue {
+            if app.editingTaskID == task.id {
+                TaskEditor(app: app, task: task)
+            } else if editingDue {
                 DueEditor(app: app, task: task) { editingDue = false }
             }
         }
@@ -174,7 +176,15 @@ private struct TaskRow: View {
                 }
             }
             Spacer(minLength: 4)
-            if hovering {
+            if hovering && !isSelected {
+                if app.canEdit(task) {
+                    Button { app.editingTaskID = task.id } label: {
+                        Image(systemName: "pencil").font(.system(size: 11)).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .help("Edit (E)")
+                }
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.5))
@@ -216,22 +226,27 @@ private struct TaskRow: View {
                 }
                 Button("Clear Selection") { app.clearSelection() }
                 Divider()
-            } else if app.canReschedule(task) {
-                Menu("Reschedule") {
-                    ForEach(TaskDueOption.allCases) { option in
-                        Button(option.title) {
-                            // Tasks with a time keep it; date-only tasks stay date-only.
-                            app.reschedule(task, to: option.target(for: task, now: Date()),
-                                           allDay: task.due == nil || task.dueIsAllDay)
+            } else {
+                if app.canEdit(task) {
+                    Button("Edit…") { app.editingTaskID = task.id }
+                }
+                if app.canReschedule(task) {
+                    Menu("Reschedule") {
+                        ForEach(TaskDueOption.allCases) { option in
+                            Button(option.title) {
+                                // Tasks with a time keep it; date-only tasks stay date-only.
+                                app.reschedule(task, to: option.target(for: task, now: Date()),
+                                               allDay: task.due == nil || task.dueIsAllDay)
+                            }
+                        }
+                        Divider()
+                        Button("Pick Date…") { editingDue = true }
+                        if task.due != nil {
+                            Button("Remove Due Date") { app.reschedule(task, to: nil, allDay: true) }
                         }
                     }
-                    Divider()
-                    Button("Pick Date…") { editingDue = true }
-                    if task.due != nil {
-                        Button("Remove Due Date") { app.reschedule(task, to: nil, allDay: true) }
-                    }
                 }
-                Divider()
+                if app.canEdit(task) || app.canReschedule(task) { Divider() }
             }
             AskMenuItems { askText }
         }
@@ -365,6 +380,81 @@ private struct BatchDueEditor: View {
             .buttonStyle(.plain)
         }
         .onAppear { app.setEditing(true) }
+    }
+}
+
+/// Edit a task in place: its title and due date (with or without a time, or none).
+private struct TaskEditor: View {
+    let app: TasksApp
+    let task: NotionTask
+    @State private var title: String
+    @State private var hasDue: Bool
+    @State private var date: Date
+    @State private var includeTime: Bool
+    @FocusState private var titleFocused: Bool
+
+    init(app: TasksApp, task: NotionTask) {
+        self.app = app
+        self.task = task
+        _title = State(initialValue: task.title)
+        _hasDue = State(initialValue: task.due != nil)
+        let fallback = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+        _date = State(initialValue: task.due ?? fallback)
+        _includeTime = State(initialValue: task.due != nil && !task.dueIsAllDay)
+    }
+
+    private var canSave: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Title", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .focused($titleFocused)
+                .onSubmit(save)
+            HStack(spacing: 8) {
+                if app.canReschedule(task) {
+                    Toggle("Due", isOn: $hasDue).toggleStyle(.checkbox)
+                    if hasDue {
+                        DatePicker("Due", selection: $date, displayedComponents: includeTime ? [.date, .hourAndMinute] : [.date])
+                            .datePickerStyle(.field)
+                            .labelsHidden()
+                            .fixedSize()
+                        Toggle("Time", isOn: $includeTime).toggleStyle(.checkbox)
+                    }
+                } else {
+                    Text("No due date property in \(task.databaseTitle)").foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer()
+                Button("Cancel") { app.editingTaskID = nil }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                Button(action: save) {
+                    Text("Save")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 3)
+                        .background(Capsule().fill(.white))
+                        .foregroundStyle(.black)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSave)
+            }
+            .font(.system(size: 11))
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
+        .onAppear {
+            app.setEditing(true)
+            titleFocused = true
+        }
+        .onDisappear { app.setEditing(false) }
+        .onExitCommand { app.editingTaskID = nil }
+    }
+
+    private func save() {
+        guard canSave else { return }
+        let due = hasDue ? (includeTime ? date : Calendar.current.startOfDay(for: date)) : nil
+        app.edit(task, title: title, due: due, allDay: !(hasDue && includeTime))
     }
 }
 

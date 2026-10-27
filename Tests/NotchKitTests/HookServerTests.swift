@@ -18,12 +18,16 @@ import Testing
         let port = UInt16.random(in: 50_000...59_999)
         let server = HookServer(port: port)
         server.route("/test-echo") { request in HookServer.Response(body: request.body) }
-        try await Task.sleep(for: .milliseconds(300))
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/test-echo")!)
         request.httpMethod = "POST"
         request.httpBody = Data("ping".utf8)
 
-        let (_, denied) = try await URLSession.shared.data(for: request)
+        // The listener starts in the background; on a busy test machine give it up to 2s.
+        var denied: URLResponse?
+        for _ in 0..<20 where denied == nil {
+            denied = try? await URLSession.shared.data(for: request).1
+            if denied == nil { try await Task.sleep(for: .milliseconds(100)) }
+        }
         #expect((denied as? HTTPURLResponse)?.statusCode == 401)
 
         request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")

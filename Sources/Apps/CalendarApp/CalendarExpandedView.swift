@@ -319,7 +319,9 @@ private struct EventRow: View {
     var body: some View {
         VStack(spacing: 4) {
             row
-            if editing {
+            if app.editingEventID == item.id {
+                EventEditor(app: app, item: item)
+            } else if editing {
                 EventTimeEditor(app: app, item: item) { editing = false }
             }
         }
@@ -380,6 +382,7 @@ private struct EventRow: View {
         .contextMenu {
             if item.canEdit && item.eventID != nil {
                 if app.canChangeEvents {
+                    Button("Edit…") { app.editingEventID = item.id }
                     Menu("Reschedule") {
                         ForEach(EventMoveOption.options(for: item)) { option in
                             Button(option.title) { app.reschedule(item, to: option.newStart(for: item)) }
@@ -418,6 +421,125 @@ private struct EventRow: View {
     }
 
     private func open() { app.open(item) }
+}
+
+/// Edit an event in place: title, start and end (or all-day), location and notes. Guests are emailed only
+/// when the time changes.
+private struct EventEditor: View {
+    let app: CalendarApp
+    let item: CalendarItem
+    @State private var title: String
+    @State private var allDay: Bool
+    @State private var start: Date
+    /// For all-day events, the last day (Google stores the day after).
+    @State private var end: Date
+    @State private var location: String
+    @State private var notes: String
+    @FocusState private var titleFocused: Bool
+
+    init(app: CalendarApp, item: CalendarItem) {
+        self.app = app
+        self.item = item
+        _title = State(initialValue: item.title)
+        _allDay = State(initialValue: item.isAllDay)
+        _start = State(initialValue: item.start)
+        let end = item.end ?? item.start.addingTimeInterval(item.isAllDay ? 86_400 : 3_600)
+        _end = State(initialValue: item.isAllDay ? Calendar.current.date(byAdding: .day, value: -1, to: end) ?? end : end)
+        _location = State(initialValue: item.location ?? "")
+        _notes = State(initialValue: item.notes ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Title", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .focused($titleFocused)
+                .onSubmit(save)
+            HStack(spacing: 6) {
+                DatePicker("Start", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                    .datePickerStyle(.field).labelsHidden().fixedSize()
+                Text("→").foregroundStyle(.white.opacity(0.5))
+                DatePicker("End", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                    .datePickerStyle(.field).labelsHidden().fixedSize()
+                Toggle("All day", isOn: $allDay).toggleStyle(.checkbox)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 6) {
+                TextField("Location", text: $location).textFieldStyle(.roundedBorder)
+                TextField("Notes", text: $notes, axis: .vertical).lineLimit(1...3).textFieldStyle(.roundedBorder)
+            }
+            HStack(spacing: 8) {
+                if let problem {
+                    Text(problem).foregroundStyle(.orange)
+                } else if timeChanged {
+                    Text("Guests, if any, are emailed about the new time.").foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer()
+                Button("Cancel") { app.editingEventID = nil }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                Button(action: save) {
+                    Text("Save")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 3)
+                        .background(Capsule().fill(.white))
+                        .foregroundStyle(.black)
+                }
+                .buttonStyle(.plain)
+                .disabled(problem != nil)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
+        .onChange(of: allDay) { _, isAllDay in
+            let calendar = Calendar.current
+            if isAllDay {
+                start = calendar.startOfDay(for: start)
+                end = calendar.startOfDay(for: max(end, start))
+            } else {
+                start = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: start) ?? start
+                end = start.addingTimeInterval(3_600)
+            }
+        }
+        .onAppear {
+            app.setEditing(true)
+            titleFocused = true
+        }
+        .onDisappear { app.setEditing(false) }
+        .onExitCommand { app.editingEventID = nil }
+    }
+
+    private var edited: GoogleCalendarSource.EventEdit {
+        let calendar = Calendar.current
+        if allDay {
+            let first = calendar.startOfDay(for: start)
+            let last = calendar.startOfDay(for: end)
+            return .init(title: title.trimmingCharacters(in: .whitespacesAndNewlines), start: first,
+                         end: calendar.date(byAdding: .day, value: 1, to: last) ?? last, allDay: true,
+                         location: location.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
+        }
+        return .init(title: title.trimmingCharacters(in: .whitespacesAndNewlines), start: start, end: end, allDay: false,
+                     location: location.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
+    }
+
+    private var problem: String? {
+        let edit = edited
+        if edit.title.isEmpty { return "Add a title" }
+        if edit.end <= edit.start { return "End must be after the start" }
+        return nil
+    }
+
+    private var timeChanged: Bool {
+        let edit = edited
+        return edit.start != item.start || edit.end != item.end || edit.allDay != item.isAllDay
+    }
+
+    private func save() {
+        guard problem == nil else { return }
+        app.edit(item, edited)
+    }
 }
 
 /// Inline picker for a new start; the event keeps its length.

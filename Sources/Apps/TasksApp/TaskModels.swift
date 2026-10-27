@@ -4,7 +4,7 @@ import NotchKit
 /// A task (page) from a Notion database.
 struct NotionTask: Identifiable, Hashable {
     let id: String
-    let title: String
+    var title: String
     var due: Date?
     var dueIsAllDay: Bool
     var isDone: Bool

@@ -98,6 +98,10 @@ date and time); it keeps its length, and guests are emailed as in Google Calenda
 events — if you signed in before it existed, use **Reconnect** in Settings → Calendar. Only calendars you own or
 can edit offer it.
 
+**Editing an event:** right-click → **Edit…**, or press **E** on the selected event, to change its title, start
+and end (or all-day), location and notes in place. Changing the time emails guests, as Reschedule does. A new
+title, place or notes doesn't email anyone. Like Reschedule, this is only offered for calendars you can edit.
+
 **Meeting heads-up:** 90 seconds before a meeting (change or turn off in Settings → Calendar) the notch opens
 with a banner: a live countdown, a big **Join** button and any overlap. The chip counts down by the second for
 the last two minutes. Events that overlap another you haven't declined are marked ⚠ (the same meeting on two of
@@ -111,6 +115,10 @@ Tasks are grouped Overdue / Today / Upcoming / No due date; done tasks are hidde
 property and how the board marks tasks done (a Status property's *Complete* group, a "Done" checkbox, or a select
 option like "Done"); both can be overridden per database. Checking a task off writes back to Notion. Right-click a task → **Reschedule** (Today, Tomorrow, Next Monday,
 Push 1 Week, Pick Date…, Remove Due Date) to change its due date in Notion.
+
+**Editing a task:** click the pencil that appears on hover, choose **Edit…** from the right-click menu, or press
+**E** on the selected task. You can change its title and its due date (with or without a time, or none). Return
+saves, Esc cancels, and the change is written to Notion.
 
 **Rescheduling several at once:**
 - **Selecting:** ⌘-click tasks to select them, or ⇧-click for a range. Each section header (Overdue, Today…)

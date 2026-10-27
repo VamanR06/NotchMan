@@ -104,6 +104,17 @@ final class NotionClient {
         try await request("PATCH", "/pages/\(task.id)", body: ["properties": [rule.property: value]])
     }
 
+    /// Saves an edited task: its title and (when the database has one) its due date, in one request.
+    func update(_ task: NotionTask, in db: TaskDatabase, title: String, dueProperty: String?, due: Date?, allDay: Bool) async throws {
+        try await request("PATCH", "/pages/\(task.id)", body: Self.updateBody(in: db, title: title, dueProperty: dueProperty, due: due, allDay: allDay))
+    }
+
+    static func updateBody(in db: TaskDatabase, title: String, dueProperty: String?, due: Date?, allDay: Bool) -> [String: Any] {
+        var properties: [String: Any] = [db.titleProperty: ["title": [["text": ["content": title]]]]]
+        if let dueProperty { properties[dueProperty] = dateValue(due, allDay: allDay) }
+        return ["properties": properties]
+    }
+
     /// Sets (or clears, with nil) a task's date property.
     func setDue(_ task: NotionTask, property: String, to date: Date?, allDay: Bool) async throws {
         try await request("PATCH", "/pages/\(task.id)", body: ["properties": [property: Self.dateValue(date, allDay: allDay)]])
