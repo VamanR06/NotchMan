@@ -1,6 +1,8 @@
 import AppKit
 import NotchKit
 import SwiftUI
+import UniformTypeIdentifiers
+import os
 
 struct ShelfView: View {
     @Bindable var app: ShelfApp
@@ -55,8 +57,13 @@ struct ShelfView: View {
 
 // MARK: - Drop targets
 
+let shelfLog = Logger(subsystem: "com.notchman", category: "shelf")
+
 /// Takes dropped files; with `spring`, hovering a drag over it for a moment runs `spring` (opens the folder).
+/// Uses AppKit-style file URL item providers (`onDrop(of: [.fileURL])`), which take drags from Finder and other
+/// apps reliably; SwiftUI's `dropDestination(for: URL.self)` often received nothing from them.
 private struct FileDropTarget: ViewModifier {
+    let label: String
     let onDrop: ([URL]) -> Void
     var spring: (() -> Void)?
     var cornerRadius: CGFloat = 8
@@ -67,14 +74,19 @@ private struct FileDropTarget: ViewModifier {
         content
             .background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.accentColor.opacity(targeted ? 0.35 : 0)))
             .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(Color.accentColor.opacity(targeted ? 0.9 : 0), lineWidth: 1.5))
-            .dropDestination(for: URL.self) { urls, _ in
+            .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                 springTask?.cancel()
-                let files = urls.filter(\.isFileURL)
-                guard !files.isEmpty else { return false }
-                onDrop(files)
+                let wanted = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+                shelfLog.notice("Drop on \(label, privacy: .public): \(wanted.count) of \(providers.count) items are files")
+                guard !wanted.isEmpty else { return false }
+                Task { @MainActor in
+                    let urls = await Self.fileURLs(from: wanted)
+                    shelfLog.notice("Drop on \(label, privacy: .public): read \(urls.count) file URLs")
+                    if !urls.isEmpty { onDrop(urls) }
+                }
                 return true
-            } isTargeted: { isTargeted in
-                targeted = isTargeted
+            }
+            .onChange(of: targeted) { _, isTargeted in
                 springTask?.cancel()
                 guard isTargeted, let spring else { return }
                 springTask = Task {
@@ -83,11 +95,27 @@ private struct FileDropTarget: ViewModifier {
                 }
             }
     }
+
+    /// The file URLs the providers carry (in drop order).
+    static func fileURLs(from providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        for provider in providers {
+            let url: URL? = await withCheckedContinuation { continuation in
+                _ = provider.loadObject(ofClass: NSURL.self) { object, error in
+                    if let error { shelfLog.error("Couldn't read a dropped item: \(error.localizedDescription, privacy: .public)") }
+                    continuation.resume(returning: (object as? NSURL) as URL?)
+                }
+            }
+            if let url, url.isFileURL { urls.append(url) }
+        }
+        return urls
+    }
 }
 
 private extension View {
-    func fileDropTarget(cornerRadius: CGFloat = 8, spring: (() -> Void)? = nil, onDrop: @escaping ([URL]) -> Void) -> some View {
-        modifier(FileDropTarget(onDrop: onDrop, spring: spring, cornerRadius: cornerRadius))
+    func fileDropTarget(_ label: String = "", cornerRadius: CGFloat = 8, spring: (() -> Void)? = nil,
+                        onDrop: @escaping ([URL]) -> Void) -> some View {
+        modifier(FileDropTarget(label: label, onDrop: onDrop, spring: spring, cornerRadius: cornerRadius))
     }
 
     /// Lets a file be dragged out to Finder, Mail, a chat, …
@@ -125,7 +153,8 @@ private struct ShelfGrid: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fileDropTarget(cornerRadius: 10) { app.addToShelf($0) }
+        .contentShape(Rectangle())
+        .fileDropTarget("shelf", cornerRadius: 10) { app.addToShelf($0) }
     }
 }
 
@@ -275,12 +304,12 @@ private struct DestinationRow: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(0.35))
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
+            .padding(.horizontal, 8).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.06)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .fileDropTarget(cornerRadius: 7, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
+        .fileDropTarget(folder.lastPathComponent, cornerRadius: 7, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
         .help("Drop to put files in \(folder.path); hold a drag here to open it. ⌥ does the other of Copy/Move.")
     }
 }
@@ -373,7 +402,7 @@ private struct FolderBrowser: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
                     .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4])))
-                    .fileDropTarget { app.drop($0, into: browsing.folder) }
+                    .fileDropTarget("Drop here") { app.drop($0, into: browsing.folder) }
                 TextField("Filter", text: $filter)
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
@@ -393,12 +422,14 @@ private struct FolderBrowser: View {
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(0.3))
                             }
-                            .padding(.horizontal, 6).padding(.vertical, 3)
+                            .padding(.horizontal, 6).padding(.vertical, 5)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .draggableFile(folder)
-                        .fileDropTarget(cornerRadius: 6, spring: { app.open(folder: folder) }) { app.drop($0, into: folder) }
+                        .fileDropTarget(folder.lastPathComponent, cornerRadius: 6, spring: { app.open(folder: folder) }) {
+                            app.drop($0, into: folder)
+                        }
                     }
                     ForEach(entries.files.prefix(200), id: \.self) { file in
                         HStack(spacing: 6) {
@@ -420,6 +451,9 @@ private struct FolderBrowser: View {
                 }
             }
         }
+        // Anywhere else in the browser (between rows, the empty space below them) drops into the open folder.
+        .contentShape(Rectangle())
+        .fileDropTarget("browser: \(browsing.folder.lastPathComponent)", cornerRadius: 9) { app.drop($0, into: browsing.folder) }
         .onChange(of: browsing.folder) { _, _ in filter = "" }
     }
 }

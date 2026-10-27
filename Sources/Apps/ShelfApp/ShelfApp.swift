@@ -234,6 +234,7 @@ public final class ShelfApp: NotchApp {
                 placed.append(target)
                 if move { remove(source) }
             } catch {
+                context?.logger.error("Couldn't \(move ? "move" : "copy", privacy: .public) \(source.lastPathComponent, privacy: .public) to \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 context?.showTransient(NotchTransient(id: "shelf", systemImage: "exclamationmark.triangle.fill",
                                                       text: "Couldn't add", tint: .orange, duration: 2.5))
             }

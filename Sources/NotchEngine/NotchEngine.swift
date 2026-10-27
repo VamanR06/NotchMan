@@ -358,7 +358,9 @@ public final class NotchEngine {
         for notch in notches.values {
             if !overOwnPopup { notch.model.mouseMoved(to: point) }
             // Only capture clicks inside the visible notch shape; pass everything else through.
-            notch.panel.ignoresMouseEvents = !notch.model.contains(point)
+            // While files are dragged to it, the notch keeps taking the drag (a mouse update mid-drag must not let
+            // the drop fall through to the app behind).
+            notch.panel.ignoresMouseEvents = !(notch.model.dragHeld || notch.model.contains(point))
             // A text field in the notch makes the panel key; once collapsed, hand the keyboard back
             // to the app the user was in so keystrokes don't go to the hidden panel.
             if notch.model.state == .collapsed, notch.panel.isKeyWindow, !NSApp.isActive {
