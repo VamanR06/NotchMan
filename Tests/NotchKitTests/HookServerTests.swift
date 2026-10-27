@@ -14,22 +14,28 @@ import Testing
     }
 
     @Test func servesRoutesOnlyWithTheToken() async throws {
-        // Its own port, so a running NotchMan on the default one doesn't answer instead.
-        let port = UInt16.random(in: 50_000...59_999)
-        let server = HookServer(port: port)
-        server.route("/test-echo") { request in HookServer.Response(body: request.body) }
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/test-echo")!)
-        request.httpMethod = "POST"
-        request.httpBody = Data("ping".utf8)
-
-        // The listener starts in the background; on a busy test machine give it up to 2s.
-        var denied: URLResponse?
-        for _ in 0..<20 where denied == nil {
-            denied = try? await URLSession.shared.data(for: request).1
-            if denied == nil { try await Task.sleep(for: .milliseconds(100)) }
+        // Its own port, so a running NotchMan on the default one doesn't answer instead. A random port can
+        // already be taken, so a few are tried; each listener gets up to 2s to start on a busy test machine.
+        var found: (server: HookServer, request: URLRequest, denied: URLResponse)?
+        for _ in 0..<5 where found == nil {
+            let port = UInt16.random(in: 50_000...59_999)
+            let server = HookServer(port: port)
+            server.route("/test-echo") { request in HookServer.Response(body: request.body) }
+            var attempt = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/test-echo")!)
+            attempt.httpMethod = "POST"
+            attempt.httpBody = Data("ping".utf8)
+            for _ in 0..<20 where found == nil {
+                if let response = try? await URLSession.shared.data(for: attempt).1 {
+                    found = (server, attempt, response)
+                } else {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+            }
         }
+        let (server, unsigned, denied) = try #require(found)
         #expect((denied as? HTTPURLResponse)?.statusCode == 401)
 
+        var request = unsigned
         request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
         let (data, ok) = try await URLSession.shared.data(for: request)
         #expect((ok as? HTTPURLResponse)?.statusCode == 200)
