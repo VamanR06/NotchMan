@@ -112,6 +112,17 @@ property and how the board marks tasks done (a Status property's *Complete* grou
 option like "Done"); both can be overridden per database. Checking a task off writes back to Notion. Right-click a task → **Reschedule** (Today, Tomorrow, Next Monday,
 Push 1 Week, Pick Date…, Remove Due Date) to change its due date in Notion.
 
+**Rescheduling several at once:**
+- **Selecting:** ⌘-click tasks to select them, or ⇧-click for a range. Each section header (Overdue, Today…)
+  also has **Select**, so moving everything overdue takes two clicks. ⌘A selects all, ⇧↑/↓ extends the
+  selection, and Esc clears it.
+- **Moving:** while tasks are selected, a bar under the list offers **Today · Tomorrow · Next Mon · +1 Week ·
+  Pick Date…**, and Remove Due Dates in its ⋯ menu.
+  - Tasks with a time keep it, and +1 Week moves each task from its own due date.
+  - **Pick Date…** sets one day for all of them. Tick *Same time for all* to give them one time too.
+- **Saving:** the list updates right away and each task is then saved to Notion. Any that fail go back to their
+  old date and are counted in an error.
+
 ## Jobs (JobManager)
 
 Reads applications from a [JobManager](https://github.com/VamanR06/JobManager) server. In Settings → Jobs enter

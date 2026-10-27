@@ -88,26 +88,38 @@ private struct TaskList: View {
         let grouped = Dictionary(grouping: app.tasks, by: app.section(of:))
         let selectedID = app.selectedTask?.id
         let showDatabase = Set(app.tasks.map(\.databaseID)).count > 1
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                ForEach(TaskSection.allCases, id: \.self) { section in
-                    if let tasks = grouped[section] {
-                        SwiftUI.Section {
-                            ForEach(tasks) { task in
-                                TaskRow(app: app, task: task, overdue: section == .overdue, showDatabase: showDatabase)
-                                    .notchSelected(task.id == selectedID)
-                            }
-                        } header: {
-                            Text("\(section.title) · \(tasks.count)")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(section == .overdue ? .red.opacity(0.8) : .white.opacity(0.5))
-                                .textCase(.uppercase)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 6) {
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                    ForEach(TaskSection.allCases, id: \.self) { section in
+                        if let tasks = grouped[section] {
+                            SwiftUI.Section {
+                                ForEach(tasks) { task in
+                                    TaskRow(app: app, task: task, overdue: section == .overdue, showDatabase: showDatabase)
+                                        .notchSelected(task.id == selectedID)
+                                }
+                            } header: {
+                                HStack {
+                                    Text("\(section.title) · \(tasks.count)")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(section == .overdue ? .red.opacity(0.8) : .white.opacity(0.5))
+                                        .textCase(.uppercase)
+                                    Spacer()
+                                    Button("Select") { app.selectAll(in: section) }
+                                        .buttonStyle(.plain)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.white.opacity(0.4))
+                                        .help("Select every task in \(section.title) to reschedule them together")
+                                }
                                 .padding(.vertical, 3)
                                 .background(.black)
+                            }
                         }
                     }
                 }
+            }
+            if app.isSelecting {
+                SelectionBar(app: app)
             }
         }
     }
@@ -170,12 +182,41 @@ private struct TaskRow: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: 7).fill(isSelected ? Color.accentColor.opacity(0.35) : .white.opacity(hovering ? 0.08 : 0)))
+        .overlay(alignment: .trailing) {
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.trailing, 6)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { app.open(task) }
+        .onTapGesture {
+            // ⇧-click selects a range, ⌘-click (or any click while picking) toggles; otherwise open it.
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.shift) {
+                app.selectRange(to: task)
+            } else if flags.contains(.command) || app.isSelecting {
+                app.toggleSelection(task)
+            } else {
+                app.open(task)
+            }
+        }
+        .help(app.isSelecting ? "Click to add or remove; ⇧-click for a range" : "Open in Notion · ⌘-click to select several")
         .contextMenu {
-            if app.canReschedule(task) {
+            if isSelected && app.selectedIDs.count > 1 {
+                Menu("Reschedule \(app.selectedIDs.count) Tasks") {
+                    ForEach(TaskDueOption.allCases) { option in
+                        Button(option.title) { app.rescheduleSelection(option) }
+                    }
+                    Divider()
+                    Button("Remove Due Dates") { app.removeDueFromSelection() }
+                }
+                Button("Clear Selection") { app.clearSelection() }
+                Divider()
+            } else if app.canReschedule(task) {
                 Menu("Reschedule") {
                     ForEach(TaskDueOption.allCases) { option in
                         Button(option.title) {
@@ -208,6 +249,8 @@ private struct TaskRow: View {
         return lines.joined(separator: "\n")
     }
 
+    private var isSelected: Bool { app.selectedIDs.contains(task.id) }
+
     private func dueText(_ due: Date) -> String {
         let calendar = Calendar.current
         let time = task.dueIsAllDay ? "" : " " + due.formatted(date: .omitted, time: .shortened)
@@ -220,6 +263,108 @@ private struct TaskRow: View {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: app.now), to: due).day ?? 0
         let date = days < 7 ? due.formatted(.dateTime.weekday(.wide)) : due.formatted(.dateTime.month(.abbreviated).day())
         return date + time
+    }
+}
+
+/// Shown while tasks are selected: move them all at once.
+private struct SelectionBar: View {
+    let app: TasksApp
+    @State private var pickingDate = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            if pickingDate {
+                BatchDueEditor(app: app) { pickingDate = false }
+            }
+            HStack(spacing: 6) {
+                Text("\(app.selectedIDs.count) selected")
+                    .font(.system(size: 11, weight: .semibold))
+                if app.reschedulableSelection.count < app.selectedIDs.count {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.white.opacity(0.5))
+                        .help("Some selected tasks have no due date property in their database and will be left as they are")
+                }
+                Spacer(minLength: 4)
+                ForEach(TaskDueOption.allCases) { option in
+                    chip(short(option)) { app.rescheduleSelection(option) }
+                }
+                chip("Pick Date…") { pickingDate.toggle() }
+                Menu {
+                    Button("Remove Due Dates") { app.removeDueFromSelection() }
+                    Button("Select All") { app.selectAll() }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                Button(action: app.clearSelection) { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .help("Clear selection (Esc)")
+            }
+            .disabled(app.reschedulableSelection.isEmpty && !pickingDate)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 9).fill(.white.opacity(0.1)))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func short(_ option: TaskDueOption) -> String {
+        switch option {
+        case .today: "Today"
+        case .tomorrow: "Tomorrow"
+        case .nextMonday: "Next Mon"
+        case .pushWeek: "+1 Week"
+        }
+    }
+
+    private func chip(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Capsule().fill(.white.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// One new date for all selected tasks. Without a time, each task keeps its own time of day.
+private struct BatchDueEditor: View {
+    let app: TasksApp
+    let done: () -> Void
+    @State private var date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var includeTime = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar.badge.clock").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            DatePicker("Due", selection: $date, displayedComponents: includeTime ? [.date, .hourAndMinute] : [.date])
+                .datePickerStyle(.field)
+                .labelsHidden()
+                .fixedSize()
+            Toggle("Same time for all", isOn: $includeTime)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+            Spacer()
+            Button("Cancel", action: done)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.6))
+            Button {
+                app.rescheduleSelection(to: date, includeTime: includeTime)
+                done()
+            } label: {
+                Text("Move \(app.reschedulableSelection.count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Capsule().fill(.white))
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+        }
+        .onAppear { app.setEditing(true) }
     }
 }
 

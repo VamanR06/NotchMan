@@ -212,27 +212,146 @@ public final class TasksApp: NotchApp {
 
     /// Moves (or clears, with nil) a task's due date in Notion; updates the list right away, reverts on failure.
     func reschedule(_ task: NotionTask, to date: Date?, allDay: Bool) {
-        guard let db = databases.first(where: { $0.id == task.databaseID }),
-              let property = dueProperty(for: db),
-              let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
-        let before = tasks[index]
+        apply([DueChange(task: task, due: date, allDay: allDay)])
+    }
+
+    /// A new due date for one task.
+    struct DueChange {
+        let task: NotionTask
+        let due: Date?
+        let allDay: Bool
+    }
+
+    /// Moves tasks at once: the list updates right away, then each is written to Notion in turn (Notion allows
+    /// about three requests a second); any that fail go back to their old date.
+    func apply(_ changes: [DueChange]) {
+        let writable = changes.compactMap { change -> (DueChange, String, NotionTask)? in
+            guard let db = databases.first(where: { $0.id == change.task.databaseID }),
+                  let property = dueProperty(for: db),
+                  let before = tasks.first(where: { $0.id == change.task.id }) else { return nil }
+            return (change, property, before)
+        }
+        guard !writable.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
-            tasks[index].due = date
-            tasks[index].dueIsAllDay = allDay
+            for (change, _, _) in writable {
+                guard let index = tasks.firstIndex(where: { $0.id == change.task.id }) else { continue }
+                tasks[index].due = change.due
+                tasks[index].dueIsAllDay = change.allDay
+            }
             tasks.sort(by: Self.order)
         }
         Task {
-            do {
-                try await client.setDue(task, property: property, to: date, allDay: allDay)
-                error = nil
-            } catch {
-                if let i = tasks.firstIndex(where: { $0.id == task.id }) {
-                    tasks[i] = before
-                    tasks.sort(by: Self.order)
+            var failed: [String] = []
+            var lastError: Error?
+            for (change, property, before) in writable {
+                do {
+                    try await client.setDue(change.task, property: property, to: change.due, allDay: change.allDay)
+                } catch {
+                    lastError = error
+                    failed.append(change.task.title)
+                    if let i = tasks.firstIndex(where: { $0.id == change.task.id }) { tasks[i] = before }
                 }
-                self.error = error.localizedDescription
+            }
+            if failed.isEmpty {
+                error = nil
+            } else {
+                tasks.sort(by: Self.order)
+                let what = failed.count == 1 ? "“\(failed[0])”" : "\(failed.count) tasks"
+                error = "Couldn't move \(what): \(lastError?.localizedDescription ?? "unknown error")"
+            }
+            if writable.count > 1 {
+                let moved = writable.count - failed.count
+                context?.showTransient(NotchTransient(
+                    id: "tasks", systemImage: failed.isEmpty ? "calendar.badge.checkmark" : "exclamationmark.triangle.fill",
+                    text: failed.isEmpty ? "Moved \(moved)" : "\(failed.count) failed", tint: failed.isEmpty ? .green : .orange))
             }
         }
+    }
+
+    // MARK: - Selecting several
+
+    /// Tasks picked for a batch action (⌘-click, ⇧-click, a section's Select, ⌘A, ⇧↑/↓).
+    private(set) var selectedIDs: Set<String> = []
+    /// Where a ⇧-click range starts.
+    @ObservationIgnored private var selectionAnchor: String?
+
+    var isSelecting: Bool { !selectedIDs.isEmpty }
+
+    var selectedTasks: [NotionTask] { displayedTasks.filter { selectedIDs.contains($0.id) } }
+
+    func toggleSelection(_ task: NotionTask) {
+        if selectedIDs.contains(task.id) { selectedIDs.remove(task.id) } else { selectedIDs.insert(task.id) }
+        selectionAnchor = task.id
+        holdForSelection()
+    }
+
+    /// Selects every task between the last one picked and `task`, in list order.
+    func selectRange(to task: NotionTask) {
+        let shown = displayedTasks
+        guard let anchor = selectionAnchor, let from = shown.firstIndex(where: { $0.id == anchor }),
+              let to = shown.firstIndex(where: { $0.id == task.id }) else {
+            toggleSelection(task)
+            return
+        }
+        for item in shown[min(from, to)...max(from, to)] { selectedIDs.insert(item.id) }
+        holdForSelection()
+    }
+
+    func selectAll(in section: TaskSection? = nil) {
+        let shown = displayedTasks.filter { section == nil || self.section(of: $0) == section }
+        selectedIDs.formUnion(shown.map(\.id))
+        selectionAnchor = shown.last?.id
+        holdForSelection()
+    }
+
+    func clearSelection() {
+        selectedIDs.removeAll()
+        selectionAnchor = nil
+        context?.holdOpen(false)
+    }
+
+    /// The notch stays open while picking tasks, so moving to the action bar doesn't close it.
+    private func holdForSelection() {
+        if selectedIDs.isEmpty { clearSelection() } else { context?.holdOpen(true) }
+    }
+
+    /// The selected tasks that can be rescheduled (their database has a due date property).
+    var reschedulableSelection: [NotionTask] { selectedTasks.filter(canReschedule) }
+
+    func rescheduleSelection(_ option: TaskDueOption) {
+        apply(Self.changes(reschedulableSelection, option: option, now: Date()))
+        clearSelection()
+    }
+
+    func rescheduleSelection(to date: Date, includeTime: Bool) {
+        apply(Self.changes(reschedulableSelection, to: date, includeTime: includeTime))
+        clearSelection()
+    }
+
+    /// Each task moved by `option`, as the single-task menu does: tasks with a time keep it, date-only tasks
+    /// stay date-only, and "Push 1 Week" moves each from its own due date.
+    static func changes(_ tasks: [NotionTask], option: TaskDueOption, now: Date) -> [DueChange] {
+        tasks.map { DueChange(task: $0, due: option.target(for: $0, now: now), allDay: $0.due == nil || $0.dueIsAllDay) }
+    }
+
+    /// One date for all of them. Without `includeTime`, each keeps its own time of day (if it had one).
+    static func changes(_ tasks: [NotionTask], to date: Date, includeTime: Bool) -> [DueChange] {
+        tasks.map { task in
+            if includeTime { return DueChange(task: task, due: date, allDay: false) }
+            let keepsTime = task.due != nil && !task.dueIsAllDay
+            return DueChange(task: task, due: Reschedule.day(date, keepingTimeOf: keepsTime ? task.due : nil), allDay: !keepsTime)
+        }
+    }
+
+    /// For tests: a task list without Notion.
+    func useTasksForTesting(_ tasks: [NotionTask], now: Date) {
+        self.tasks = tasks
+        self.now = now
+    }
+
+    func removeDueFromSelection() {
+        apply(reschedulableSelection.map { DueChange(task: $0, due: nil, allDay: true) })
+        clearSelection()
     }
 
     /// Keep the notch open while a date picker is being used.
@@ -330,8 +449,27 @@ public final class TasksApp: NotchApp {
         return selection.index.flatMap { shown.indices.contains($0) ? shown[$0] : nil }
     }
 
-    /// ↑/↓ select, Return opens in Notion, Space or ⌘Return checks off.
+    /// ↑/↓ select, Return opens in Notion, Space or ⌘Return checks off. ⇧↑/↓ and ⌘A pick several; Esc lets go.
     public func handleKey(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53, isSelecting {  // Esc: drop the selection before closing the notch
+            clearSelection()
+            return true
+        }
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "a" {
+            selectAll()
+            return true
+        }
+        if event.modifierFlags.contains(.shift), event.keyCode == 125 || event.keyCode == 126 {
+            let shown = displayedTasks
+            if let current = selectedTask { selectedIDs.insert(current.id) }
+            selection.move(event.keyCode == 125 ? 1 : -1, count: shown.count)
+            if let next = selectedTask {
+                selectedIDs.insert(next.id)
+                selectionAnchor = next.id
+            }
+            holdForSelection()
+            return true
+        }
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "n" {
             context?.send(NotchMessage(name: NotchMessage.focusQuickAddName), to: "today")
             return true

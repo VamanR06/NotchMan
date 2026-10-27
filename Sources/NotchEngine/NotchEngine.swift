@@ -327,8 +327,8 @@ public final class NotchEngine {
             return true
         }
         guard !Self.isTyping(panel.firstResponder) else { return false }
-        if event.keyCode == 53 {  // Esc
-            closeFromKeyboard(notch)
+        if event.keyCode == 53 {  // Esc: the app may use it first (e.g. to drop a selection)
+            if notch.model.selectedApp?.handleKey(event) != true { closeFromKeyboard(notch) }
             return true
         }
         return notch.model.selectedApp?.handleKey(event) ?? false
