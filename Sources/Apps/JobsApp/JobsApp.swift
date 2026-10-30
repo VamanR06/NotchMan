@@ -170,6 +170,10 @@ public final class JobsApp: NotchApp {
     var opensOnJobPages = true {
         didSet { context?.defaults.set(opensOnJobPages, forKey: "opensOnJobPages") }
     }
+    /// Resumes and cover letters to choose from on the This page card (loaded when a page matches).
+    private(set) var documentChoices: [DocumentKind: [JobDocument]] = [:]
+    @ObservationIgnored private var documentsLoadedAt: Date?
+
     /// A job-looking page that isn't tied to any job yet: offer to link it.
     private(set) var unlinkedPage: BrowserTabRef?
     /// Set when this opening started over a browser; the claim only applies to that opening.
@@ -234,6 +238,7 @@ public final class JobsApp: NotchApp {
         unlinkedPage = nil
         pageMatch = PageMatch(tab: tab, info: linked.info, source: source, sourceURL: linked.sourceURL)
         if let tabID = tab.tabID { tabJobs[tabID] = (linked, Date()) }
+        Task { await loadDocumentChoices() }
         var info = linked.info
         // A remembered link's documents may have changed since: refresh from a page JobManager knows.
         if source != .tracked, let url = linked.sourceURL, let fresh = try? await client.pageInfo(for: url),
@@ -247,6 +252,62 @@ public final class JobsApp: NotchApp {
         if let cover = info.cover_letter {
             let file = try? await client.download(cover)
             if pageMatch?.tab == tab { pageMatch?.coverLetterFile = file }
+        }
+    }
+
+    /// Fetches the resume and cover letter lists (at most once a minute).
+    func loadDocumentChoices(force: Bool = false) async {
+        if !force, let loaded = documentsLoadedAt, Date().timeIntervalSince(loaded) < 60 { return }
+        documentsLoadedAt = Date()
+        for kind in [DocumentKind.resume, .cover_letter] {
+            if let documents = try? await client.documents(kind) { documentChoices[kind] = documents }
+        }
+    }
+
+    /// Makes `document` the job's resume (or cover letter) in JobManager, then offers it here: dragging and
+    /// Autofill both use the job's linked document. nil unlinks it.
+    func choose(_ document: JobDocument?, as kind: DocumentKind) {
+        guard let match = pageMatch else { return }
+        let jobID = match.job.id
+        Task {
+            do {
+                try await client.setDocument(document?.id, kind: kind, forJob: jobID)
+                var file: URL?
+                if let document { file = try await client.download(document.pageDocument) }
+                guard pageMatch?.job.id == jobID else { return }
+                switch kind {
+                case .resume:
+                    pageMatch?.info.resume = document?.pageDocument
+                    pageMatch?.resumeFile = file
+                case .cover_letter:
+                    pageMatch?.info.cover_letter = document?.pageDocument
+                    pageMatch?.coverLetterFile = file
+                }
+                updateRemembered(jobID: jobID) { info in
+                    if kind == .resume { info.resume = document?.pageDocument } else { info.cover_letter = document?.pageDocument }
+                }
+                autofillReport = nil
+                context?.showTransient(NotchTransient(id: "jobs", systemImage: "doc.fill",
+                                                      text: document == nil ? "Unlinked" : "\(kind.label) set", tint: .green))
+                await loadDocumentChoices(force: true)
+            } catch {
+                self.error = "Couldn't change the \(kind.label.lowercased()): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Keeps remembered pages and tabs for a job in step after its documents change.
+    private func updateRemembered(jobID: Int, _ change: (inout PageInfo) -> Void) {
+        for (key, linked) in links where linked.info.job?.id == jobID {
+            var info = linked.info
+            change(&info)
+            links[key] = LinkedPage(info: info, sourceURL: linked.sourceURL)
+        }
+        saveLinks()
+        for (tab, entry) in tabJobs where entry.match.info.job?.id == jobID {
+            var info = entry.match.info
+            change(&info)
+            tabJobs[tab] = (LinkedPage(info: info, sourceURL: entry.match.sourceURL), entry.at)
         }
     }
 
@@ -564,6 +625,12 @@ public final class JobsApp: NotchApp {
 
     private func saveTemplates() {
         if let data = try? JSONEncoder().encode(templates) { context?.defaults.set(data, forKey: "promptTemplates") }
+    }
+
+    /// JobManager's Resumes or Cover letters page.
+    func openDocuments(_ kind: DocumentKind) {
+        guard let base = URL(string: client.serverURL) else { return }
+        NSWorkspace.shared.open(base.appending(path: kind == .resume ? "resumes" : "cover-letters"))
     }
 
     func openDashboard() {

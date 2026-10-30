@@ -11,8 +11,50 @@ struct PageInfo: Codable, Equatable {
         let url: String?
     }
     let job: Job?
-    let resume: PageDocument?
-    let cover_letter: PageDocument?
+    var resume: PageDocument?
+    var cover_letter: PageDocument?
+}
+
+/// Resume or cover letter, as JobManager's document lists name them.
+enum DocumentKind: String {
+    case resume, cover_letter
+
+    var label: String { self == .resume ? "Resume" : "Cover letter" }
+}
+
+/// A resume or cover letter in JobManager (GET /api/documents?kind=…).
+struct JobDocument: Decodable, Identifiable, Equatable {
+    struct Usage: Decodable, Equatable {
+        let id: Int
+        let company: String
+        let title: String
+    }
+
+    let id: Int
+    let name: String
+    let file_path: String
+    let archived: Int
+    let version: Int
+    let uploaded_at: String
+    let used_by: [Usage]
+
+    var isArchived: Bool { archived == 1 }
+
+    /// The name with its extension, as an upload should show it (JobManager's names may omit it).
+    var fileName: String {
+        (name as NSString).pathExtension.isEmpty ? name + "." + (file_path as NSString).pathExtension : name
+    }
+
+    var pageDocument: PageDocument { PageDocument(id: id, name: fileName) }
+
+    /// How it reads in the menu: the name, its version when there are several, and where else it's used.
+    var menuTitle: String {
+        var title = name + (version > 1 ? " (v\(version))" : "")
+        if let first = used_by.first {
+            title += " · \(first.company)" + (used_by.count > 1 ? " +\(used_by.count - 1)" : "")
+        }
+        return title
+    }
 }
 
 struct PageDocument: Codable, Equatable {
@@ -48,7 +90,7 @@ struct FillResult: Decodable, Equatable {
 /// The tracked job open in the browser, with its documents saved locally for dragging and attaching.
 struct PageMatch: Equatable {
     let tab: BrowserTabRef
-    let info: PageInfo
+    var info: PageInfo
     var source: PageMatchSource = .tracked
     /// A page JobManager matched to this job (to refresh documents from, and to carry into links).
     var sourceURL: URL?

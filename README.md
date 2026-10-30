@@ -151,7 +151,9 @@ before adding it again. macOS asks once per browser to let NotchMan read it.
 **On a job's page** (needs JobManager v0.30+): when your browser shows a job you track, either its posting or
 its application form, hovering the notch open goes straight to Jobs. You can turn that off in Settings → Jobs.
 A **This page** card at the top has:
-- the job's linked **resume** and **cover letter**, ready to drag onto the site's upload box
+- the job's linked **resume** and **cover letter**, ready to drag onto the site's upload box. The ⌄ next to
+  each picks which one goes with this job: newest first, showing where each is already used, with archived ones
+  in a submenu, or None. Picking links it to the job in JobManager, so it's remembered and Autofill attaches it.
 - **Autofill**, which fills the form using JobManager's own rules (the same ones as its ChatGPT autofill):
   - Your Profile, explicit work-eligibility answers, saved answers and your demographic policy. No AI guessing.
   - It attaches the resume and takes a second pass for follow-up questions your answers reveal.

@@ -68,10 +68,8 @@ private struct ThisPageCard: View {
                     Text(sourceLine).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                DocumentTile(label: "Resume", document: match.info.resume, file: match.resumeFile)
-                if match.info.cover_letter != nil {
-                    DocumentTile(label: "Cover letter", document: match.info.cover_letter, file: match.coverLetterFile)
-                }
+                DocumentTile(app: app, kind: .resume, document: match.info.resume, file: match.resumeFile)
+                DocumentTile(app: app, kind: .cover_letter, document: match.info.cover_letter, file: match.coverLetterFile)
                 if app.isAutofilling {
                     HStack(spacing: 5) {
                         NotchSpinner(size: 10, lineWidth: 1.6)
@@ -189,13 +187,24 @@ private struct UnlinkedPageRow: View {
     }
 }
 
-/// A document you can drag onto the page's upload box (or anywhere else).
+/// A document you can drag onto the page's upload box (or anywhere else), with a menu to choose which one.
 private struct DocumentTile: View {
-    let label: String
+    let app: JobsApp
+    let kind: DocumentKind
     let document: PageDocument?
     let file: URL?
 
+    private var label: String { kind.label }
+
     var body: some View {
+        HStack(spacing: 2) {
+            tile
+            DocumentMenu(app: app, kind: kind, current: document?.id)
+        }
+    }
+
+    @ViewBuilder
+    private var tile: some View {
         Group {
             if let file {
                 HStack(spacing: 4) {
@@ -213,6 +222,57 @@ private struct DocumentTile: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.4))
                     .help("Link a \(label.lowercased()) to this job in JobManager")
+            }
+        }
+    }
+}
+
+/// Pick which resume (or cover letter) goes with this job: newest first, archived ones tucked away, or none.
+private struct DocumentMenu: View {
+    let app: JobsApp
+    let kind: DocumentKind
+    let current: Int?
+
+    var body: some View {
+        let documents = app.documentChoices[kind] ?? []
+        Menu {
+            let active = documents.filter { !$0.isArchived }
+            if active.isEmpty {
+                Text(documents.isEmpty ? "Loading…" : "No \(kind.label.lowercased())s yet")
+            }
+            ForEach(active) { document in
+                choice(document)
+            }
+            let archived = documents.filter(\.isArchived)
+            if !archived.isEmpty {
+                Menu("Archived") {
+                    ForEach(archived) { document in choice(document) }
+                }
+            }
+            if current != nil {
+                Divider()
+                Button("None") { app.choose(nil, as: kind) }
+            }
+            Divider()
+            Button("Open \(kind == .resume ? "Resumes" : "Cover Letters") in JobManager") { app.openDocuments(kind) }
+        } label: {
+            Image(systemName: "chevron.down")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Choose the \(kind.label.lowercased()) for this job (it's linked to the job in JobManager, and Autofill attaches it)")
+        .task { await app.loadDocumentChoices() }
+    }
+
+    private func choice(_ document: JobDocument) -> some View {
+        Button {
+            app.choose(document, as: kind)
+        } label: {
+            if document.id == current {
+                Label(document.menuTitle, systemImage: "checkmark")
+            } else {
+                Text(document.menuTitle)
             }
         }
     }

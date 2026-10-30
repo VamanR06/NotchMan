@@ -199,6 +199,18 @@ final class JobManagerClient {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "NotchMan/documents")
     }
 
+    /// Your resumes or cover letters, newest first (archived ones included, marked).
+    func documents(_ kind: DocumentKind) async throws -> [JobDocument] {
+        let data = try await authorized("GET", "api/documents?kind=\(kind.rawValue)", json: nil, accept: [200])
+        return try JSONDecoder().decode([JobDocument].self, from: data)
+    }
+
+    /// Links a resume or cover letter to a job (nil unlinks), as the job's page in JobManager does.
+    func setDocument(_ id: Int?, kind: DocumentKind, forJob jobID: Int) async throws {
+        let field = kind == .resume ? "resume_id" : "cover_letter_id"
+        _ = try await authorized("PATCH", "api/jobs/\(jobID)", json: [field: id.map { $0 as Any } ?? NSNull()], accept: [200])
+    }
+
     /// Removes a status event (undo).
     func deleteEvent(_ id: Int) async throws {
         _ = try await authorized("DELETE", "api/events/\(id)", json: nil, accept: [200, 204])
@@ -233,8 +245,17 @@ final class JobManagerClient {
         return (data, status)
     }
 
+    /// `base` + `path`, where the path may carry a query ("api/documents?kind=resume"); `appending(path:)` alone
+    /// would escape the "?".
+    static func url(_ base: URL, _ path: String) -> URL {
+        let parts = path.split(separator: "?", maxSplits: 1).map(String.init)
+        let url = base.appending(path: parts[0])
+        guard parts.count > 1, let withQuery = URL(string: url.absoluteString + "?" + parts[1]) else { return url }
+        return withQuery
+    }
+
     private func send(_ method: String, _ path: String, json: [String: Any]?, base: URL) async throws -> (Data, Int) {
-        var request = URLRequest(url: base.appending(path: path))
+        var request = URLRequest(url: Self.url(base, path))
         request.httpMethod = method
         if let cookie = keychain.string(for: "session"), !cookie.isEmpty {
             request.setValue("\(Self.cookieName)=\(cookie)", forHTTPHeaderField: "Cookie")
