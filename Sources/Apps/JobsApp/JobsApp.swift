@@ -53,6 +53,7 @@ public final class JobsApp: NotchApp {
         self.context = context
         BrowserTab.startTracking()
         opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
+        marksAppliedOnSubmit = context.defaults.object(forKey: "marksAppliedOnSubmit") as? Bool ?? true
         loadLinks()
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
@@ -79,6 +80,7 @@ public final class JobsApp: NotchApp {
     public func deactivate() {
         timers.forEach { $0.cancel() }
         timers.removeAll()
+        stopSubmissionWatch()
     }
 
     // MARK: - Account
@@ -170,6 +172,14 @@ public final class JobsApp: NotchApp {
     var opensOnJobPages = true {
         didSet { context?.defaults.set(opensOnJobPages, forKey: "opensOnJobPages") }
     }
+    /// A job you haven't applied to moves to Applied once its tab shows the site's confirmation.
+    var marksAppliedOnSubmit = true {
+        didSet {
+            context?.defaults.set(marksAppliedOnSubmit, forKey: "marksAppliedOnSubmit")
+            if !marksAppliedOnSubmit { stopSubmissionWatch() }
+        }
+    }
+    @ObservationIgnored private var submissionWatch: (jobID: Int, tab: BrowserTabRef, task: Task<Void, Never>)?
     /// Resumes and cover letters to choose from on the This page card (loaded when a page matches).
     private(set) var documentChoices: [DocumentKind: [JobDocument]] = [:]
     @ObservationIgnored private var documentsLoadedAt: Date?
@@ -238,6 +248,7 @@ public final class JobsApp: NotchApp {
         unlinkedPage = nil
         pageMatch = PageMatch(tab: tab, info: linked.info, source: source, sourceURL: linked.sourceURL)
         if let tabID = tab.tabID { tabJobs[tabID] = (linked, Date()) }
+        watchForSubmission(jobID: linked.info.job!.id, on: tab)
         Task { await loadDocumentChoices() }
         var info = linked.info
         // A remembered link's documents may have changed since: refresh from a page JobManager knows.
@@ -357,6 +368,7 @@ public final class JobsApp: NotchApp {
         links[PageLinks.key(match.tab.url)] = nil
         saveLinks()
         if let tabID = match.tab.tabID { tabJobs[tabID] = nil }
+        if submissionWatch?.jobID == match.job.id { stopSubmissionWatch() }
         pageMatch = nil
         autofillReport = nil
         unlinkedPage = PageLinks.looksLikeJobPage(match.tab.url, title: match.tab.title) ? match.tab : nil
@@ -440,6 +452,53 @@ public final class JobsApp: NotchApp {
         } catch {
             return AutofillReport(problem: error.localizedDescription)
         }
+    }
+
+    // MARK: - Submitting
+
+    /// Watches the tab showing a job you haven't applied to, and marks the job Applied once the site confirms the
+    /// application went in. Looks every few seconds for half an hour, and only while that tab is the one in front.
+    private func watchForSubmission(jobID: Int, on tab: BrowserTabRef) {
+        guard marksAppliedOnSubmit, tab.tabID != nil, board.all.first(where: { $0.id == jobID })?.status == .toApply else { return }
+        if let watch = submissionWatch, watch.jobID == jobID, watch.tab.bundleID == tab.bundleID, watch.tab.tabID == tab.tabID { return }
+        stopSubmissionWatch()
+        let task = Task { [weak self] in
+            let end = Date().addingTimeInterval(30 * 60)
+            while Date() < end {
+                try? await Task.sleep(for: .seconds(4))
+                guard let self, !Task.isCancelled else { return }
+                // Moved on by hand in the meantime.
+                guard board.all.first(where: { $0.id == jobID })?.status == .toApply else { break }
+                guard let current = try? await BrowserTab.current(),
+                      current.bundleID == tab.bundleID, current.tabID == tab.tabID else { continue }
+                do {
+                    if try await PageForm.confirmation(in: current).confirmed {
+                        await markApplied(jobID)
+                        break
+                    }
+                } catch BrowserTab.TabError.javaScriptOff(_), BrowserTab.TabError.notAuthorized(_) {
+                    break
+                } catch {
+                    continue
+                }
+            }
+            if !Task.isCancelled, self?.submissionWatch?.jobID == jobID, self?.submissionWatch?.tab == tab { self?.submissionWatch = nil }
+        }
+        submissionWatch = (jobID, tab, task)
+    }
+
+    private func stopSubmissionWatch() {
+        submissionWatch?.task.cancel()
+        submissionWatch = nil
+    }
+
+    /// Logs Applied for a job the site just confirmed, unless it moved on elsewhere (JobManager's web app).
+    private func markApplied(_ jobID: Int) async {
+        await refresh()
+        guard let job = board.all.first(where: { $0.id == jobID }), job.status == .toApply,
+              await logStatus(.applied, for: job, undoFor: 60) else { return }
+        context?.showTransient(NotchTransient(id: "jobs", systemImage: "paperplane.fill", text: "Applied · \(job.company)",
+                                              tint: JobStatus.applied.color, duration: 3))
     }
 
     // MARK: - Add from browser
@@ -544,17 +603,23 @@ public final class JobsApp: NotchApp {
     // MARK: - Status
 
     func setStatus(_ status: JobStatus, for job: TrackedJob) {
-        guard status != job.status || status == .interview, !updating.contains(job.id) else { return }
+        Task { await logStatus(status, for: job) }
+    }
+
+    /// Logs the change in JobManager and offers undo for `undoFor` seconds. False if it wasn't made.
+    @discardableResult
+    private func logStatus(_ status: JobStatus, for job: TrackedJob, undoFor: Double = 6) async -> Bool {
+        guard status != job.status || status == .interview, !updating.contains(job.id) else { return false }
         updating.insert(job.id)
-        Task {
-            defer { updating.remove(job.id) }
-            do {
-                let eventID = try await client.setStatus(status, for: job)
-                offerUndo(StatusChange(jobID: job.id, company: job.company, status: status, eventID: eventID))
-                await refresh()
-            } catch {
-                self.error = "Couldn't change status: \(error.localizedDescription)"
-            }
+        defer { updating.remove(job.id) }
+        do {
+            let eventID = try await client.setStatus(status, for: job)
+            offerUndo(StatusChange(jobID: job.id, company: job.company, status: status, eventID: eventID), for: undoFor)
+            await refresh()
+            return true
+        } catch {
+            self.error = "Couldn't change status: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -571,11 +636,11 @@ public final class JobsApp: NotchApp {
         }
     }
 
-    private func offerUndo(_ change: StatusChange) {
+    private func offerUndo(_ change: StatusChange, for seconds: Double) {
         lastChange = change
         undoExpiry?.cancel()
         undoExpiry = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(6))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled, self?.lastChange == change else { return }
             withAnimation { self?.lastChange = nil }
         }

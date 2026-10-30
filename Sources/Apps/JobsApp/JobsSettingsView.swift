@@ -11,10 +11,11 @@ struct JobsSettingsView: View {
         Form {
             Section {
                 Toggle("Open Jobs when the browser shows a tracked job", isOn: $app.opensOnJobPages)
+                Toggle("Mark a job Applied when the site confirms you submitted", isOn: $app.marksAppliedOnSubmit)
             } header: {
                 Text("On a job's page")
             } footer: {
-                Text("Hovering the notch open on a job you track (its posting or application form) shows it in Jobs with its resume and cover letter to drag onto the page, and Autofill, which fills the form with your JobManager Profile and saved answers (never submits). Autofill needs your browser to allow it once: Chrome, Arc, Brave, Edge → View → Developer → Allow JavaScript from Apple Events; Safari → Develop → Allow JavaScript from Apple Events.")
+                Text("Hovering the notch open on a job you track (its posting or application form) shows it in Jobs with its resume and cover letter to drag onto the page, and Autofill, which fills the form with your JobManager Profile and saved answers (never submits). Autofill needs your browser to allow it once: Chrome, Arc, Brave, Edge → View → Developer → Allow JavaScript from Apple Events; Safari → Develop → Allow JavaScript from Apple Events. Once Jobs has shown a job you haven't applied to, it watches that tab for half an hour: when the site says it got your application (and the form is gone), the job moves to Applied, with Undo.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

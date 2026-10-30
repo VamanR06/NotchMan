@@ -211,6 +211,30 @@ enum PageForm {
         return results
     }
 
+    /// What the confirmation check found on the page.
+    struct Confirmation: Decodable, Equatable {
+        let confirmed: Bool
+        let snippet: String?
+    }
+
+    /// JobManager's test for "the site took the application" (src/lib/apply/confirm.ts): the site's own
+    /// confirmation text, and the application form gone from the page. A click on Submit isn't proof.
+    static let confirmScript = #"""
+    (() => {
+      const text = (document.body && document.body.innerText) || "";
+      const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const formStillThere = Array.from(document.querySelectorAll("input[type=email], input[type=file], textarea")).some(shown);
+      const ok = text.match(/thank(s| you) for (applying|your application|submitting|your interest in)|application (was |has been )?(successfully )?(submitted|received)|we('ve| have) received your application|your application (is|has been) (complete|submitted|received)/i);
+      return { confirmed: !!ok && !formStillThere, snippet: ok ? text.slice(Math.max(0, ok.index - 60), ok.index + 180).replace(/\s+/g, " ").trim() : null };
+    })()
+    """#
+
+    static func confirmation(in tab: BrowserTab) async throws -> Confirmation {
+        let output = try await tab.runJavaScript("JSON.stringify(\(confirmScript))")
+        guard let result = try? JSONDecoder().decode(Confirmation.self, from: Data(output.utf8)) else { throw FormError.unreadable }
+        return result
+    }
+
     /// The job's resume and cover letter as the filler wants them (base64), for upload fields.
     static func files(for match: PageMatch) -> [String: Any] {
         var files: [String: Any] = [:]

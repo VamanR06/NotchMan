@@ -161,6 +161,10 @@ A **This page** card at the top has:
   - It never submits.
 - If the form is embedded from Greenhouse or similar on a company's own site, **Open Form** opens it on its
   own in the same browser, still as this job.
+- **Applied when you submit:** for a job still in *To apply*, NotchMan watches its tab for half an hour. When
+  the site shows its confirmation ("Thank you for applying", "Application submitted") and the form is gone,
+  the job moves to *Applied*, with Undo for a minute. It's the same check JobManager uses. Turn it off in
+  Settings → Jobs.
 
 A page doesn't have to be the exact link you saved:
 - **Following:** if the tab showing a job moves on to another job-looking page (Apply, the form's next step),
