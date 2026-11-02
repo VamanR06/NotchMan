@@ -3,6 +3,40 @@ import CoreServices
 import NotchKit
 
 /// A Claude Code session, as listed by `claude agents --json`.
+/// How much a new agent may do on its own: Claude Code's `--permission-mode`.
+enum AgentMode: String, CaseIterable, Identifiable {
+    case plan, manual, acceptEdits, auto
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .plan: "Plan"
+        case .manual: "Ask first"
+        case .acceptEdits: "Accept edits"
+        case .auto: "Auto"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .plan: "Reads and plans, changes nothing until you approve"
+        case .manual: "Asks before every edit and command"
+        case .acceptEdits: "Edits files, asks before commands"
+        case .auto: "Works on its own, stops for risky actions"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .plan: "list.bullet.clipboard"
+        case .manual: "hand.raised"
+        case .acceptEdits: "pencil"
+        case .auto: "bolt"
+        }
+    }
+}
+
 struct ClaudeAgent: Identifiable, Hashable {
     enum Kind: String { case background, interactive }
 
@@ -261,12 +295,25 @@ final class ClaudeAgentsMonitor {
         limitsFetchedAt = Date()
     }
 
-    /// Project folders seen in current sessions, most recent first (for "New agent").
+    /// Project folders seen in current sessions, most recent first (for "New agent"). A session in a worktree
+    /// counts as its repo's.
     var recentFolders: [String] {
         var seen = Set<String>()
         return agents.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
-            .map(\.cwd)
+            .map { Self.projectFolder($0.cwd) }
             .filter { seen.insert($0).inserted }
+    }
+
+    /// The repo a Claude Code worktree (`<repo>/.claude/worktrees/<name>`) belongs to; other folders as they are.
+    static func projectFolder(_ path: String) -> String {
+        guard let range = path.range(of: "/.claude/worktrees/") else { return path }
+        return String(path[..<range.lowerBound])
+    }
+
+    /// The mode New Agent starts in; the last one picked.
+    var newAgentMode: AgentMode {
+        get { defaults.string(forKey: "newAgentMode").flatMap(AgentMode.init(rawValue:)) ?? .plan }
+        set { defaults.set(newValue.rawValue, forKey: "newAgentMode") }
     }
 
     // MARK: - Actions
@@ -298,11 +345,15 @@ final class ClaudeAgentsMonitor {
         _ = try await Shell.run(path, [command, shortID])
     }
 
-    /// Starts a background agent in `folder` with `prompt`. Only ever called from an explicit user action.
-    func dispatch(prompt: String, in folder: String) async throws {
+    /// Starts a background agent in `folder` with `prompt`, in `mode`. Only ever called from an explicit user action.
+    func dispatch(prompt: String, in folder: String, mode: AgentMode) async throws {
         guard let path = await claudePath() else { throw Shell.ShellError.failed("claude not found") }
-        _ = try await Shell.run(path, ["--bg", prompt], in: folder)
+        _ = try await Shell.run(path, Self.dispatchArguments(prompt: prompt, mode: mode), in: folder)
         await refresh()
+    }
+
+    static func dispatchArguments(prompt: String, mode: AgentMode) -> [String] {
+        ["--bg", "--permission-mode", mode.rawValue, prompt]
     }
 
     private func openInTerminal(_ script: String, name: String) {

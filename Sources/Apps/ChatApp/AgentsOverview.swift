@@ -516,11 +516,12 @@ private struct AgentRow: View {
     }
 }
 
-/// Prompt + project folder → `claude --bg` in that folder.
+/// Prompt + project folder + mode → `claude --bg` in that folder. Return starts it (⌥Return for a new line).
 private struct NewAgentForm: View {
     let app: ChatApp
     @State private var prompt = ""
     @State private var folder = ""
+    @State private var mode = AgentMode.plan
     @State private var starting = false
     @State private var status: String?
     @FocusState private var focused: Bool
@@ -533,6 +534,7 @@ private struct NewAgentForm: View {
                 .foregroundStyle(.white)
                 .lineLimit(1...4)
                 .focused($focused)
+                .onSubmit(start)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.1)))
             HStack(spacing: 8) {
@@ -549,6 +551,21 @@ private struct NewAgentForm: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                Menu {
+                    Picker("Mode", selection: $mode) {
+                        ForEach(AgentMode.allCases) { mode in
+                            Text("\(mode.name) — \(mode.detail)").tag(mode)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } label: {
+                    Label(mode.name, systemImage: mode.systemImage)
+                        .font(.system(size: 11))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(mode.detail)
                 if let status {
                     Text(status).font(.system(size: 10)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                 }
@@ -568,15 +585,20 @@ private struct NewAgentForm: View {
                     .foregroundStyle(.black)
                 }
                 .buttonStyle(.plain)
-                .disabled(starting || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || folder.isEmpty)
+                .disabled(!canStart)
             }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15)))
         .onAppear {
             folder = app.agentMonitor.recentFolders.first ?? ""
+            mode = app.agentMonitor.newAgentMode
             focused = true
         }
+    }
+
+    private var canStart: Bool {
+        !starting && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folder.isEmpty
     }
 
     private func chooseFolder() {
@@ -589,13 +611,15 @@ private struct NewAgentForm: View {
     }
 
     private func start() {
+        guard canStart else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         starting = true
         status = nil
+        app.agentMonitor.newAgentMode = mode
         Task {
             defer { starting = false }
             do {
-                try await app.agentMonitor.dispatch(prompt: text, in: folder)
+                try await app.agentMonitor.dispatch(prompt: text, in: folder, mode: mode)
                 prompt = ""
                 app.composingAgent = false
             } catch {

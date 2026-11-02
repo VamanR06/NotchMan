@@ -194,7 +194,9 @@ open while you type, and a click outside closes it) — or choose a new Terminal
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** opens shells in the
 agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
 a shell. Interactive sessions open their folder in VS Code/Cursor.
-**New Agent** starts `claude --bg "<prompt>"` in a project folder. You're notified when an agent needs you or
+**New Agent** starts `claude --bg "<prompt>"` in a project folder (worktree sessions are listed as their repo).
+Pick its mode first: **Plan** (the default; it plans and changes nothing until you approve), **Ask first**,
+**Accept edits** or **Auto**. The last mode you used is remembered. Return starts it, ⌥Return adds a line. You're notified when an agent needs you or
 finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
 
 **Approvals in the notch:** in Settings → Agents → Approvals, click **Install Approval Hook**. When a background
