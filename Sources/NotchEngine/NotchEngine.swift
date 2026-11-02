@@ -51,7 +51,7 @@ public final class NotchEngine {
             let context = NotchContext(
                 appID: appID,
                 attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
-                openSettings: { [weak self] in self?.settings.show(appID: appID) },
+                openSettings: { [weak self] in self?.showSettings(appID: appID) },
                 send: { [weak self] message, target, reveal in self?.deliver(message, to: target, reveal: reveal) },
                 isVisible: { [weak self] in
                     self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
@@ -90,6 +90,16 @@ public final class NotchEngine {
                 MainActor.assumeIsolated { self?.notches.values.forEach { $0.model.isMenuOpen = open } }
             })
         }
+        // File pickers and alerts opened from the notch go above it; at their usual level they'd open underneath.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { note in
+            nonisolated(unsafe) let object = note.object
+            MainActor.assumeIsolated {
+                guard let window = object as? NSWindow, Self.isDialog(window) else { return }
+                window.level = NotchPanel.aboveNotch
+            }
+        })
         observers.append(NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -100,8 +110,16 @@ public final class NotchEngine {
         })
     }
 
-    public func showSettings() {
-        settings.show()
+    /// Opens Settings and closes the notch, which would otherwise cover the window (it floats above the menu bar).
+    public func showSettings(appID: String? = nil) {
+        settings.show(appID: appID)
+        notches.values.filter { $0.model.state == .expanded }.forEach { $0.model.collapse() }
+    }
+
+    /// An open/save panel or a modal alert.
+    static func isDialog(_ window: NSWindow) -> Bool {
+        guard !(window is NotchPanel) else { return false }
+        return window is NSSavePanel || NSApp.modalWindow === window || window.level == .modalPanel
     }
 
     public func stop() {
@@ -148,7 +166,7 @@ public final class NotchEngine {
     private func makeNotch(geometry: NotchGeometry) -> ScreenNotch {
         let model = NotchViewModel(apps: apps, geometry: geometry)
         let panel = NotchPanel(contentRect: .zero)
-        let root = NotchRootView(model: model, openSettings: { [weak self] in self?.settings.show() })
+        let root = NotchRootView(model: model, openSettings: { [weak self] in self?.showSettings() })
         panel.contentView = FirstMouseHostingView(rootView: root)
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
@@ -349,10 +367,10 @@ public final class NotchEngine {
 
     private func handleMouse() {
         let point = NSEvent.mouseLocation
-        // Over one of NotchMan's own pop-ups (password AutoFill, a menu or picker opened from the notch): treat
-        // it as still being in the notch so it doesn't close underneath.
+        // Over one of NotchMan's own pop-ups (password AutoFill, a menu, a file picker or alert opened from the notch):
+        // treat it as still being in the notch so it doesn't close underneath.
         let overOwnPopup = NSApp.windows.contains { window in
-            window.isVisible && !(window is NotchPanel) && !window.styleMask.contains(.titled)
+            window.isVisible && !(window is NotchPanel) && (!window.styleMask.contains(.titled) || Self.isDialog(window))
                 && window.frame.contains(point)
         }
         for notch in notches.values {
