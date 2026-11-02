@@ -63,9 +63,17 @@ struct PageDocument: Codable, Equatable {
 }
 
 struct ApplyScripts: Decodable {
+    struct Sections: Decodable {
+        /// Jobs on the Profile: Work Experience entries the form should have.
+        let work: Int
+    }
+
     let scan: String
     let fill: String
     let frames: String
+    /// Adds one Work Experience entry (JobManager v0.31+).
+    let add_sections: String?
+    let sections: Sections?
 }
 
 /// One form field as JobManager's rules see it.
@@ -200,6 +208,13 @@ enum PageForm {
         let output = try await tab.runJavaScript("JSON.stringify(\(script))")
         let sources = (try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String]) ?? []
         return sources.compactMap(URL.init(string:)).filter { $0.scheme == "https" }
+    }
+
+    /// Clicks the form's Add button under Work Experience if it has fewer than `want` entries. True if it clicked.
+    static func addSection(in tab: BrowserTab, script: String, want: Int) async throws -> Bool {
+        struct Result: Decodable { let clicked: Bool }
+        let output = try await tab.runJavaScript("JSON.stringify((\(script))(\(want)))")
+        return (try? JSONDecoder().decode(Result.self, from: Data(output.utf8)))?.clicked ?? false
     }
 
     static func fill(in tab: BrowserTab, script: String, steps: Any, files: [String: Any]) async throws -> [FillResult] {

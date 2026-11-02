@@ -25,7 +25,6 @@ final class JobManagerClient {
     private static let cookieName = "jm_session"
 
     private let keychain: Keychain
-    private var cachedScripts: ApplyScripts?
     private let defaults: UserDefaults
     /// Ephemeral, no automatic cookies or redirects: the login response's cookie and Location are read by hand.
     private let session = URLSession(configuration: {
@@ -165,13 +164,11 @@ final class JobManagerClient {
         return try JSONDecoder().decode(PageInfo.self, from: data)
     }
 
-    /// The form scanner, the in-page filler and the embedded-form finder (fetched once per launch).
+    /// The form scanner, the in-page filler, the embedded-form finder and how many Work Experience entries to add
+    /// (fetched for each Autofill, so Profile changes and new JobManager versions apply straight away).
     func applyScripts() async throws -> ApplyScripts {
-        if let cachedScripts { return cachedScripts }
         let data = try await authorized("GET", "api/apply/scripts", json: nil, accept: [200])
-        let scripts = try JSONDecoder().decode(ApplyScripts.self, from: data)
-        cachedScripts = scripts
-        return scripts
+        return try JSONDecoder().decode(ApplyScripts.self, from: data)
     }
 
     /// What goes in each scanned field, by JobManager's autofill rules. `fields` is the scanner's output as is.

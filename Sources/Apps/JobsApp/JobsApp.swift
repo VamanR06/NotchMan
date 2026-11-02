@@ -422,6 +422,13 @@ public final class JobsApp: NotchApp {
                     return AutofillReport(problem: "The browser is on a different page now. Open the application form for \(match.job.company).")
                 }
             }
+            // Workday-style forms start with no Work Experience entries: add one per job on the Profile first.
+            if let script = scripts.add_sections, let want = scripts.sections?.work, want > 0 {
+                for _ in 0..<want {
+                    guard try await PageForm.addSection(in: current, script: script, want: want) else { break }
+                    try await Task.sleep(for: .milliseconds(900))
+                }
+            }
             let scan = try await PageForm.scan(in: current, script: scripts.scan)
             if scan.fields.isEmpty {
                 let frames = try? await PageForm.embeddedForms(in: current, script: scripts.frames)
