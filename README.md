@@ -195,7 +195,8 @@ Code's session files change. They're listed by project: several sessions in one 
 repo) sit under a project row you can fold, which shows the most urgent state among them; projects with something
 needing you or working come first and start open. Make folders of your own with the folder-plus button beside the
 search, then drag sessions onto one or right-click a session → Move to Folder (right-click a project → Move All
-to Folder). Your folders sit at the top in the order you made them and are remembered; right-click one to rename
+to Folder). The same menu lists the projects too, so a session can go under another project (or drag it onto that
+project's row); it shows its own project's name there, and Move Back returns it. Your folders sit at the top in the order you made them and are remembered; right-click one to rename
 or delete it (its sessions go back to their projects). The last button switches to grouping by status (Needs
 you, Working, Done and Idle). Click a background agent to open an
 interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays

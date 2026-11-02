@@ -64,6 +64,30 @@ import Testing
         #expect(app.folder(of: "2") == nil)
     }
 
+    @Test func movingASessionUnderAnotherProject() {
+        let monitor = ClaudeAgentsMonitor(defaults: UserDefaults(suiteName: "notchman.tests.agents.placements")!)
+        let stray = agent("3", "/Users/me", state: "done", ago: 3)
+        monitor.apply([agent("1", "/Users/me/GitHub/NotchMan", state: "done", ago: 1),
+                       agent("2", "/Users/me/GitHub/NotchMan/.claude/worktrees/x", state: "done", ago: 2), stray], now: now)
+        let app = ChatApp()
+        app.useAgentMonitor(monitor)
+        #expect(app.projectChoices.map(\.name) == ["me", "NotchMan"])
+
+        let folder = AgentFolder(name: "Misc", sessions: ["3"])
+        app.agentFolders = [folder]
+        app.move(["3"], toProject: "/Users/me/GitHub/NotchMan")
+        #expect(app.folder(of: "3") == nil, "out of your folder")
+        #expect(app.projectFolder(of: stray) == "/Users/me/GitHub/NotchMan")
+        let grouped = AgentProject.group(monitor.agents, folders: app.agentFolders, placements: app.agentPlacements)
+        #expect(grouped.first { $0.name == "NotchMan" }?.agents.map(\.id).sorted() == ["1", "2", "3"])
+
+        app.move(["3"], to: folder.id)
+        #expect(app.agentPlacements["3"] == nil, "a folder replaces the project it was moved to")
+        app.move(["3"], toProject: "/Users/me")
+        #expect(app.agentPlacements["3"] == nil, "its own project needs no placement")
+        #expect(app.projectFolder(of: stray) == "/Users/me")
+    }
+
     /// Renders the project tree into build/dev for eyeballing.
     @Test func rendersProjectTree() throws {
         let monitor = ClaudeAgentsMonitor(defaults: UserDefaults(suiteName: "notchman.tests.agents.tree")!)

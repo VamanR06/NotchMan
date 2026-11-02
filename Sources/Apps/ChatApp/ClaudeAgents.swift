@@ -153,14 +153,18 @@ struct AgentProject: Identifiable, Equatable {
 
     /// Your folders first, in the order you made them (empty ones too), each with the sessions you put in it;
     /// then the other sessions by project: the most urgent project first, then the most recently started.
-    static func group(_ agents: [ClaudeAgent], folders: [AgentFolder] = []) -> [AgentProject] {
+    /// `placements` puts sessions under another project than their own (session ID → project folder).
+    static func group(_ agents: [ClaudeAgent], folders: [AgentFolder] = [],
+                      placements: [String: String] = [:]) -> [AgentProject] {
         var filed = Set<String>()
         let custom = folders.map { folder in
             let members = agents.filter { folder.sessions.contains($0.id) && !filed.contains($0.id) }
             filed.formUnion(members.map(\.id))
             return AgentProject(folder: "", agents: ClaudeAgent.sorted(members), custom: folder)
         }
-        let projects = Dictionary(grouping: agents.filter { !filed.contains($0.id) }) { ClaudeAgentsMonitor.projectFolder($0.cwd) }
+        let projects = Dictionary(grouping: agents.filter { !filed.contains($0.id) }) {
+            placements[$0.id] ?? ClaudeAgentsMonitor.projectFolder($0.cwd)
+        }
             .map { AgentProject(folder: $0.key, agents: ClaudeAgent.sorted($0.value)) }
             .sorted {
                 if $0.phase != $1.phase { return $0.phase < $1.phase }

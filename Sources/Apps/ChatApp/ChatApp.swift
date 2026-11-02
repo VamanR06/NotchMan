@@ -42,6 +42,10 @@ public final class ChatApp: NotchApp {
     var agentFolders: [AgentFolder] = [] {
         didSet { context?.defaults.set(try? JSONEncoder().encode(agentFolders), forKey: "agentFolders") }
     }
+    /// Sessions you moved under another project than their own: session ID → that project's folder.
+    var agentPlacements: [String: String] = [:] {
+        didSet { context?.defaults.set(agentPlacements, forKey: "agentPlacements") }
+    }
 
     /// Claude Code sessions.
     @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
@@ -149,6 +153,7 @@ public final class ChatApp: NotchApp {
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
         agentFolders = context.defaults.data(forKey: "agentFolders")
             .flatMap { try? JSONDecoder().decode([AgentFolder].self, from: $0) } ?? []
+        agentPlacements = context.defaults.dictionary(forKey: "agentPlacements") as? [String: String] ?? [:]
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         groupsAgentsByProject = context.defaults.object(forKey: "groupsAgentsByProject") as? Bool ?? true
@@ -584,19 +589,53 @@ public final class ChatApp: NotchApp {
         return folder.id
     }
 
-    /// Puts sessions in a folder (out of any other), or back with their projects when `folderID` is nil.
+    /// Puts sessions in a folder (out of any other, and back from any other project), or back with their own
+    /// projects when `folderID` is nil.
     func move(_ sessions: [String], to folderID: UUID?) {
         var folders = agentFolders
         for index in folders.indices {
             folders[index].sessions.removeAll { sessions.contains($0) }
             if folders[index].id == folderID { folders[index].sessions += sessions }
         }
+        var placements = agentPlacements
+        sessions.forEach { placements[$0] = nil }
         // Forget sessions that no longer exist, once the list is known.
         if let monitor = agentMonitor, monitor.hasLoaded {
             let known = Set(monitor.agents.map(\.id))
             for index in folders.indices { folders[index].sessions.removeAll { !known.contains($0) } }
+            placements = placements.filter { known.contains($0.key) }
         }
         agentFolders = folders
+        agentPlacements = placements
+    }
+
+    /// Puts sessions under the project at `folder` (out of your folders); their own project takes them back.
+    func move(_ sessions: [String], toProject folder: String) {
+        move(sessions, to: nil)
+        for id in sessions {
+            let own = agentMonitor?.agents.first { $0.id == id }.map { ClaudeAgentsMonitor.projectFolder($0.cwd) }
+            agentPlacements[id] = own == folder ? nil : folder
+        }
+    }
+
+    /// The project a session is listed under: where you put it, else its own.
+    func projectFolder(of agent: ClaudeAgent) -> String {
+        agentPlacements[agent.id] ?? ClaudeAgentsMonitor.projectFolder(agent.cwd)
+    }
+
+    /// Every project on the Overview, to move sessions into: (folder, name), by name. Names shared by two projects
+    /// get their parent folder too.
+    var projectChoices: [(folder: String, name: String)] {
+        let folders = Set((agentMonitor?.agents ?? []).map(projectFolder(of:)))
+        let name = { (path: String) in URL(fileURLWithPath: path).lastPathComponent }
+        let counts = Dictionary(folders.map { (name($0), 1) }, uniquingKeysWith: +)
+        return folders.map { path in
+            let url = URL(fileURLWithPath: path)
+            let label = counts[name(path), default: 0] > 1
+                ? url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent : url.lastPathComponent
+            return (path, label)
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     func renameFolder(_ id: UUID) {
