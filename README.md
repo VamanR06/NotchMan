@@ -157,6 +157,9 @@ A **This page** card at the top has:
 - **Autofill**, which fills the form using JobManager's own rules (the same ones as its ChatGPT autofill):
   - Your Profile, explicit work-eligibility answers, saved answers and your demographic policy. No AI guessing.
   - It attaches the resume and takes a second pass for follow-up questions your answers reveal.
+  - Work Experience sections (Workday's My Experience and the like) come from the jobs under Work experience on
+    JobManager's Profile page: it clicks Add until there's one entry per job, then fills job title, company,
+    location, "I currently work here", From/To and the role description (JobManager v0.31+).
   - Afterwards it lists what still needs you: essay questions, attestations, anything not in your Profile.
   - It never submits.
 - If the form is embedded from Greenhouse or similar on a company's own site, **Open Form** opens it on its
@@ -187,8 +190,11 @@ also copied to the clipboard as a fallback. To keep these chats in a ChatGPT pro
 ## Agents (Claude Code + ChatGPT / Claude / Muse)
 
 One place for AI work. The **Overview** tab shows the three web chats (writing / reply ready) and every Claude
-Code session on this Mac — CLI, VS Code and background agents — grouped as Needs you, Working, Done and Idle,
-read from `claude agents --json` whenever Claude Code's session files change. Click a background agent to open an
+Code session on this Mac — CLI, VS Code and background agents — read from `claude agents --json` whenever Claude
+Code's session files change. They're listed by project: several sessions in one project (worktrees count as their
+repo) sit under a project row you can fold, which shows the most urgent state among them; projects with something
+needing you or working come first and start open. The button beside the search switches to grouping by status
+(Needs you, Working, Done and Idle). Click a background agent to open an
 interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** opens shells in the

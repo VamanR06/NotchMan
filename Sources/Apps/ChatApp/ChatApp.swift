@@ -32,6 +32,12 @@ public final class ChatApp: NotchApp {
     var agentQuery = ""
     /// Show every finished session, not just the most recent few.
     var showAllCompleted = false
+    /// The Overview lists sessions by project (a project's sessions together under it) instead of by status.
+    var groupsAgentsByProject = true {
+        didSet { context?.defaults.set(groupsAgentsByProject, forKey: "groupsAgentsByProject") }
+    }
+    /// Projects opened or folded by hand on the Overview, by folder; the rest follow `AgentProject.startsExpanded`.
+    var projectExpansion: [String: Bool] = [:]
 
     /// Claude Code sessions.
     @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
@@ -139,6 +145,7 @@ public final class ChatApp: NotchApp {
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
+        groupsAgentsByProject = context.defaults.object(forKey: "groupsAgentsByProject") as? Bool ?? true
         agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
         agentMonitor.onChange = { [weak self] in self?.publishBoard() }

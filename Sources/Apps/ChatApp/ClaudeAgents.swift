@@ -116,6 +116,42 @@ struct ClaudeAgent: Identifiable, Hashable {
     }
 }
 
+/// The sessions in one project (a worktree's count as its repo's), for the Overview's project tree.
+struct AgentProject: Identifiable, Equatable {
+    let folder: String
+    /// Needs-you first, then working, done, idle; newest first within each.
+    let agents: [ClaudeAgent]
+
+    var id: String { folder }
+    var name: String { URL(fileURLWithPath: folder).lastPathComponent }
+    /// The most urgent of its sessions'.
+    var phase: ClaudeAgent.Phase { agents.map(\.phase).min() ?? .idle }
+    var latest: Date { agents.compactMap(\.startedAt).max() ?? .distantPast }
+    /// Open while something in it needs you or is working; finished and idle projects start folded.
+    var startsExpanded: Bool { phase <= .working }
+
+    /// "1 needs you · 2 working · 3 done"
+    var summary: String {
+        [(ClaudeAgent.Phase.needsYou, "needs you"), (.working, "working"), (.done, "done"), (.idle, "idle")]
+            .compactMap { phase, label in
+                let count = agents.filter { $0.phase == phase }.count
+                return count > 0 ? "\(count) \(label)" : nil
+            }
+            .joined(separator: " · ")
+    }
+
+    /// Groups sessions by project: the most urgent project first, then the most recently started.
+    static func group(_ agents: [ClaudeAgent]) -> [AgentProject] {
+        Dictionary(grouping: agents) { ClaudeAgentsMonitor.projectFolder($0.cwd) }
+            .map { AgentProject(folder: $0.key, agents: ClaudeAgent.sorted($0.value)) }
+            .sorted {
+                if $0.phase != $1.phase { return $0.phase < $1.phase }
+                if $0.latest != $1.latest { return $0.latest > $1.latest }
+                return $0.folder < $1.folder
+            }
+    }
+}
+
 /// Something about an agent worth telling the user.
 enum AgentEvent: Equatable {
     case needsYou(ClaudeAgent)
@@ -305,7 +341,7 @@ final class ClaudeAgentsMonitor {
     }
 
     /// The repo a Claude Code worktree (`<repo>/.claude/worktrees/<name>`) belongs to; other folders as they are.
-    static func projectFolder(_ path: String) -> String {
+    nonisolated static func projectFolder(_ path: String) -> String {
         guard let range = path.range(of: "/.claude/worktrees/") else { return path }
         return String(path[..<range.lowerBound])
     }

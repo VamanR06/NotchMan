@@ -19,7 +19,10 @@ struct AgentsOverview: View {
                 if app.composingAgent {
                     NewAgentForm(app: app)
                 }
-                SessionSearch(app: app)
+                HStack(spacing: 6) {
+                    SessionSearch(app: app)
+                    GroupingToggle(app: app)
+                }
                 AgentList(app: app)
             }
             .onAppear { app.markOverviewSeen() }
@@ -125,7 +128,11 @@ private struct AgentList: View {
             centered("No Claude Code sessions running. Start one with New Agent.", isError: false)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
-                AgentSections(app: app, lazy: true)
+                if app.groupsAgentsByProject {
+                    AgentProjectTree(app: app, lazy: true)
+                } else {
+                    AgentSections(app: app, lazy: true)
+                }
             }
         }
     }
@@ -187,6 +194,143 @@ struct AgentSections: View {
         case .working: "Working"
         case .done: "Done"
         case .idle: "Idle"
+        }
+    }
+}
+
+/// Agents by project: several sessions in one project (worktrees count as their repo) sit under a row you can
+/// fold; a project with one session is just that session's row. Most urgent first, like the status view.
+struct AgentProjectTree: View {
+    let app: ChatApp
+    /// Lazy inside the scroll view; plain when rendered on its own (e.g. in tests).
+    var lazy = false
+
+    var body: some View {
+        if lazy {
+            LazyVStack(alignment: .leading, spacing: 2) { rows }
+        } else {
+            VStack(alignment: .leading, spacing: 2) { rows }
+        }
+    }
+
+    @ViewBuilder
+    private var rows: some View {
+        let searching = !app.agentQuery.trimmingCharacters(in: .whitespaces).isEmpty
+        let projects = AgentProject.group(app.agentMonitor.agents.filter { $0.matches(app.agentQuery) })
+        // Finished projects pile up; show the latest few unless expanded or searching.
+        let done = projects.filter { $0.phase == .done }
+        let hidden = searching || app.showAllCompleted ? [] : Set(done.dropFirst(AgentSections.recentDone).map(\.id))
+        ForEach(projects.filter { !hidden.contains($0.id) }) { project in
+            if project.agents.count == 1, let agent = project.agents.first {
+                AgentRow(app: app, agent: agent)
+            } else {
+                let expanded = searching || (app.projectExpansion[project.id] ?? project.startsExpanded)
+                ProjectRow(app: app, project: project, expanded: expanded)
+                if expanded {
+                    ForEach(project.agents) { agent in
+                        AgentRow(app: app, agent: agent, inProjectTree: true)
+                            .padding(.leading, 20)
+                            .overlay(alignment: .leading) {
+                                Rectangle().fill(.white.opacity(0.12)).frame(width: 1).padding(.leading, 12)
+                            }
+                    }
+                }
+            }
+        }
+        if !searching && done.count > AgentSections.recentDone {
+            OlderToggle(app: app, hidden: done.count - AgentSections.recentDone)
+        }
+    }
+}
+
+/// A project with several sessions: click to show or hide them.
+private struct ProjectRow: View {
+    @Bindable var app: ChatApp
+    let project: AgentProject
+    let expanded: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 9) {
+            PhaseMark(phase: project.phase).frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Image(systemName: "folder.fill").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
+                    Text(project.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text("\(project.agents.count)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(.white.opacity(0.15)))
+                        .foregroundStyle(.white.opacity(0.75))
+                    if project.agents.contains(where: { app.unseenAgents.contains($0.id) }) {
+                        Circle().fill(project.phase == .needsYou ? .orange : .green).frame(width: 6, height: 6)
+                    }
+                }
+                Text(project.summary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .foregroundStyle(.white.opacity(hovering ? 0.7 : 0.4))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.15)) { app.projectExpansion[project.id] = !expanded }
+        }
+        .help(project.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        .contextMenu {
+            Button("Open Folder in \(app.editor.name)") { app.editor.open(project.folder) }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.folder)])
+            }
+        }
+    }
+}
+
+/// Switches the Overview between sessions by project and by status.
+private struct GroupingToggle: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { app.groupsAgentsByProject.toggle() }
+        } label: {
+            Image(systemName: app.groupsAgentsByProject ? "folder" : "list.bullet")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 22)
+                .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.07)))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(0.7))
+        .help(app.groupsAgentsByProject ? "By project — show by status instead" : "By status — show by project instead")
+    }
+}
+
+/// Needs you / working / done / idle, as a small mark.
+private struct PhaseMark: View {
+    let phase: ClaudeAgent.Phase
+
+    var body: some View {
+        switch phase {
+        case .needsYou:
+            Image(systemName: "exclamationmark.bubble.fill").font(.system(size: 12)).foregroundStyle(.orange)
+        case .working:
+            NotchSpinner(size: 11, lineWidth: 1.6)
+        case .done:
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(.green)
+        case .idle:
+            Image(systemName: "moon.zzz").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
         }
     }
 }
@@ -426,11 +570,19 @@ private struct SessionSearch: View {
 private struct AgentRow: View {
     let app: ChatApp
     let agent: ClaudeAgent
+    /// Under its project in the tree: the project name is above it, so only a worktree's own name shows.
+    var inProjectTree = false
     @State private var hovering = false
+
+    /// What the second line names the session's folder as, if anything.
+    private var folderLabel: String? {
+        guard inProjectTree else { return agent.project }
+        return ClaudeAgentsMonitor.projectFolder(agent.cwd) == agent.cwd ? nil : agent.project
+    }
 
     var body: some View {
         HStack(spacing: 9) {
-            phaseMark.frame(width: 14)
+            PhaseMark(phase: agent.phase).frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(agent.name)
@@ -448,8 +600,11 @@ private struct AgentRow: View {
                     }
                 }
                 HStack(spacing: 4) {
-                    Text(agent.project)
-                    Text("·")
+                    if let folderLabel {
+                        if inProjectTree { Image(systemName: "arrow.triangle.branch").font(.system(size: 8)) }
+                        Text(folderLabel)
+                        Text("·")
+                    }
                     Text(agent.kind == .background ? "Background" : "Interactive")
                     if let started = agent.startedAt {
                         Text("·")
@@ -498,20 +653,6 @@ private struct AgentRow: View {
             }
             Divider()
             AskMenuItems { "Claude Code session: \(agent.name)\nProject: \(agent.cwd)\nStatus: \(agent.state ?? agent.status ?? "unknown")" }
-        }
-    }
-
-    @ViewBuilder
-    private var phaseMark: some View {
-        switch agent.phase {
-        case .needsYou:
-            Image(systemName: "exclamationmark.bubble.fill").font(.system(size: 12)).foregroundStyle(.orange)
-        case .working:
-            NotchSpinner(size: 11, lineWidth: 1.6)
-        case .done:
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(.green)
-        case .idle:
-            Image(systemName: "moon.zzz").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
         }
     }
 }
