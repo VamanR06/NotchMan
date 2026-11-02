@@ -199,9 +199,9 @@ struct AgentSections: View {
     }
 }
 
-/// Agents by project: your own folders first, then several sessions in one project (worktrees count as their repo)
-/// under a row you can fold; a project with one session is just that session's row. Most urgent first, like the
-/// status view.
+/// Agents in folders: each project's sessions (worktrees count as their repo) in its own folder unless you moved
+/// them into another one, under a row you can fold; a project's folder with one session is just that session's row.
+/// Most urgent first, like the status view.
 struct AgentProjectTree: View {
     let app: ChatApp
     /// Lazy inside the scroll view; plain when rendered on its own (e.g. in tests).
@@ -219,13 +219,13 @@ struct AgentProjectTree: View {
     private var rows: some View {
         let searching = !app.agentQuery.trimmingCharacters(in: .whitespaces).isEmpty
         let projects = AgentProject.group(app.agentMonitor.agents.filter { $0.matches(app.agentQuery) },
-                                          folders: app.agentFolders, placements: app.agentPlacements)
+                                          folders: app.agentFolders)
             .filter { !(searching && $0.agents.isEmpty) }
-        // Finished projects pile up; show the latest few unless expanded or searching. Your folders always show.
-        let done = projects.filter { $0.phase == .done && $0.custom == nil }
+        // Finished folders pile up; show the latest few unless expanded or searching.
+        let done = projects.filter { $0.phase == .done && !$0.agents.isEmpty }
         let hidden = searching || app.showAllCompleted ? [] : Set(done.dropFirst(AgentSections.recentDone).map(\.id))
         ForEach(projects.filter { !hidden.contains($0.id) }) { project in
-            if project.custom == nil, project.agents.count == 1, let agent = project.agents.first {
+            if project.showsAsRow, let agent = project.agents.first {
                 AgentRow(app: app, agent: agent)
             } else {
                 let expanded = searching || (app.projectExpansion[project.id] ?? project.startsExpanded)
@@ -233,7 +233,7 @@ struct AgentProjectTree: View {
                 if expanded {
                     Group {
                         ForEach(project.agents) { agent in
-                            AgentRow(app: app, agent: agent, treeFolder: project.custom == nil ? project.folder : nil)
+                            AgentRow(app: app, agent: agent, treeFolder: project.path)
                         }
                         if project.agents.isEmpty {
                             Text("Drag sessions here, or right-click one → Move to Folder.")
@@ -256,8 +256,7 @@ struct AgentProjectTree: View {
     }
 }
 
-/// A project with several sessions, or one of your folders: click to show or hide them. Drop a session on a folder
-/// to put it there, or on a project to take it out of its folder.
+/// A folder: click to show or hide its sessions; drop a session on it to move it there.
 private struct ProjectRow: View {
     @Bindable var app: ChatApp
     let project: AgentProject
@@ -272,7 +271,7 @@ private struct ProjectRow: View {
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 10))
-                        .foregroundStyle(project.custom == nil ? .white.opacity(0.55) : .blue)
+                        .foregroundStyle(.blue)
                     Text(project.name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
@@ -307,22 +306,23 @@ private struct ProjectRow: View {
             withAnimation(.easeOut(duration: 0.15)) { app.projectExpansion[project.id] = !expanded }
         }
         .dropDestination(for: String.self) { sessions, _ in
-            withAnimation(.easeOut(duration: 0.15)) {
-                if let folder = project.custom { app.move(sessions, to: folder.id) } else { app.move(sessions, toProject: project.folder) }
-            }
+            withAnimation(.easeOut(duration: 0.15)) { app.move(sessions, to: project.folder.id) }
             return true
         } isTargeted: { targeted = $0 }
-        .help(project.custom == nil ? project.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~") : "Your folder")
+        .help(project.path.map { "Collects sessions from " + $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+              ?? "Holds the sessions you move here")
         .contextMenu {
-            if let folder = project.custom {
-                Button("Rename…") { app.renameFolder(folder.id) }
-                Button("Delete Folder") { withAnimation { app.deleteFolder(folder.id) } }
-                    .help("Its sessions go back under their projects")
-            } else {
-                Button("Open Folder in \(app.editor.name)") { app.editor.open(project.folder) }
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.folder)])
+            Button("Rename…") { app.renameFolder(project.folder.id) }
+            Button("Delete Folder") { withAnimation { app.deleteFolder(project.folder.id) } }
+                .help("Its sessions go back to their projects' folders")
+            if let path = project.path {
+                Divider()
+                Button("Open Project in \(app.editor.name)") { app.editor.open(path) }
+                Button("Reveal Project in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                 }
+            }
+            if !project.agents.isEmpty {
                 Divider()
                 MoveToFolderMenu(app: app, sessions: project.agents.map(\.id), title: "Move All to Folder")
             }
@@ -330,7 +330,8 @@ private struct ProjectRow: View {
     }
 }
 
-/// "Move to Folder" ▸ your folders, the projects on the Overview, New Folder…, and taking sessions back out.
+/// "Move to Folder" ▸ every folder on the Overview and New Folder…, plus sending a session back to its project's
+/// folder.
 private struct MoveToFolderMenu: View {
     let app: ChatApp
     let sessions: [String]
@@ -338,30 +339,16 @@ private struct MoveToFolderMenu: View {
 
     var body: some View {
         let one = sessions.count == 1 ? app.agentMonitor.agents.first { $0.id == sessions[0] } : nil
-        let current = one.flatMap { app.folder(of: $0.id) }
-        // The project it's listed under now, when it isn't in one of your folders.
-        let listedUnder = one.flatMap { current == nil ? app.projectFolder(of: $0) : nil }
+        let listed = one.flatMap { app.listedFolder(of: $0) }
         Menu(title) {
-            if !app.agentFolders.isEmpty {
-                Section("Your Folders") {
-                    ForEach(app.agentFolders) { folder in
-                        Button(folder.name) { withAnimation { app.move(sessions, to: folder.id) } }
-                            .disabled(folder.id == current?.id)
-                    }
-                }
-            }
-            Section("Projects") {
-                ForEach(app.projectChoices, id: \.folder) { choice in
-                    Button(choice.name) { withAnimation { app.move(sessions, toProject: choice.folder) } }
-                        .disabled(choice.folder == listedUnder)
-                }
+            ForEach(app.shownFolders) { folder in
+                Button(folder.name) { withAnimation { app.move(sessions, to: folder.id) } }
+                    .disabled(folder.id == listed?.id)
             }
             Divider()
             Button("New Folder…") { withAnimation { _ = app.newFolder(with: sessions) } }
         }
-        if let current {
-            Button("Remove from “\(current.name)”") { withAnimation { app.move(sessions, to: nil) } }
-        } else if let one, app.agentPlacements[one.id] != nil {
+        if let one, app.folder(of: one.id) != nil {
             let own = URL(fileURLWithPath: ClaudeAgentsMonitor.projectFolder(one.cwd)).lastPathComponent
             Button("Move Back to \(own)") { withAnimation { app.move(sessions, to: nil) } }
         }

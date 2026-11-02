@@ -116,25 +116,54 @@ struct ClaudeAgent: Identifiable, Hashable {
     }
 }
 
-/// A folder of your own on the Overview, holding whichever sessions you put in it (by session ID).
+/// A folder on the Overview. NotchMan makes one per project, which collects that project's sessions (worktrees
+/// count as their repo) on their own; you can make more, rename or delete any, and move sessions between them.
 struct AgentFolder: Codable, Identifiable, Equatable {
     var id = UUID()
     var name: String
+    /// Sessions you moved in by hand (by session ID).
     var sessions: [String] = []
+    /// Project folders whose sessions land here on their own.
+    var projects: [String] = []
+
+    init(id: UUID = UUID(), name: String, sessions: [String] = [], projects: [String] = []) {
+        self.id = id
+        self.name = name
+        self.sessions = sessions
+        self.projects = projects
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        sessions = try c.decodeIfPresent([String].self, forKey: .sessions) ?? []
+        projects = try c.decodeIfPresent([String].self, forKey: .projects) ?? []
+    }
+
+    /// The folder NotchMan makes for a project's sessions, named after it.
+    static func forProject(_ path: String) -> AgentFolder {
+        AgentFolder(name: URL(fileURLWithPath: path).lastPathComponent, projects: [path])
+    }
+
+    /// Still just what NotchMan made for a project: its name, nothing moved in by hand.
+    var isAutomatic: Bool {
+        projects.count == 1 && sessions.isEmpty && name == URL(fileURLWithPath: projects[0]).lastPathComponent
+    }
 }
 
-/// The sessions in one project (a worktree's count as its repo's), or in one of your folders, for the Overview's
-/// project tree.
+/// A folder with the sessions in it, for the Overview's tree.
 struct AgentProject: Identifiable, Equatable {
-    /// The project's path ("" for one of your folders).
-    let folder: String
+    let folder: AgentFolder
     /// Needs-you first, then working, done, idle; newest first within each.
     let agents: [ClaudeAgent]
-    /// Set for a folder of your own rather than a project.
-    var custom: AgentFolder?
 
-    var id: String { custom.map { "folder:\($0.id)" } ?? folder }
-    var name: String { custom?.name ?? URL(fileURLWithPath: folder).lastPathComponent }
+    var id: String { "folder:\(folder.id)" }
+    var name: String { folder.name }
+    /// The project it collects sessions from, if any.
+    var path: String? { folder.projects.first }
+    /// A project's own folder with one session shows as just that session's row, to keep the list short.
+    var showsAsRow: Bool { folder.isAutomatic && agents.count == 1 }
     /// The most urgent of its sessions'.
     var phase: ClaudeAgent.Phase { agents.map(\.phase).min() ?? .idle }
     var latest: Date { agents.compactMap(\.startedAt).max() ?? .distantPast }
@@ -151,27 +180,38 @@ struct AgentProject: Identifiable, Equatable {
             .joined(separator: " · ")
     }
 
-    /// Your folders first, in the order you made them (empty ones too), each with the sessions you put in it;
-    /// then the other sessions by project: the most urgent project first, then the most recently started.
-    /// `placements` puts sessions under another project than their own (session ID → project folder).
-    static func group(_ agents: [ClaudeAgent], folders: [AgentFolder] = [],
-                      placements: [String: String] = [:]) -> [AgentProject] {
-        var filed = Set<String>()
-        let custom = folders.map { folder in
-            let members = agents.filter { folder.sessions.contains($0.id) && !filed.contains($0.id) }
-            filed.formUnion(members.map(\.id))
-            return AgentProject(folder: "", agents: ClaudeAgent.sorted(members), custom: folder)
+    /// Puts each session in the folder you moved it to, else its project's folder (a new one for a project that
+    /// has none yet: see `missingProjects`). Empty folders you made show first, waiting to be filled; a project's
+    /// folder with no sessions left doesn't show. Then the most urgent folder first, then the most recently started.
+    static func group(_ agents: [ClaudeAgent], folders: [AgentFolder]) -> [AgentProject] {
+        var folders = folders
+        var members: [UUID: [ClaudeAgent]] = [:]
+        for agent in agents {
+            let path = ClaudeAgentsMonitor.projectFolder(agent.cwd)
+            let folder = folders.first { $0.sessions.contains(agent.id) } ?? folders.first { $0.projects.contains(path) }
+                ?? { let made = AgentFolder.forProject(path); folders.append(made); return made }()
+            members[folder.id, default: []].append(agent)
         }
-        let projects = Dictionary(grouping: agents.filter { !filed.contains($0.id) }) {
-            placements[$0.id] ?? ClaudeAgentsMonitor.projectFolder($0.cwd)
-        }
-            .map { AgentProject(folder: $0.key, agents: ClaudeAgent.sorted($0.value)) }
+        return folders
+            .map { AgentProject(folder: $0, agents: ClaudeAgent.sorted(members[$0.id] ?? [])) }
+            .filter { !$0.agents.isEmpty || $0.folder.projects.isEmpty }
             .sorted {
+                if $0.agents.isEmpty != $1.agents.isEmpty { return $0.agents.isEmpty }
                 if $0.phase != $1.phase { return $0.phase < $1.phase }
                 if $0.latest != $1.latest { return $0.latest > $1.latest }
-                return $0.folder < $1.folder
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
-        return custom + projects
+    }
+
+    /// Projects with sessions that belong in no folder yet (none moved by hand, no folder for the project).
+    static func missingProjects(_ agents: [ClaudeAgent], folders: [AgentFolder]) -> [String] {
+        var seen = Set<String>()
+        return agents.compactMap { agent in
+            let path = ClaudeAgentsMonitor.projectFolder(agent.cwd)
+            guard !folders.contains(where: { $0.sessions.contains(agent.id) || $0.projects.contains(path) }),
+                  seen.insert(path).inserted else { return nil }
+            return path
+        }
     }
 }
 

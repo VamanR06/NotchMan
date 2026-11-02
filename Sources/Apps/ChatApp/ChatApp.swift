@@ -38,13 +38,9 @@ public final class ChatApp: NotchApp {
     }
     /// Projects opened or folded by hand on the Overview, by folder; the rest follow `AgentProject.startsExpanded`.
     var projectExpansion: [String: Bool] = [:]
-    /// Your own folders on the Overview, in the order made.
+    /// The Overview's folders: one per project (made as projects appear) plus any you made.
     var agentFolders: [AgentFolder] = [] {
         didSet { context?.defaults.set(try? JSONEncoder().encode(agentFolders), forKey: "agentFolders") }
-    }
-    /// Sessions you moved under another project than their own: session ID → that project's folder.
-    var agentPlacements: [String: String] = [:] {
-        didSet { context?.defaults.set(agentPlacements, forKey: "agentPlacements") }
     }
 
     /// Claude Code sessions.
@@ -151,15 +147,19 @@ public final class ChatApp: NotchApp {
         }
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
-        agentFolders = context.defaults.data(forKey: "agentFolders")
-            .flatMap { try? JSONDecoder().decode([AgentFolder].self, from: $0) } ?? []
-        agentPlacements = context.defaults.dictionary(forKey: "agentPlacements") as? [String: String] ?? [:]
+        agentFolders = Self.foldersWithPlacements(
+            context.defaults.data(forKey: "agentFolders").flatMap { try? JSONDecoder().decode([AgentFolder].self, from: $0) } ?? [],
+            context.defaults.dictionary(forKey: "agentPlacements") as? [String: String] ?? [:])
+        context.defaults.removeObject(forKey: "agentPlacements")
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         groupsAgentsByProject = context.defaults.object(forKey: "groupsAgentsByProject") as? Bool ?? true
         agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
-        agentMonitor.onChange = { [weak self] in self?.publishBoard() }
+        agentMonitor.onChange = { [weak self] in
+            self?.syncFolders()
+            self?.publishBoard()
+        }
         NotchBoard.shared.insertIntoSession = { [weak self] project, text in
             self?.insert(text, intoSessionAt: project.cwd) ?? false
         }
@@ -571,11 +571,52 @@ public final class ChatApp: NotchApp {
         }
     }
 
-    // MARK: - Your folders
+    // MARK: - Folders
 
-    /// The folder `sessionID` is in, if any.
+    /// The folder you moved `sessionID` into by hand, if any.
     func folder(of sessionID: String) -> AgentFolder? {
         agentFolders.first { $0.sessions.contains(sessionID) }
+    }
+
+    /// The folder `agent` shows in: where you moved it, else its project's.
+    func listedFolder(of agent: ClaudeAgent) -> AgentFolder? {
+        folder(of: agent.id) ?? agentFolders.first { $0.projects.contains(ClaudeAgentsMonitor.projectFolder(agent.cwd)) }
+    }
+
+    /// The folders on the Overview, to move sessions into, by name.
+    var shownFolders: [AgentFolder] {
+        AgentProject.group(agentMonitor?.agents ?? [], folders: agentFolders).map(\.folder)
+            .filter { folder in agentFolders.contains { $0.id == folder.id } }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Makes a folder for each project that has sessions but no folder yet (also after you delete one), and
+    /// forgets sessions that no longer exist.
+    func syncFolders() {
+        guard let monitor = agentMonitor, monitor.hasLoaded else { return }
+        var folders = agentFolders
+        let known = Set(monitor.agents.map(\.id))
+        for index in folders.indices where folders[index].sessions.contains(where: { !known.contains($0) }) {
+            folders[index].sessions.removeAll { !known.contains($0) }
+        }
+        folders += AgentProject.missingProjects(monitor.agents, folders: folders).map(AgentFolder.forProject)
+        if folders != agentFolders { agentFolders = folders }
+    }
+
+    /// Before there was one kind of folder, sessions could be moved under another project (session → project path);
+    /// those become sessions moved into that project's folder.
+    static func foldersWithPlacements(_ folders: [AgentFolder], _ placements: [String: String]) -> [AgentFolder] {
+        var folders = folders
+        for (session, path) in placements.sorted(by: { $0.key < $1.key }) where !folders.contains(where: { $0.sessions.contains(session) }) {
+            if let index = folders.firstIndex(where: { $0.projects.contains(path) }) {
+                folders[index].sessions.append(session)
+            } else {
+                var folder = AgentFolder.forProject(path)
+                folder.sessions = [session]
+                folders.append(folder)
+            }
+        }
+        return folders
     }
 
     /// Asks for a name and makes a new folder (opened), putting `sessions` in it. Returns its ID.
@@ -589,53 +630,22 @@ public final class ChatApp: NotchApp {
         return folder.id
     }
 
-    /// Puts sessions in a folder (out of any other, and back from any other project), or back with their own
-    /// projects when `folderID` is nil.
+    /// Puts sessions in a folder (out of any other), or back in their project's folder when `folderID` is nil or
+    /// is that folder.
     func move(_ sessions: [String], to folderID: UUID?) {
+        let agents = agentMonitor?.agents ?? []
         var folders = agentFolders
         for index in folders.indices {
             folders[index].sessions.removeAll { sessions.contains($0) }
-            if folders[index].id == folderID { folders[index].sessions += sessions }
-        }
-        var placements = agentPlacements
-        sessions.forEach { placements[$0] = nil }
-        // Forget sessions that no longer exist, once the list is known.
-        if let monitor = agentMonitor, monitor.hasLoaded {
-            let known = Set(monitor.agents.map(\.id))
-            for index in folders.indices { folders[index].sessions.removeAll { !known.contains($0) } }
-            placements = placements.filter { known.contains($0.key) }
+            guard folders[index].id == folderID else { continue }
+            folders[index].sessions += sessions.filter { id in
+                // Its own project's folder takes it anyway.
+                guard let agent = agents.first(where: { $0.id == id }) else { return true }
+                return !folders[index].projects.contains(ClaudeAgentsMonitor.projectFolder(agent.cwd))
+            }
         }
         agentFolders = folders
-        agentPlacements = placements
-    }
-
-    /// Puts sessions under the project at `folder` (out of your folders); their own project takes them back.
-    func move(_ sessions: [String], toProject folder: String) {
-        move(sessions, to: nil)
-        for id in sessions {
-            let own = agentMonitor?.agents.first { $0.id == id }.map { ClaudeAgentsMonitor.projectFolder($0.cwd) }
-            agentPlacements[id] = own == folder ? nil : folder
-        }
-    }
-
-    /// The project a session is listed under: where you put it, else its own.
-    func projectFolder(of agent: ClaudeAgent) -> String {
-        agentPlacements[agent.id] ?? ClaudeAgentsMonitor.projectFolder(agent.cwd)
-    }
-
-    /// Every project on the Overview, to move sessions into: (folder, name), by name. Names shared by two projects
-    /// get their parent folder too.
-    var projectChoices: [(folder: String, name: String)] {
-        let folders = Set((agentMonitor?.agents ?? []).map(projectFolder(of:)))
-        let name = { (path: String) in URL(fileURLWithPath: path).lastPathComponent }
-        let counts = Dictionary(folders.map { (name($0), 1) }, uniquingKeysWith: +)
-        return folders.map { path in
-            let url = URL(fileURLWithPath: path)
-            let label = counts[name(path), default: 0] > 1
-                ? url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent : url.lastPathComponent
-            return (path, label)
-        }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        syncFolders()
     }
 
     func renameFolder(_ id: UUID) {
@@ -644,16 +654,18 @@ public final class ChatApp: NotchApp {
         agentFolders[index].name = name
     }
 
-    /// Removes the folder; its sessions go back under their projects.
+    /// Removes the folder; its sessions go back to their projects' folders (made afresh where needed, even for the
+    /// project this folder collected).
     func deleteFolder(_ id: UUID) {
         agentFolders.removeAll { $0.id == id }
         projectExpansion["folder:\(id)"] = nil
+        syncFolders()
     }
 
     private static func askFolderName(title: String, initial: String) -> String? {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = "Sessions you put in a folder show under it instead of their project."
+        alert.informativeText = "Sessions you move into a folder show there instead of in their project's folder."
         let field = NSTextField(string: initial)
         field.placeholderString = "Folder name"
         field.frame = CGRect(x: 0, y: 0, width: 240, height: 24)
