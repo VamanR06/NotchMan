@@ -3,6 +3,26 @@ import Testing
 @testable import JobsApp
 
 @MainActor @Suite struct PageAssistTests {
+    @Test func scriptsSayWhichJobsFillWorkExperience() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(ApplyScripts.self, from: Data(json.utf8)) }
+        let old = try decode(#"{"scan":"s","fill":"f","frames":"r"}"#)
+        #expect(old.experience == nil && old.sections == nil, "JobManager before v0.31")
+        let fromResume = try decode(#"""
+            {"scan":"s","fill":"f","frames":"r","add_sections":"a","sections":{"work":2},
+             "experience":{"companies":["Acme Inc.","Initech"],"from_resume":true,"note":null}}
+            """#)
+        #expect(fromResume.sections?.work == 2)
+        #expect(fromResume.experience?.summary == "From your resume: Acme Inc., Initech")
+        let fallback = ApplyScripts.Experience(companies: ["A", "B"], from_resume: false, note: "No resume picked for this job")
+        #expect(fallback.summary == "All your Profile jobs (No resume picked for this job)")
+
+        let plan = try JSONDecoder().decode(FieldPlan.self, from: Data(#"""
+            {"key":"k","label":"Company","kind":"text","required":true,"status":"resolved","note":null,
+             "source":"work experience 1 (Acme Inc.)"}
+            """#.utf8))
+        #expect(plan.source == "work experience 1 (Acme Inc.)")
+    }
+
     @Test func decodesJobManagersPageAnswer() throws {
         let json = #"{"job":{"id":7,"company":"Xcimer","title":"Engineer","url":"https://jobs.lever.co/x/1"},"resume":{"id":3,"name":"Resume.pdf"},"cover_letter":null}"#
         let info = try JSONDecoder().decode(PageInfo.self, from: Data(json.utf8))

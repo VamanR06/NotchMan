@@ -64,8 +64,22 @@ struct PageDocument: Codable, Equatable {
 
 struct ApplyScripts: Decodable {
     struct Sections: Decodable {
-        /// Jobs on the Profile: Work Experience entries the form should have.
+        /// Work Experience entries the form should have: the Profile jobs this job's resume mentions.
         let work: Int
+    }
+
+    /// Which Profile jobs fill the Work Experience sections (JobManager v0.32+).
+    struct Experience: Decodable, Equatable {
+        let companies: [String]
+        /// Picked from the job's resume; false = every Profile job, for the reason in `note`.
+        let from_resume: Bool
+        let note: String?
+
+        /// "From your resume: Acme, Initech" / "All your Profile jobs (No resume picked for this job)"
+        var summary: String {
+            from_resume ? "From your resume: " + companies.joined(separator: ", ")
+                : "All your Profile jobs" + (note.map { " (\($0))" } ?? "")
+        }
     }
 
     let scan: String
@@ -74,6 +88,7 @@ struct ApplyScripts: Decodable {
     /// Adds one Work Experience entry (JobManager v0.31+).
     let add_sections: String?
     let sections: Sections?
+    let experience: Experience?
 }
 
 /// One form field as JobManager's rules see it.
@@ -85,6 +100,8 @@ struct FieldPlan: Decodable, Equatable {
     /// resolved (will be filled), unknown (needs you), skipped (optional, left blank), unsupported.
     let status: String
     let note: String?
+    /// Where the answer came from ("profile", "work experience 2 (Acme)", …).
+    var source: String?
 }
 
 /// What the in-page filler reports per field.
@@ -147,6 +164,8 @@ struct AutofillReport: Equatable {
     var problem: String?
     /// An embedded form's own address, to open it directly.
     var embeddedForm: URL?
+    /// Which Profile jobs went into the form's Work Experience sections, when it had any.
+    var workExperience: String?
 
     var summary: String {
         if let problem { return problem }

@@ -165,9 +165,10 @@ final class JobManagerClient {
     }
 
     /// The form scanner, the in-page filler, the embedded-form finder and how many Work Experience entries to add
-    /// (fetched for each Autofill, so Profile changes and new JobManager versions apply straight away).
-    func applyScripts() async throws -> ApplyScripts {
-        let data = try await authorized("GET", "api/apply/scripts", json: nil, accept: [200])
+    /// for this job (the Profile jobs its resume mentions). Fetched for each Autofill, so Profile and resume changes
+    /// and new JobManager versions apply straight away.
+    func applyScripts(jobID: Int) async throws -> ApplyScripts {
+        let data = try await authorized("GET", "api/apply/scripts?job_id=\(jobID)", json: nil, accept: [200])
         return try JSONDecoder().decode(ApplyScripts.self, from: data)
     }
 

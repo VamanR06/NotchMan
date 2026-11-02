@@ -158,8 +158,10 @@ A **This page** card at the top has:
   - Your Profile, explicit work-eligibility answers, saved answers and your demographic policy. No AI guessing.
   - It attaches the resume and takes a second pass for follow-up questions your answers reveal.
   - Work Experience sections (Workday's My Experience and the like) come from the jobs under Work experience on
-    JobManager's Profile page: it clicks Add until there's one entry per job, then fills job title, company,
-    location, "I currently work here", From/To and the role description (JobManager v0.31+).
+    JobManager's Profile page — just the ones the job's resume mentions, in the resume's order (JobManager
+    v0.32+; every Profile job if there's no readable resume or it names none of them). It clicks Add until
+    there's one entry per job, then fills job title, company, location, "I currently work here", From/To and the
+    role description, and the report says which jobs it used.
   - Afterwards it lists what still needs you: essay questions, attestations, anything not in your Profile.
   - It never submits.
 - If the form is embedded from Greenhouse or similar on a company's own site, **Open Form** opens it on its

@@ -121,6 +121,13 @@ private struct ThisPageCard: View {
                     }
                 }
                 .font(.system(size: 10.5))
+                if let experience = report.workExperience {
+                    Label("Work experience: \(experience)", systemImage: "briefcase")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                        .help(experience)
+                }
                 if showDetails {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(report.needsYou, id: \.self) { Text("• \($0)") }

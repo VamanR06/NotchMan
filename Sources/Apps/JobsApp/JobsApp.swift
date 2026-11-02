@@ -413,7 +413,7 @@ public final class JobsApp: NotchApp {
 
     private func runAutofill(_ match: PageMatch) async -> AutofillReport {
         do {
-            let scripts = try await client.applyScripts()
+            let scripts = try await client.applyScripts(jobID: match.job.id)
             // The page may have moved on (posting → its application form); it must still be this job.
             let current = try await BrowserTab.current()
             if current.url != match.tab.url {
@@ -455,7 +455,11 @@ public final class JobsApp: NotchApp {
                 results += try await PageForm.fill(in: current, script: scripts.fill, steps: second.fill, files: files)
                 plans += second.fields
             }
-            return AutofillReport.from(plans: plans, results: results)
+            var report = AutofillReport.from(plans: plans, results: results)
+            if plans.contains(where: { $0.source?.hasPrefix("work experience") == true }) {
+                report.workExperience = scripts.experience?.summary
+            }
+            return report
         } catch {
             return AutofillReport(problem: error.localizedDescription)
         }
