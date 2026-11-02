@@ -25,10 +25,11 @@ let package = Package(
         .target(name: "ChatApp", dependencies: ["NotchKit", "SwiftTerm"], path: "Sources/Apps/ChatApp"),
         .target(name: "TodayApp", dependencies: ["NotchKit"], path: "Sources/Apps/TodayApp"),
         .target(name: "ShelfApp", dependencies: ["NotchKit"], path: "Sources/Apps/ShelfApp"),
+        .target(name: "ClockApp", dependencies: ["NotchKit"], path: "Sources/Apps/ClockApp"),
         // App shell: wires the registry of apps into the engine.
         .executableTarget(
             name: "NotchMan",
-            dependencies: ["NotchKit", "NotchEngine", "CalendarApp", "NowPlayingApp", "TasksApp", "JobsApp", "ChatApp", "TodayApp", "ShelfApp"]
+            dependencies: ["NotchKit", "NotchEngine", "CalendarApp", "NowPlayingApp", "TasksApp", "JobsApp", "ChatApp", "TodayApp", "ShelfApp", "ClockApp"]
         ),
         .testTarget(name: "NotchKitTests", dependencies: ["NotchKit"]),
         .testTarget(name: "CalendarAppTests", dependencies: ["CalendarApp"]),
@@ -39,5 +40,6 @@ let package = Package(
         .testTarget(name: "NowPlayingAppTests", dependencies: ["NowPlayingApp"]),
         .testTarget(name: "TodayAppTests", dependencies: ["TodayApp", "NotchKit"]),
         .testTarget(name: "ShelfAppTests", dependencies: ["ShelfApp"]),
+        .testTarget(name: "ClockAppTests", dependencies: ["ClockApp"]),
     ]
 )

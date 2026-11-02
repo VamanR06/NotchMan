@@ -6,6 +6,7 @@ import JobsApp
 import ChatApp
 import TodayApp
 import ShelfApp
+import ClockApp
 
 /// The notch apps shown in the dock, in order. Add new apps here.
 @MainActor
@@ -19,6 +20,7 @@ enum AppRegistry {
             ChatApp(),
             NowPlayingApp(),
             ShelfApp(),
+            ClockApp(),
         ]
     }
 }
