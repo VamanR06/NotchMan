@@ -21,6 +21,7 @@ struct AgentsOverview: View {
                 }
                 HStack(spacing: 6) {
                     SessionSearch(app: app)
+                    if app.groupsAgentsByProject { NewFolderButton(app: app) }
                     GroupingToggle(app: app)
                 }
                 AgentList(app: app)
@@ -198,8 +199,9 @@ struct AgentSections: View {
     }
 }
 
-/// Agents by project: several sessions in one project (worktrees count as their repo) sit under a row you can
-/// fold; a project with one session is just that session's row. Most urgent first, like the status view.
+/// Agents by project: your own folders first, then several sessions in one project (worktrees count as their repo)
+/// under a row you can fold; a project with one session is just that session's row. Most urgent first, like the
+/// status view.
 struct AgentProjectTree: View {
     let app: ChatApp
     /// Lazy inside the scroll view; plain when rendered on its own (e.g. in tests).
@@ -216,23 +218,33 @@ struct AgentProjectTree: View {
     @ViewBuilder
     private var rows: some View {
         let searching = !app.agentQuery.trimmingCharacters(in: .whitespaces).isEmpty
-        let projects = AgentProject.group(app.agentMonitor.agents.filter { $0.matches(app.agentQuery) })
-        // Finished projects pile up; show the latest few unless expanded or searching.
-        let done = projects.filter { $0.phase == .done }
+        let projects = AgentProject.group(app.agentMonitor.agents.filter { $0.matches(app.agentQuery) }, folders: app.agentFolders)
+            .filter { !(searching && $0.agents.isEmpty) }
+        // Finished projects pile up; show the latest few unless expanded or searching. Your folders always show.
+        let done = projects.filter { $0.phase == .done && $0.custom == nil }
         let hidden = searching || app.showAllCompleted ? [] : Set(done.dropFirst(AgentSections.recentDone).map(\.id))
         ForEach(projects.filter { !hidden.contains($0.id) }) { project in
-            if project.agents.count == 1, let agent = project.agents.first {
+            if project.custom == nil, project.agents.count == 1, let agent = project.agents.first {
                 AgentRow(app: app, agent: agent)
             } else {
                 let expanded = searching || (app.projectExpansion[project.id] ?? project.startsExpanded)
                 ProjectRow(app: app, project: project, expanded: expanded)
                 if expanded {
-                    ForEach(project.agents) { agent in
-                        AgentRow(app: app, agent: agent, inProjectTree: true)
-                            .padding(.leading, 20)
-                            .overlay(alignment: .leading) {
-                                Rectangle().fill(.white.opacity(0.12)).frame(width: 1).padding(.leading, 12)
-                            }
+                    Group {
+                        ForEach(project.agents) { agent in
+                            AgentRow(app: app, agent: agent, inProjectTree: project.custom == nil)
+                        }
+                        if project.agents.isEmpty {
+                            Text("Drag sessions here, or right-click one → Move to Folder.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.4))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                        }
+                    }
+                    .padding(.leading, 20)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(.white.opacity(0.12)).frame(width: 1).padding(.leading, 12)
                     }
                 }
             }
@@ -243,19 +255,23 @@ struct AgentProjectTree: View {
     }
 }
 
-/// A project with several sessions: click to show or hide them.
+/// A project with several sessions, or one of your folders: click to show or hide them. Drop a session on a folder
+/// to put it there, or on a project to take it out of its folder.
 private struct ProjectRow: View {
     @Bindable var app: ChatApp
     let project: AgentProject
     let expanded: Bool
     @State private var hovering = false
+    @State private var targeted = false
 
     var body: some View {
         HStack(spacing: 9) {
-            PhaseMark(phase: project.phase).frame(width: 14)
+            PhaseMark(phase: project.phase).frame(width: 14).opacity(project.agents.isEmpty ? 0 : 1)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
-                    Image(systemName: "folder.fill").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(project.custom == nil ? .white.opacity(0.55) : .blue)
                     Text(project.name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
@@ -269,7 +285,7 @@ private struct ProjectRow: View {
                         Circle().fill(project.phase == .needsYou ? .orange : .green).frame(width: 6, height: 6)
                     }
                 }
-                Text(project.summary)
+                Text(project.agents.isEmpty ? "Empty" : project.summary)
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.5))
                     .lineLimit(1)
@@ -283,18 +299,70 @@ private struct ProjectRow: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(.blue, lineWidth: targeted ? 1.5 : 0))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
             withAnimation(.easeOut(duration: 0.15)) { app.projectExpansion[project.id] = !expanded }
         }
-        .help(project.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        .dropDestination(for: String.self) { sessions, _ in
+            withAnimation(.easeOut(duration: 0.15)) { app.move(sessions, to: project.custom?.id) }
+            return true
+        } isTargeted: { targeted = $0 }
+        .help(project.custom == nil ? project.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~") : "Your folder")
         .contextMenu {
-            Button("Open Folder in \(app.editor.name)") { app.editor.open(project.folder) }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.folder)])
+            if let folder = project.custom {
+                Button("Rename…") { app.renameFolder(folder.id) }
+                Button("Delete Folder") { withAnimation { app.deleteFolder(folder.id) } }
+                    .help("Its sessions go back under their projects")
+            } else {
+                Button("Open Folder in \(app.editor.name)") { app.editor.open(project.folder) }
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.folder)])
+                }
+                Divider()
+                MoveToFolderMenu(app: app, sessions: project.agents.map(\.id), title: "Move All to Folder")
             }
         }
+    }
+}
+
+/// "Move to Folder" ▸ your folders, New Folder…, and taking sessions back out.
+private struct MoveToFolderMenu: View {
+    let app: ChatApp
+    let sessions: [String]
+    var title = "Move to Folder"
+
+    var body: some View {
+        let current = sessions.count == 1 ? app.folder(of: sessions[0]) : nil
+        Menu(title) {
+            ForEach(app.agentFolders) { folder in
+                Button(folder.name) { withAnimation { app.move(sessions, to: folder.id) } }
+                    .disabled(folder.id == current?.id)
+            }
+            if !app.agentFolders.isEmpty { Divider() }
+            Button("New Folder…") { withAnimation { _ = app.newFolder(with: sessions) } }
+        }
+        if let current {
+            Button("Remove from “\(current.name)”") { withAnimation { app.move(sessions, to: nil) } }
+        }
+    }
+}
+
+/// Makes a folder of your own on the Overview.
+private struct NewFolderButton: View {
+    let app: ChatApp
+
+    var body: some View {
+        Button { withAnimation { _ = app.newFolder() } } label: {
+            Image(systemName: "folder.badge.plus")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 22)
+                .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.07)))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(0.7))
+        .help("New folder for sessions (drag sessions onto it)")
     }
 }
 
@@ -630,12 +698,21 @@ private struct AgentRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { app.open(agent) }
+        .draggable(agent.id) {
+            Label(agent.name, systemImage: "sparkle")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.black.opacity(0.8)))
+                .foregroundStyle(.white)
+        }
         .contextMenu {
             if agent.kind == .background {
                 Button("Open Terminal in Notch") { app.openInNotch(agent) }
                 Button("Attach in New Terminal Window") { app.openInTerminalApp(agent) }
                 Divider()
             }
+            MoveToFolderMenu(app: app, sessions: [agent.id])
+            Divider()
             Button("Open Folder in \(app.editor.name)") { app.editor.open(agent.cwd) }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: agent.cwd)])

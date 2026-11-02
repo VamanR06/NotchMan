@@ -116,19 +116,30 @@ struct ClaudeAgent: Identifiable, Hashable {
     }
 }
 
-/// The sessions in one project (a worktree's count as its repo's), for the Overview's project tree.
+/// A folder of your own on the Overview, holding whichever sessions you put in it (by session ID).
+struct AgentFolder: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var sessions: [String] = []
+}
+
+/// The sessions in one project (a worktree's count as its repo's), or in one of your folders, for the Overview's
+/// project tree.
 struct AgentProject: Identifiable, Equatable {
+    /// The project's path ("" for one of your folders).
     let folder: String
     /// Needs-you first, then working, done, idle; newest first within each.
     let agents: [ClaudeAgent]
+    /// Set for a folder of your own rather than a project.
+    var custom: AgentFolder?
 
-    var id: String { folder }
-    var name: String { URL(fileURLWithPath: folder).lastPathComponent }
+    var id: String { custom.map { "folder:\($0.id)" } ?? folder }
+    var name: String { custom?.name ?? URL(fileURLWithPath: folder).lastPathComponent }
     /// The most urgent of its sessions'.
     var phase: ClaudeAgent.Phase { agents.map(\.phase).min() ?? .idle }
     var latest: Date { agents.compactMap(\.startedAt).max() ?? .distantPast }
     /// Open while something in it needs you or is working; finished and idle projects start folded.
-    var startsExpanded: Bool { phase <= .working }
+    var startsExpanded: Bool { phase <= .working && !agents.isEmpty }
 
     /// "1 needs you · 2 working · 3 done"
     var summary: String {
@@ -140,15 +151,23 @@ struct AgentProject: Identifiable, Equatable {
             .joined(separator: " · ")
     }
 
-    /// Groups sessions by project: the most urgent project first, then the most recently started.
-    static func group(_ agents: [ClaudeAgent]) -> [AgentProject] {
-        Dictionary(grouping: agents) { ClaudeAgentsMonitor.projectFolder($0.cwd) }
+    /// Your folders first, in the order you made them (empty ones too), each with the sessions you put in it;
+    /// then the other sessions by project: the most urgent project first, then the most recently started.
+    static func group(_ agents: [ClaudeAgent], folders: [AgentFolder] = []) -> [AgentProject] {
+        var filed = Set<String>()
+        let custom = folders.map { folder in
+            let members = agents.filter { folder.sessions.contains($0.id) && !filed.contains($0.id) }
+            filed.formUnion(members.map(\.id))
+            return AgentProject(folder: "", agents: ClaudeAgent.sorted(members), custom: folder)
+        }
+        let projects = Dictionary(grouping: agents.filter { !filed.contains($0.id) }) { ClaudeAgentsMonitor.projectFolder($0.cwd) }
             .map { AgentProject(folder: $0.key, agents: ClaudeAgent.sorted($0.value)) }
             .sorted {
                 if $0.phase != $1.phase { return $0.phase < $1.phase }
                 if $0.latest != $1.latest { return $0.latest > $1.latest }
                 return $0.folder < $1.folder
             }
+        return custom + projects
     }
 }
 

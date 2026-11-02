@@ -193,8 +193,11 @@ One place for AI work. The **Overview** tab shows the three web chats (writing /
 Code session on this Mac — CLI, VS Code and background agents — read from `claude agents --json` whenever Claude
 Code's session files change. They're listed by project: several sessions in one project (worktrees count as their
 repo) sit under a project row you can fold, which shows the most urgent state among them; projects with something
-needing you or working come first and start open. The button beside the search switches to grouping by status
-(Needs you, Working, Done and Idle). Click a background agent to open an
+needing you or working come first and start open. Make folders of your own with the folder-plus button beside the
+search, then drag sessions onto one or right-click a session → Move to Folder (right-click a project → Move All
+to Folder). Your folders sit at the top in the order you made them and are remembered; right-click one to rename
+or delete it (its sessions go back to their projects). The last button switches to grouping by status (Needs
+you, Working, Done and Idle). Click a background agent to open an
 interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** opens shells in the

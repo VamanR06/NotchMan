@@ -38,6 +38,10 @@ public final class ChatApp: NotchApp {
     }
     /// Projects opened or folded by hand on the Overview, by folder; the rest follow `AgentProject.startsExpanded`.
     var projectExpansion: [String: Bool] = [:]
+    /// Your own folders on the Overview, in the order made.
+    var agentFolders: [AgentFolder] = [] {
+        didSet { context?.defaults.set(try? JSONEncoder().encode(agentFolders), forKey: "agentFolders") }
+    }
 
     /// Claude Code sessions.
     @ObservationIgnored private(set) var agentMonitor: ClaudeAgentsMonitor!
@@ -143,6 +147,8 @@ public final class ChatApp: NotchApp {
         }
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
+        agentFolders = context.defaults.data(forKey: "agentFolders")
+            .flatMap { try? JSONDecoder().decode([AgentFolder].self, from: $0) } ?? []
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         groupsAgentsByProject = context.defaults.object(forKey: "groupsAgentsByProject") as? Bool ?? true
@@ -558,6 +564,68 @@ public final class ChatApp: NotchApp {
         Task {
             do { try await agentMonitor.delete(agent) } catch { Self.showFailure("Couldn't delete “\(agent.name)”", error) }
         }
+    }
+
+    // MARK: - Your folders
+
+    /// The folder `sessionID` is in, if any.
+    func folder(of sessionID: String) -> AgentFolder? {
+        agentFolders.first { $0.sessions.contains(sessionID) }
+    }
+
+    /// Asks for a name and makes a new folder (opened), putting `sessions` in it. Returns its ID.
+    @discardableResult
+    func newFolder(with sessions: [String] = []) -> UUID? {
+        guard let name = Self.askFolderName(title: "New Folder", initial: "") else { return nil }
+        let folder = AgentFolder(name: name)
+        agentFolders.append(folder)
+        move(sessions, to: folder.id)
+        projectExpansion["folder:\(folder.id)"] = true
+        return folder.id
+    }
+
+    /// Puts sessions in a folder (out of any other), or back with their projects when `folderID` is nil.
+    func move(_ sessions: [String], to folderID: UUID?) {
+        var folders = agentFolders
+        for index in folders.indices {
+            folders[index].sessions.removeAll { sessions.contains($0) }
+            if folders[index].id == folderID { folders[index].sessions += sessions }
+        }
+        // Forget sessions that no longer exist, once the list is known.
+        if let monitor = agentMonitor, monitor.hasLoaded {
+            let known = Set(monitor.agents.map(\.id))
+            for index in folders.indices { folders[index].sessions.removeAll { !known.contains($0) } }
+        }
+        agentFolders = folders
+    }
+
+    func renameFolder(_ id: UUID) {
+        guard let index = agentFolders.firstIndex(where: { $0.id == id }),
+              let name = Self.askFolderName(title: "Rename Folder", initial: agentFolders[index].name) else { return }
+        agentFolders[index].name = name
+    }
+
+    /// Removes the folder; its sessions go back under their projects.
+    func deleteFolder(_ id: UUID) {
+        agentFolders.removeAll { $0.id == id }
+        projectExpansion["folder:\(id)"] = nil
+    }
+
+    private static func askFolderName(title: String, initial: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Sessions you put in a folder show under it instead of their project."
+        let field = NSTextField(string: initial)
+        field.placeholderString = "Folder name"
+        field.frame = CGRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: initial.isEmpty ? "Create" : "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 
     private static func showFailure(_ title: String, _ error: Error) {
