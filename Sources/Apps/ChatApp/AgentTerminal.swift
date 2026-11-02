@@ -10,6 +10,10 @@ final class TerminalSession: Identifiable {
     private(set) var isRunning = false
     /// Title the program sets (OSC 0/2).
     private(set) var title = ""
+    /// A file ⌘-clicked in the output, shown in a popup over the terminal.
+    var preview: FilePreview?
+    /// Where relative paths in the output are resolved from when the process's own directory can't be read.
+    @ObservationIgnored var directory: String?
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
     /// Every key pressed in this terminal (after shortcut translation).
@@ -36,6 +40,34 @@ final class TerminalSession: Identifiable {
         }
         events.onTitle = { [weak self] title in self?.title = title }
         view.onKey = { [weak self] event in self?.onKey?(event) }
+        view.workingDirectory = { [weak self] in self?.workingDirectory }
+        view.onOpenFile = { [weak self] mention, anchor in
+            withAnimation(.easeOut(duration: 0.12)) { self?.preview = FilePreview(mention: mention, anchor: anchor) }
+        }
+        view.dismissPopup = { [weak self] in
+            guard let self, self.preview != nil else { return false }
+            self.closePreview()
+            return true
+        }
+    }
+
+    func closePreview() {
+        withAnimation(.easeOut(duration: 0.12)) { preview = nil }
+    }
+
+    /// The process's current directory (a shell's follows `cd`), else the one it started in.
+    var workingDirectory: String? {
+        let pid = view.process?.shellPid ?? 0
+        return (isRunning ? Self.currentDirectory(of: pid) : nil) ?? directory
+    }
+
+    static func currentDirectory(of pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return path.isEmpty ? nil : path
     }
 
     private static var environment: [String] {
@@ -50,6 +82,7 @@ final class TerminalSession: Identifiable {
 
     /// An interactive login shell in `folder`, like a new Terminal tab.
     func runShell(in folder: String) {
+        directory = folder
         view.startProcess(executable: "/bin/zsh", args: ["-l"], environment: Self.environment, execName: "-zsh",
                           currentDirectory: folder)
         isRunning = true
@@ -127,6 +160,7 @@ final class AgentTerminal: Identifiable {
     /// Starts (or restarts) `claude attach` through a login shell, so the user's PATH applies.
     func start(claudePath: String) {
         guard let shortID = agent.shortID else { return }
+        claude.directory = agent.cwd
         run("cd \(Shell.quote(agent.cwd)) 2>/dev/null; exec \(Shell.quote(claudePath)) attach \(Shell.quote(shortID))")
     }
 
@@ -231,12 +265,90 @@ final class NotchTerminalView: LocalProcessTerminalView {
 
     /// The user clicked into this terminal (to type).
     var onClick: (() -> Void)?
+    /// ⌘-click on a file path: show it. The rect is the clicked row, origin top left.
+    var onOpenFile: ((FileMention, CGRect) -> Void)?
+    /// Relative paths in the output are relative to this.
+    var workingDirectory: (() -> String?)?
+    /// Esc closes a popup over the terminal, if one is showing, instead of reaching the program.
+    var dismissPopup: (() -> Bool)?
+    private var lastCommandClick: CGRect?
+    private var suppressLinkOpen = false
 
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
         window?.makeFirstResponder(self)
         onClick?()
         super.mouseDown(with: event)
+    }
+
+    /// ⌘-click on a path shows the file in a popup. SwiftTerm's own link detection only knows paths with a `/`
+    /// and opens them relative to NotchMan rather than the terminal, so look up the word under the cursor first.
+    override func mouseUp(with event: NSEvent) {
+        lastCommandClick = nil
+        guard event.modifierFlags.contains(.command), let hit = cell(at: event) else {
+            super.mouseUp(with: event)
+            return
+        }
+        lastCommandClick = hit.rect
+        guard let mention = fileMention(row: hit.screenRow, column: hit.column) else {
+            super.mouseUp(with: event)  // URLs: SwiftTerm opens them (through requestOpenLink below)
+            return
+        }
+        // Still let SwiftTerm finish the click (mouse reporting, selection state), without opening anything.
+        suppressLinkOpen = true
+        super.mouseUp(with: event)
+        suppressLinkOpen = false
+        onOpenFile?(mention, hit.rect)
+    }
+
+    override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        guard !suppressLinkOpen else { return }
+        if let anchor = lastCommandClick, let mention = FileMentions.resolve(link, in: workingDirectory?()) {
+            onOpenFile?(mention, anchor)
+            return
+        }
+        super.requestOpenLink(source: source, link: link, params: params)
+    }
+
+    /// The visible cell under the mouse, and its row's rect (origin top left).
+    private func cell(at event: NSEvent) -> (screenRow: Int, column: Int, rect: CGRect)? {
+        let terminal = getTerminal()
+        guard terminal.rows > 0, terminal.cols > 0 else { return nil }
+        // Matches SwiftTerm's cell size: rows from its frame size, columns from the font's advance snapped to
+        // the pixel grid.
+        let cellHeight = getOptimalFrameSize().height / CGFloat(terminal.rows)
+        let scale = window?.backingScaleFactor ?? 2
+        let cellWidth = (font.advancement(forGlyph: font.glyph(withName: "W")).width * scale).rounded() / scale
+        guard cellHeight > 0, cellWidth > 0 else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let screenRow = min(max(Int((frame.height - point.y) / cellHeight), 0), terminal.rows - 1)
+        let column = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
+        let rect = CGRect(x: point.x, y: CGFloat(screenRow) * cellHeight, width: 1, height: cellHeight)
+        return (screenRow, column, rect)
+    }
+
+    /// The existing file named at a visible cell, following a path the terminal wrapped across rows.
+    private func fileMention(row: Int, column: Int) -> FileMention? {
+        let terminal = getTerminal()
+        func cells(_ row: Int) -> [Character]? {
+            guard let line = terminal.getLine(row: row) else { return nil }
+            return (0..<min(line.count, terminal.cols)).map { line[$0].getCharacter() }
+        }
+        guard var text = cells(row) else { return nil }
+        var offset = column
+        var first = row
+        while terminal.getLine(row: first)?.isWrapped == true, let previous = cells(first - 1) {
+            text = previous + text
+            offset += previous.count
+            first -= 1
+        }
+        var next = row + 1
+        while terminal.getLine(row: next)?.isWrapped == true, let more = cells(next) {
+            text += more
+            next += 1
+        }
+        guard let token = FileMentions.token(in: text, at: offset) else { return nil }
+        return FileMentions.resolve(token, in: workingDirectory?())
     }
 
     override func viewDidMoveToWindow() {
@@ -255,6 +367,7 @@ final class NotchTerminalView: LocalProcessTerminalView {
             nonisolated(unsafe) let event = event
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let terminal = event.window?.firstResponder as? NotchTerminalView else { return false }
+                if event.keyCode == 53, terminal.dismissPopup?() == true { return true }  // Esc
                 let handled = terminal.handle(event)
                 if !handled { terminal.onKey?(event) }
                 return handled
@@ -426,6 +539,10 @@ struct AgentTerminalScreen: View {
         ZStack {
             // Not focused automatically: you click in to type (which also keeps the notch open).
             NSViewHost(view: session.view)
+            if let preview = session.preview {
+                FilePreviewOverlay(preview: preview, close: session.closePreview)
+                    .id(preview.id)
+            }
             if detachedOverlay && !session.isRunning {
                 VStack(spacing: 8) {
                     Text("Detached from \(terminal.agent.name).")
