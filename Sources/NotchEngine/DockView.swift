@@ -1,23 +1,99 @@
 import SwiftUI
 import NotchKit
 
-/// Row of app icons for switching the expanded notch's content.
+/// Row of app icons for switching the expanded notch's content: as many as fit beside the physical notch,
+/// then an All Apps button for the rest (see `NotchViewModel.dockApps`).
 struct DockView: View {
     let model: NotchViewModel
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(model.apps, id: \.id) { app in
-                DockItem(app: app, isSelected: app.id == model.selectedAppID) {
+        let dock = model.dockApps
+        HStack(spacing: model.dockSpacing) {
+            ForEach(dock.shown, id: \.id) { app in
+                DockItem(name: app.name, systemImage: app.iconSystemName, badge: app.dockBadge,
+                         isSelected: app.id == model.selectedAppID && !model.isLauncherOpen) {
                     model.select(app.id)
                 }
             }
+            if dock.overflow {
+                DockItem(name: "All Apps", systemImage: "square.grid.2x2", badge: hiddenBadge(shown: dock.shown),
+                         isSelected: model.isLauncherOpen, action: model.toggleLauncher)
+            }
         }
+        .frame(width: model.expandedWingWidth, alignment: .leading)
+    }
+
+    /// The most pressing badge among apps not in the row, so nothing waiting goes unseen.
+    private func hiddenBadge(shown: [any NotchApp]) -> NotchBadge? {
+        let ids = Set(shown.map(\.id))
+        let badges = model.apps.filter { !ids.contains($0.id) }.compactMap(\.dockBadge)
+        return badges.first { if case .dot = $0 { true } else { false } } ?? badges.first
+    }
+}
+
+/// Every app as a tile, over the selected app's content. Opened from the dock's All Apps button.
+struct AppLauncher: View {
+    let model: NotchViewModel
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92, maximum: 140), spacing: 8)], spacing: 8) {
+                ForEach(Array(model.apps.enumerated()), id: \.element.id) { index, app in
+                    LauncherTile(app: app, shortcut: index < 9 ? "⌘\(index + 1)" : nil,
+                                 isSelected: app.id == model.selectedAppID) {
+                        model.select(app.id)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.black)
+    }
+}
+
+private struct LauncherTile: View {
+    let app: any NotchApp
+    let shortcut: String?
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: app.iconSystemName)
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(height: 24)
+                    .overlay(alignment: .topTrailing) {
+                        if let badge = app.dockBadge { BadgeMark(badge: badge).offset(x: 5, y: -2) }
+                    }
+                Text(app.name)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.35))
+                }
+            }
+            .foregroundStyle(.white.opacity(isSelected || hovering ? 1 : 0.75))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.white.opacity(isSelected ? 0.16 : hovering ? 0.1 : 0.05))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
 private struct DockItem: View {
-    let app: any NotchApp
+    let name: String
+    let systemImage: String
+    let badge: NotchBadge?
     let isSelected: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -28,7 +104,7 @@ private struct DockItem: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: app.iconSystemName)
+            Image(systemName: systemImage)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.55))
                 .frame(width: 28, height: 24)
@@ -39,11 +115,11 @@ private struct DockItem: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .topTrailing) {
-            if let badge = app.dockBadge { BadgeMark(badge: badge).offset(x: 1, y: -1) }
+            if let badge { BadgeMark(badge: badge).offset(x: 1, y: -1) }
         }
         .overlay(alignment: .top) {
             if showsName {
-                Text(app.name)
+                Text(name)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white)
                     .fixedSize()

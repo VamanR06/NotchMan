@@ -129,9 +129,16 @@ struct NotchRootView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: app.expandedHeight)
                     .padding(.top, 6)
+                    .overlay {
+                        if model.isLauncherOpen {
+                            AppLauncher(model: model)
+                                .padding(.top, 6)
+                                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+                        }
+                    }
             }
         }
-        .padding(.horizontal, model.topCornerRadius + 16)
+        .padding(.horizontal, model.expandedSideInset)
         .padding(.bottom, model.expandedBottomPadding)
         .frame(maxHeight: .infinity, alignment: .top)
     }

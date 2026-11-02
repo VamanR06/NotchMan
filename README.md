@@ -4,6 +4,9 @@ A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (To
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
 notch while it's collapsed (e.g. the next meeting, or what's playing).
 
+The dock shows as many apps as fit left of the notch; when there are more, its last button (▦ All Apps)
+opens a grid of every app with its ⌘-number. The app you're in always keeps a place in the dock.
+
 ## Build & run
 
 Requires macOS 14+ and Xcode 16+ (Swift 6).

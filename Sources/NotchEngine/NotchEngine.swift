@@ -331,7 +331,7 @@ public final class NotchEngine {
         NotchFocus.restore()
     }
 
-    /// ⌘1–9 switch apps; Esc closes; anything else goes to the selected app unless something is being typed.
+    /// ⌘1–9 switch apps; Esc closes All Apps, then the notch; anything else goes to the selected app unless something is being typed.
     private func handleKey(_ event: NSEvent) -> Bool {
         guard let panel = event.window as? NotchPanel,
               let notch = notches.values.first(where: { $0.panel === panel }),
@@ -345,6 +345,10 @@ public final class NotchEngine {
             return true
         }
         guard !Self.isTyping(panel.firstResponder) else { return false }
+        if event.keyCode == 53, notch.model.isLauncherOpen {  // Esc closes All Apps before the notch
+            notch.model.toggleLauncher()
+            return true
+        }
         if event.keyCode == 53 {  // Esc: the app may use it first (e.g. to drop a selection)
             if notch.model.selectedApp?.handleKey(event) != true { closeFromKeyboard(notch) }
             return true

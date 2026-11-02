@@ -12,6 +12,9 @@ final class NotchViewModel {
 
     let apps: [any NotchApp]
 
+    /// The All Apps grid is showing over the selected app.
+    var isLauncherOpen = false
+
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
     /// A menu (context menu, ✨, …) is open; the mouse is on it, outside the notch, so don't collapse.
@@ -126,6 +129,43 @@ final class NotchViewModel {
         layout.leftWidth = width(layout.left)
         layout.rightWidth = width(layout.right)
         return layout
+    }
+
+    // MARK: - Dock
+
+    /// The dock's icons (and the All Apps button) are this wide, this far apart.
+    let dockItemWidth: CGFloat = 28
+    let dockSpacing: CGFloat = 4
+    /// Space between the expanded shape's edge and its content.
+    var expandedSideInset: CGFloat { topCornerRadius + 16 }
+
+    /// Room on each side of the physical notch in the expanded top row.
+    var expandedWingWidth: CGFloat {
+        max(0, (expandedSize.width - geometry.notchSize.width) / 2 - expandedSideInset)
+    }
+
+    /// The apps in the dock row beside the notch, and whether the rest wait behind the All Apps button.
+    var dockApps: (shown: [any NotchApp], overflow: Bool) {
+        let fitting = Int((expandedWingWidth + dockSpacing) / (dockItemWidth + dockSpacing))
+        let selected = apps.firstIndex { $0.id == selectedAppID }
+        let slots = Self.dockSlots(count: apps.count, selected: selected, fitting: fitting)
+        return (slots.indices.map { apps[$0] }, slots.overflow)
+    }
+
+    /// Which apps get the `fitting` slots beside the notch. When they don't all fit, the last slot is the All
+    /// Apps button, the first ones keep their places, and the selected app takes the slot before the button so
+    /// it's always in view.
+    static func dockSlots(count: Int, selected: Int?, fitting: Int) -> (indices: [Int], overflow: Bool) {
+        guard count > fitting else { return (Array(0..<count), false) }
+        var indices = Array(0..<max(0, fitting - 1))
+        if let selected, !indices.contains(selected), !indices.isEmpty {
+            indices[indices.count - 1] = selected
+        }
+        return (indices, true)
+    }
+
+    func toggleLauncher() {
+        withAnimation(.easeOut(duration: 0.15)) { isLauncherOpen.toggle() }
     }
 
     var topCornerRadius: CGFloat { state == .expanded ? 14 : 6 }
@@ -277,6 +317,7 @@ final class NotchViewModel {
         keyboardHeld = false
         dragHeld = false
         selectionGraceRect = nil
+        isLauncherOpen = false
         let hadKeyboard = tookKeyboard
         tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
@@ -298,7 +339,10 @@ final class NotchViewModel {
             // Remember the larger of the old shape and any earlier grace area, so quick switches chain.
             selectionGraceRect = selectionGraceRect.map { $0.union(hitRect) } ?? hitRect
         }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selectedAppID = appID }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            selectedAppID = appID
+            isLauncherOpen = false
+        }
     }
 
     // MARK: - Transients
