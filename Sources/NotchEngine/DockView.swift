@@ -1,148 +1,89 @@
 import SwiftUI
 import NotchKit
 
-/// Row of app icons for switching the expanded notch's content. It stays left of the notch: when not every icon
-/// fits there (a laptop's real notch would hide them), the ones that fit are followed by an Apps button that opens
-/// every app as a grid, like Launchpad.
+/// Row of app icons for switching the expanded notch's content. It stays left of the notch: when the icons don't
+/// fit there (a laptop's real notch would hide them), they get tighter, and then the last ones move into a » menu.
 struct DockView: View {
     let model: NotchViewModel
 
     var body: some View {
         let selected = model.apps.firstIndex { $0.id == model.selectedApp?.id }
         let layout = DockLayout.fit(count: model.apps.count, selected: selected, width: model.dockWidth)
-        HStack(spacing: DockLayout.spacing) {
+        HStack(spacing: layout.spacing) {
             ForEach(layout.shown, id: \.self) { index in
                 let app = model.apps[index]
-                DockItem(app: app, isSelected: index == selected && !model.showingAppGrid) {
+                DockItem(app: app, isSelected: index == selected, width: layout.itemWidth) {
                     model.select(app.id)
                 }
             }
-            if layout.hasAppsButton {
-                AppsButton(model: model, hidden: model.apps.indices.filter { !layout.shown.contains($0) }.map { model.apps[$0] })
+            if !layout.overflow.isEmpty {
+                MoreApps(model: model, apps: layout.overflow.map { model.apps[$0] })
             }
         }
     }
 }
 
-/// How the dock fits its room: every icon if they fit, else as many as fit followed by the Apps button. The
-/// selected app always shows, taking the last slot if it would be left out.
+/// How the dock fits its room: full-size icons if they fit, else tighter ones, else as many tight ones as fit
+/// followed by a » menu of the rest. The selected app always shows, taking the last slot if it would be hidden.
 struct DockLayout: Equatable {
+    var itemWidth: CGFloat
+    var spacing: CGFloat
     /// Apps shown as icons, by index, in dock order.
     var shown: [Int]
-    var hasAppsButton: Bool
+    /// Apps in the » menu, by index.
+    var overflow: [Int]
 
-    static let itemWidth: CGFloat = 28
-    static let spacing: CGFloat = 4
-    /// A touch narrower than an icon, so a fifth icon fits beside a laptop's notch.
-    static let appsButtonWidth: CGFloat = 26
+    /// Icon slot widths and gaps, roomiest first.
+    static let sizes: [(item: CGFloat, spacing: CGFloat)] = [(28, 4), (24, 2), (22, 1)]
+    static let moreWidth: CGFloat = 20
 
     static func fit(count: Int, selected: Int?, width: CGFloat) -> DockLayout {
-        let all = CGFloat(count) * itemWidth + CGFloat(max(count - 1, 0)) * spacing
-        guard all > width else { return DockLayout(shown: Array(0..<count), hasAppsButton: false) }
-        // Icons, each followed by a gap, then the Apps button.
-        let fitting = Int((width - appsButtonWidth) / (itemWidth + spacing))
+        func needed(_ size: (item: CGFloat, spacing: CGFloat)) -> CGFloat {
+            CGFloat(count) * size.item + CGFloat(max(count - 1, 0)) * size.spacing
+        }
+        for size in sizes where needed(size) <= width {
+            return DockLayout(itemWidth: size.item, spacing: size.spacing, shown: Array(0..<count), overflow: [])
+        }
+        let size = sizes[sizes.count - 1]
+        let fitting = Int((width - moreWidth) / (size.item + size.spacing))
         var shown = Array(0..<min(max(fitting, 1), count))
         if let selected, selected >= shown.count { shown[shown.count - 1] = selected }
-        return DockLayout(shown: shown, hasAppsButton: true)
+        let overflow = (0..<count).filter { !shown.contains($0) }
+        return DockLayout(itemWidth: size.item, spacing: size.spacing, shown: shown, overflow: overflow)
     }
 }
 
-/// Opens (or closes) the Apps grid; a dot when an app that isn't in the dock has a badge.
-private struct AppsButton: View {
-    @Bindable var model: NotchViewModel
-    /// Apps not in the dock.
-    let hidden: [any NotchApp]
-    @State private var hovering = false
-
-    var body: some View {
-        Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { model.showingAppGrid.toggle() }
-        } label: {
-            Image(systemName: "square.grid.3x3.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(model.showingAppGrid ? .white : .white.opacity(0.55))
-                .frame(width: DockLayout.appsButtonWidth, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(.white.opacity(model.showingAppGrid ? 0.18 : hovering ? 0.08 : 0))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .overlay(alignment: .topTrailing) {
-            if let badge = hidden.lazy.compactMap(\.dockBadge).first { BadgeMark(badge: badge).offset(x: 1, y: -1) }
-        }
-    }
-}
-
-/// Every app as a grid, like Launchpad, over the expanded content. Click one to open it; click outside the grid or
-/// press Esc to close it.
-struct AppGrid: View {
+/// » — the apps that didn't fit in the dock, with a dot when one of them has a badge.
+private struct MoreApps: View {
     let model: NotchViewModel
+    let apps: [any NotchApp]
 
     var body: some View {
-        // Two rows for up to a dozen apps.
-        let columns = min(model.apps.count, min(max(4, (model.apps.count + 1) / 2), 6))
-        ZStack {
-            Rectangle()
-                .fill(.black.opacity(0.6))
-                .contentShape(Rectangle())
-                .onTapGesture { close() }
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(76), spacing: 8), count: columns), spacing: 10) {
-                ForEach(model.apps, id: \.id) { app in
-                    AppTile(app: app, isSelected: app.id == model.selectedApp?.id) { model.select(app.id) }
-                }
+        Menu {
+            ForEach(apps, id: \.id) { app in
+                Button { model.select(app.id) } label: { Label(app.name, systemImage: app.iconSystemName) }
             }
-            .padding(14)
-            .background(RoundedRectangle(cornerRadius: 16).fill(Color(white: 0.12)))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.12)))
+        } label: {
+            Image(systemName: "chevron.right.2")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .transition(.opacity.combined(with: .scale(scale: 0.97)))
-    }
-
-    private func close() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { model.showingAppGrid = false }
-    }
-}
-
-/// One app in the grid: its icon on a tile, its name underneath.
-private struct AppTile: View {
-    let app: any NotchApp
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: app.iconSystemName)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white)
-                    .frame(width: 42, height: 42)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(.white.opacity(isSelected ? 0.28 : hovering ? 0.2 : 0.12))
-                    )
-                    .overlay(alignment: .topTrailing) {
-                        if let badge = app.dockBadge { BadgeMark(badge: badge).offset(x: 2, y: -2) }
-                    }
-                Text(app.name)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(.white.opacity(isSelected ? 1 : 0.8))
-                    .lineLimit(1)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: DockLayout.moreWidth, height: 24)
+        .overlay(alignment: .topTrailing) {
+            if apps.contains(where: { $0.dockBadge != nil }) {
+                Circle().fill(.white.opacity(0.8)).frame(width: 5, height: 5).offset(x: 1, y: 1)
             }
-            .frame(width: 76)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .help(apps.map(\.name).joined(separator: ", "))
     }
 }
 
 private struct DockItem: View {
     let app: any NotchApp
     let isSelected: Bool
+    let width: CGFloat
     let action: () -> Void
     @State private var hovering = false
     /// The name label, shown after resting on the icon briefly (like a browser tab's tooltip). macOS tooltips
@@ -155,7 +96,7 @@ private struct DockItem: View {
             Image(systemName: app.iconSystemName)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.55))
-                .frame(width: DockLayout.itemWidth, height: 24)
+                .frame(width: width, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
                         .fill(.white.opacity(isSelected ? 0.18 : hovering ? 0.08 : 0))

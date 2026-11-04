@@ -344,10 +344,6 @@ public final class NotchEngine {
             notch.model.select(apps[digit - 1].id)
             return true
         }
-        if event.keyCode == 53, notch.model.showingAppGrid {  // Esc closes the Apps grid first
-            notch.model.showingAppGrid = false
-            return true
-        }
         guard !Self.isTyping(panel.firstResponder) else { return false }
         if event.keyCode == 53 {  // Esc: the app may use it first (e.g. to drop a selection)
             if notch.model.selectedApp?.handleKey(event) != true { closeFromKeyboard(notch) }
