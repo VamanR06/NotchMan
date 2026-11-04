@@ -14,6 +14,8 @@ final class NotchViewModel {
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
+    /// The Apps grid (every app, like Launchpad) is open over the expanded content.
+    var showingAppGrid = false
     /// A menu (context menu, ✨, …) is open; the mouse is on it, outside the notch, so don't collapse.
     @ObservationIgnored var isMenuOpen = false
     /// Apps asking to stay open while selected (`NotchContext.holdOpen`).
@@ -287,6 +289,7 @@ final class NotchViewModel {
         keyboardHeld = false
         dragHeld = false
         selectionGraceRect = nil
+        showingAppGrid = false
         let hadKeyboard = tookKeyboard
         tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
@@ -308,7 +311,10 @@ final class NotchViewModel {
             // Remember the larger of the old shape and any earlier grace area, so quick switches chain.
             selectionGraceRect = selectionGraceRect.map { $0.union(hitRect) } ?? hitRect
         }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selectedAppID = appID }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            selectedAppID = appID
+            showingAppGrid = false
+        }
     }
 
     // MARK: - Transients

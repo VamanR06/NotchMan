@@ -128,6 +128,9 @@ struct NotchRootView: View {
                     .id(app.id)
                     .frame(maxWidth: .infinity)
                     .frame(height: app.expandedHeight)
+                    .overlay {
+                        if model.showingAppGrid { AppGrid(model: model) }
+                    }
                     .padding(.top, 6)
             }
         }

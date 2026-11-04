@@ -2,7 +2,8 @@
 
 A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Today, Calendar, Tasks, Jobs, Agents, Now Playing, Clock) switchable from a dock.
 Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
-notch while it's collapsed (e.g. the next meeting, or what's playing).
+notch while it's collapsed (e.g. the next meeting, or what's playing). The dock sits left of the notch; when
+not every app fits there, the grid button after the icons opens all of them, like Launchpad (Esc closes it).
 
 ## Build & run
 
