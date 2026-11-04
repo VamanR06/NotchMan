@@ -5,6 +5,7 @@
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![Version](https://img.shields.io/github/v/tag/VamanR06/NotchMan?label=version&sort=semver)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 NotchMan is a native macOS app that lives in the MacBook notch (no Dock icon, no menu-bar clutter). Hover the
 notch and it grows into a panel with a dock of **notch apps**: your day, calendar, tasks, job applications,
@@ -28,6 +29,7 @@ grid of every app with its ⌘-number. The app you're in always keeps a place in
 - [Privacy and data](#privacy-and-data)
 - [Development](#development)
 - [Versions and releases](#versions-and-releases)
+- [License](#license)
 
 ## Highlights
 
@@ -55,7 +57,21 @@ notch, a notch on every display, and an SDK (`NotchKit`) for writing your own no
 
 ## Install
 
-NotchMan is built from source; there's no prebuilt download yet.
+### Download
+
+Every [release](https://github.com/VamanR06/NotchMan/releases) has a `NotchMan-vX.Y.Z.zip` with the app
+(universal: Apple silicon and Intel). Unzip it and move `NotchMan.app` to `/Applications`.
+
+The app isn't notarized by Apple, so the first launch is blocked with "can't be opened". Either right-click
+NotchMan.app → **Open** → **Open**, or clear the download flag in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/NotchMan.app
+```
+
+The downloaded app is signed ad-hoc, so macOS asks for Accessibility again after each update you install.
+
+### Build from source
 
 ```sh
 git clone https://github.com/VamanR06/NotchMan.git
@@ -379,6 +395,7 @@ NotchMan runs entirely on your Mac and has no server of its own.
 make build    # swift build
 make run      # debug build, bundle, sign, relaunch NotchMan (works from a shell inside NotchMan too)
 make release  # release build into build/NotchMan.app
+make zip      # universal, ad-hoc-signed build/NotchMan-v<version>.zip for a release
 make clean    # remove .build and build
 swift test    # unit tests
 ```
@@ -395,7 +412,7 @@ Open `Package.swift` in Xcode to edit and debug. The only dependency is
 | `Sources/Apps/*` | Notch apps (Today, Calendar, Tasks, Jobs, Chat/Agents, Now Playing, Shelf, Clock) |
 | `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps in dock order |
 | `Support/Info.plist` | App bundle metadata, including the version |
-| `scripts/` | `bundle.sh` (build, bundle, sign) and `relaunch.sh` |
+| `scripts/` | `bundle.sh` (build, bundle, sign), `package.sh` (release zip) and `relaunch.sh` |
 | `Tests/` | Swift Testing suites, one per module |
 
 ### Writing a notch app
@@ -431,5 +448,14 @@ git tag -l 'v*' -n1      # list versions with their one-line summary
 git checkout v0.5.0      # build an older version
 ```
 
-To cut a release: add a section to `CHANGELOG.md`, bump the version in `Support/Info.plist`, commit, then
-`git tag -a vX.Y.Z -m "NotchMan X.Y.Z"` and `git push origin vX.Y.Z`.
+To cut a release:
+
+1. Add a section to `CHANGELOG.md`, bump the version in `Support/Info.plist`, and commit.
+2. Tag and push: `git tag -a vX.Y.Z -m "NotchMan X.Y.Z — summary"` and `git push origin main vX.Y.Z`.
+3. `make zip` builds a universal, ad-hoc-signed `build/NotchMan-vX.Y.Z.zip`.
+4. `gh release create vX.Y.Z build/NotchMan-vX.Y.Z.zip --title "NotchMan vX.Y.Z — summary" --notes "…"`,
+   with that version's changelog section as the notes.
+
+## License
+
+NotchMan is released under the [MIT License](LICENSE).

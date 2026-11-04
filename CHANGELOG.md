@@ -4,6 +4,13 @@ All notable changes to NotchMan. Versions follow [semantic versioning](https://s
 annotated git tag (`git checkout v0.5.0`). Versions before 1.0.0 were tagged after the fact at the commit that
 finished each milestone; their `Info.plist` still says 0.1.0.
 
+## [Unreleased]
+
+### Added
+- MIT license.
+- Downloadable app: every release, including the earlier ones, now has a universal `NotchMan-vX.Y.Z.zip`, and
+  `make zip` builds one.
+
 ## [1.0.0] — 2026-11-04
 
 First public release.
@@ -112,6 +119,7 @@ First public release.
 - **Tasks:** Notion task boards.
 - A notch on every display.
 
+[Unreleased]: https://github.com/VamanR06/NotchMan/compare/v1.0.0...main
 [1.0.0]: https://github.com/VamanR06/NotchMan/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/VamanR06/NotchMan/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/VamanR06/NotchMan/compare/v0.6.0...v0.7.0
