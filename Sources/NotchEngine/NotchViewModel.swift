@@ -128,17 +128,7 @@ final class NotchViewModel {
         return layout
     }
 
-    var topCornerRadius: CGFloat { state == .expanded ? Self.expandedTopCornerRadius : 6 }
-    static let expandedTopCornerRadius: CGFloat = 14
-    /// The expanded content's margin inside the shape's flared top corners.
-    let expandedContentInset: CGFloat = 16
-
-    /// Room for the dock: the expanded top row's left side, up to the notch. Measured with the narrowest app open,
-    /// so the dock stays the same as you switch apps.
-    var dockWidth: CGFloat {
-        let narrowest = apps.map(\.expandedWidth).min() ?? 620
-        return (narrowest - 2 * (Self.expandedTopCornerRadius + expandedContentInset) - geometry.notchSize.width) / 2
-    }
+    var topCornerRadius: CGFloat { state == .expanded ? 14 : 6 }
     var bottomCornerRadius: CGFloat { state == .expanded ? 26 : 10 }
 
     /// Size of the black notch shape (including the flared top corners).
