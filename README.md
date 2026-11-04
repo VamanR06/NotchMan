@@ -1,54 +1,94 @@
 # NotchMan
 
-A macOS app that lives in the MacBook notch and hosts pluggable "notch apps" (Today, Calendar, Tasks, Jobs, Agents, Now Playing, Clock) switchable from a dock.
-Hover the notch to expand it; move away to collapse. Apps can show a compact live indicator beside the
-notch while it's collapsed (e.g. the next meeting, or what's playing).
+**Your MacBook's notch, turned into a small home for the things you check all day.**
 
-The dock shows as many apps as fit left of the notch; when there are more, its last button (▦ All Apps)
-opens a grid of every app with its ⌘-number. The app you're in always keeps a place in the dock.
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
+![Version](https://img.shields.io/github/v/tag/VamanR06/NotchMan?label=version&sort=semver)
 
-## Build & run
+NotchMan is a native macOS app that lives in the MacBook notch (no Dock icon, no menu-bar clutter). Hover the
+notch and it grows into a panel with a dock of **notch apps**: your day, calendar, tasks, job applications,
+Claude Code agents, AI chats, a file shelf, music and clocks. Move away and it shrinks back. While collapsed,
+apps can show small live chips beside the notch — the next meeting's countdown, what's playing, an agent waiting
+for approval.
 
-Requires macOS 14+ and Xcode 16+ (Swift 6).
+The dock shows as many apps as fit left of the notch; when there are more, its last button (▦ All Apps) opens a
+grid of every app with its ⌘-number. The app you're in always keeps a place in the dock.
+
+## Contents
+
+- [Highlights](#highlights)
+- [Requirements](#requirements)
+- [Install](#install)
+- [First run and permissions](#first-run-and-permissions)
+- Using NotchMan: [Keyboard](#keyboard) · [System HUDs](#system-huds) · [Today](#today) ·
+  [Calendar](#calendar-setup-free) · [Tasks](#tasks-notion) · [Jobs](#jobs-jobmanager) ·
+  [Agents & Chat](#agents-claude-code--chatgpt--claude--muse) · [Shelf](#shelf) · [Now Playing](#now-playing) ·
+  [Clock](#clock)
+- [Privacy and data](#privacy-and-data)
+- [Development](#development)
+- [Versions and releases](#versions-and-releases)
+
+## Highlights
+
+| App | What it does |
+| --- | --- |
+| **Today** | The day at a glance: next meeting with Join, tasks due, deadlines, agents that need you, and natural-language quick add ("call recruiter fri 3pm for 30m") |
+| **Calendar** | Google Calendar with Join links, a meeting heads-up countdown, double-booking warnings, reschedule and edit in place |
+| **Tasks** | Notion task databases grouped by due date; check off, edit, and reschedule one or many at once |
+| **Jobs** | Your [JobManager](https://github.com/VamanR06/JobManager) applications: deadlines, status changes, add the job in your browser, drag the right resume, and rules-based form Autofill |
+| **Agents** | Every Claude Code session on your Mac, in folders by project; interactive terminals in the notch, New Agent, tool approvals, usage limits — plus embedded ChatGPT, Claude and Muse |
+| **Shelf** | Drag files to the notch to hold them or drop them into any folder or Claude Code project; downloads and long-running commands |
+| **Now Playing** | Spotify controls and playlist browsing |
+| **Clock** | World clocks, timers and a stopwatch |
+
+Also: a global hotkey (**⌥Space**) with full keyboard control, volume/brightness/battery/headphone HUDs in the
+notch, a notch on every display, and an SDK (`NotchKit`) for writing your own notch apps.
+
+## Requirements
+
+- A Mac running **macOS 14 Sonoma** or later. A notched MacBook is the intended home; external displays get a
+  notch-shaped panel at the top of the screen too.
+- **Xcode 16+** (Swift 6 toolchain) to build it.
+- Optional, per app: a Google Cloud OAuth client (Calendar), a Notion integration (Tasks), a JobManager server
+  (Jobs), the `claude` CLI (Agents), Spotify (Now Playing; Premium for playlists).
+
+## Install
+
+NotchMan is built from source; there's no prebuilt download yet.
 
 ```sh
-make run      # build, bundle into build/NotchMan.app, sign, launch
-make release  # release build
-swift test    # unit tests
+git clone https://github.com/VamanR06/NotchMan.git
+cd NotchMan
+make run          # build, bundle into build/NotchMan.app, sign, launch
 ```
 
-Open `Package.swift` in Xcode to edit. Quit from the `…` menu in the expanded notch.
+To build a specific version, check out its tag first (see [Versions and releases](#versions-and-releases)):
 
-## Layout
+```sh
+git checkout v1.0.0
+make release      # optimized build in build/NotchMan.app
+```
 
-| Path | What |
+You can copy `build/NotchMan.app` into `/Applications` and add it to System Settings → General → Login Items to
+start it at login. Quit from the `…` menu in the expanded notch.
+
+**Signing:** `scripts/bundle.sh` signs with your Apple Development certificate if you have one, so macOS
+remembers permissions across rebuilds. Without one it signs ad-hoc, which works, but macOS asks for
+Accessibility again after every rebuild.
+
+## First run and permissions
+
+Hover the notch to open it, then open **Settings** from the `…` menu to connect the apps you want. Everything is
+optional — an app with nothing set up just tells you what it needs. macOS asks for permissions only when a
+feature needs them:
+
+| Permission | Used for |
 | --- | --- |
-| `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
-| `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window |
-| `Sources/Apps/*` | Notch apps (Today, Calendar, Tasks, Jobs, Agents, Now Playing, Shelf, Clock) |
-| `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps |
-
-## Writing a notch app
-
-1. Add `Sources/Apps/MyApp/MyApp.swift` with an `@Observable` class conforming to `NotchApp`
-   (id, name, SF Symbol icon, `makeExpandedView()`, optionally `activity`, `makeSettingsView()`, `expandedHeight`, `expandedWidth`).
-2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
-   and list it as a dependency of `NotchMan`.
-3. Add `MyApp()` to `AppRegistry.makeApps()`.
-
-Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`
-so icon and label stay together), optionally with a split `leading`/`trailing` layout for media. Up to three
-show at once, sized to their content.
-
-`activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
-`openSettings()`, `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`),
-`notify(title:body:payload:)` for macOS notifications, and `isVisible`. Apps keep running when not selected.
-`send(_:to:reveal: false)` delivers a message without bringing the other app up, and `showTransient(_:)` briefly
-shows a status (icon plus text or a level bar) in place of the chips.
-
-To share data without importing each other, apps publish `BoardItem`s (events, tasks, deadlines, agents,
-approvals) and Claude Code `BoardProject`s to `NotchBoard.shared`; the Today and Shelf apps read them. Keyboard
-support: implement `handleKey(_:)` and keep a `NotchListSelection` for ↑/↓/Return in lists.
+| **Accessibility** | Taking over the volume and brightness keys so the HUD shows in the notch instead of macOS's overlay |
+| **Automation** (Apple Events) | Controlling Spotify; reading your browser's current page to add a job or Autofill a form |
+| **Notifications** | Meeting, agent, timer, chat-reply and download alerts |
+| **Bluetooth** | Showing a HUD when headphones connect |
 
 ## Keyboard
 
@@ -307,3 +347,89 @@ developer.spotify.com/dashboard create an app, add the redirect URI `http://127.
 *Web API*, and paste the Client ID in Settings → Now Playing (no secret needed). Browse your playlists, click a
 song to play it within its playlist, or press Play to start a playlist. Spotify only returns the songs of
 playlists you own or collaborate on; others can still be played from the top. Liked Songs can't be listed.
+
+## Clock
+
+The time here and in other cities, plus timers and a stopwatch.
+
+- **World clocks:** add cities in Settings → Clock (search by city or time zone). Each shows its offset from you
+  ("+5h", "−3h 30m") and whether it's already tomorrow or still yesterday there.
+- **Timers:** type a length (and optionally a label) to start one, then pause, restart or add a minute while it
+  runs. Several can run at once. When one ends NotchMan chimes and posts a notification with **Restart**;
+  **Silence** stops the alarm.
+- **Stopwatch:** start, stop and reset. Running timers and the stopwatch show as chips while the notch is closed.
+
+## Privacy and data
+
+NotchMan runs entirely on your Mac and has no server of its own.
+
+- **Secrets stay in the Keychain.** OAuth tokens (Google, Spotify), the Notion secret and the JobManager password
+  are stored in the macOS Keychain, not in plain files.
+- **It talks only to the services you connect:** Google Calendar, Notion, Spotify and your JobManager server.
+  The Chat tabs are the real websites, signed in with your own accounts; nothing is sent unless you send it, and
+  reply detection only watches for the site's Stop button.
+- **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
+  is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
+  changed.
+- **Logs** go to the unified log under the `com.notchman` subsystem (filter for it in Console.app).
+
+## Development
+
+```sh
+make build    # swift build
+make run      # debug build, bundle, sign, relaunch NotchMan (works from a shell inside NotchMan too)
+make release  # release build into build/NotchMan.app
+make clean    # remove .build and build
+swift test    # unit tests
+```
+
+Open `Package.swift` in Xcode to edit and debug. The only dependency is
+[SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT), for the in-notch terminals.
+
+### Layout
+
+| Path | What |
+| --- | --- |
+| `Sources/NotchKit` | SDK every notch app imports: `NotchApp`, `NotchActivity`, `NotchContext`, `Keychain` |
+| `Sources/NotchEngine` | Host: notch window, geometry, hover, dock, settings window, hotkey, HUDs |
+| `Sources/Apps/*` | Notch apps (Today, Calendar, Tasks, Jobs, Chat/Agents, Now Playing, Shelf, Clock) |
+| `Sources/NotchMan` | App shell; `AppRegistry.swift` lists the enabled apps in dock order |
+| `Support/Info.plist` | App bundle metadata, including the version |
+| `scripts/` | `bundle.sh` (build, bundle, sign) and `relaunch.sh` |
+| `Tests/` | Swift Testing suites, one per module |
+
+### Writing a notch app
+
+1. Add `Sources/Apps/MyApp/MyApp.swift` with an `@Observable` class conforming to `NotchApp`
+   (id, name, SF Symbol icon, `makeExpandedView()`, optionally `activity`, `makeSettingsView()`, `expandedHeight`, `expandedWidth`).
+2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
+   and list it as a dependency of `NotchMan`.
+3. Add `MyApp()` to `AppRegistry.makeApps()`.
+
+Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`
+so icon and label stay together), optionally with a split `leading`/`trailing` layout for media. Up to three
+show at once, sized to their content.
+
+`activate(context:)` gives you per-app `defaults`, `keychain`, a `logger`, `requestAttention(.pulse / .expand)`,
+`openSettings()`, `send(_:to:)` to hand a `NotchMessage` to another app (handled in its `receive(_:)`),
+`notify(title:body:payload:)` for macOS notifications, and `isVisible`. Apps keep running when not selected.
+`send(_:to:reveal: false)` delivers a message without bringing the other app up, and `showTransient(_:)` briefly
+shows a status (icon plus text or a level bar) in place of the chips.
+
+To share data without importing each other, apps publish `BoardItem`s (events, tasks, deadlines, agents,
+approvals) and Claude Code `BoardProject`s to `NotchBoard.shared`; the Today and Shelf apps read them. Keyboard
+support: implement `handleKey(_:)` and keep a `NotchListSelection` for ↑/↓/Return in lists.
+
+## Versions and releases
+
+NotchMan follows [semantic versioning](https://semver.org). Each version is an annotated git tag (`v1.0.0`,
+`v0.9.0`, …) with a matching GitHub release; what changed in each is in [CHANGELOG.md](CHANGELOG.md). The app's
+own version is `CFBundleShortVersionString` in `Support/Info.plist`.
+
+```sh
+git tag -l 'v*' -n1      # list versions with their one-line summary
+git checkout v0.5.0      # build an older version
+```
+
+To cut a release: add a section to `CHANGELOG.md`, bump the version in `Support/Info.plist`, commit, then
+`git tag -a vX.Y.Z -m "NotchMan X.Y.Z"` and `git push origin vX.Y.Z`.
