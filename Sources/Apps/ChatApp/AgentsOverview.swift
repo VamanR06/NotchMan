@@ -7,7 +7,9 @@ struct AgentsOverview: View {
     @Bindable var app: ChatApp
 
     var body: some View {
-        if let terminal = app.shownTerminal {
+        if app.showingShells {
+            ShellScreen(app: app, shells: app.shells)
+        } else if let terminal = app.shownTerminal {
             AgentTerminalScreen(app: app, terminal: terminal)
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -74,7 +76,7 @@ private struct ApprovalCard: View {
     }
 }
 
-/// ChatGPT / Claude / Muse status pills; click to open that chat.
+/// ChatGPT / Claude / Muse status pills (click to open that chat), then Terminal.
 private struct ChatStrip: View {
     let app: ChatApp
 
@@ -95,6 +97,51 @@ private struct ChatStrip: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+            }
+            terminalPill
+        }
+    }
+
+    /// Opens your own terminals in the notch (a new one in the last folder you used, if none are open).
+    private var terminalPill: some View {
+        let tabs = app.shells.tabs
+        let busy = tabs.contains { $0.session.isBusy }
+        return Button { app.openShell() } label: {
+            HStack(spacing: 6) {
+                if busy {
+                    NotchSpinner(size: 11, lineWidth: 1.6)
+                } else {
+                    Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
+                }
+                Text("Terminal").font(.system(size: 12, weight: .semibold))
+                Text(busy ? "running…" : tabs.isEmpty ? "⌘T" : "\(tabs.count) open")
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(tabs.isEmpty ? "Open a terminal in \(app.shellFolder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
+                           : "Back to your terminals")
+        .task(id: tabs.count) {
+            // So "running…" follows a long command (a clone, a build) you left going.
+            while !Task.isCancelled && !tabs.isEmpty {
+                tabs.forEach { $0.session.refresh() }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .contextMenu {
+            Button("New Terminal in Home") { app.openShell(in: NSHomeDirectory()) }
+            ForEach(app.agentMonitor.recentFolders, id: \.self) { path in
+                Button("New Terminal in \(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))") { app.openShell(in: path) }
+            }
+            Divider()
+            Button("New Terminal in Folder…") {
+                if let path = ChatApp.chooseFolder(startingIn: app.shellFolder) { app.openShell(in: path) }
             }
         }
     }
@@ -318,6 +365,7 @@ private struct ProjectRow: View {
             if let path = project.path {
                 Divider()
                 Button("Open Project in \(app.editor.name)") { app.editor.open(path) }
+                Button("Open Terminal Here") { app.openShell(in: path) }
                 Button("Reveal Project in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                 }
@@ -725,6 +773,7 @@ private struct AgentRow: View {
             MoveToFolderMenu(app: app, sessions: [agent.id])
             Divider()
             Button("Open Folder in \(app.editor.name)") { app.editor.open(agent.cwd) }
+            Button("Open Terminal in Folder") { app.openShell(in: agent.cwd) }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: agent.cwd)])
             }
@@ -831,12 +880,7 @@ private struct NewAgentForm: View {
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        NSApp.activate()
-        if panel.runModal() == .OK, let url = panel.url { folder = url.path }
+        if let path = ChatApp.chooseFolder() { folder = path }
     }
 
     private func start() {

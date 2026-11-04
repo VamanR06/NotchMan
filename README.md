@@ -204,11 +204,21 @@ name, and Move Back returns it. The last button switches to grouping by status (
 Idle). Click a background agent to open an
 interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
-right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** opens shells in the
+right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** (or ⌘T) opens shells in the
 agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
 a shell. **⌘-click** a file or folder named in a terminal (a plan Claude Code saved, a file it edited, `path:12`)
 to preview it in a popup — Markdown is formatted, code shows line numbers — with Open, Show in Finder and Copy
 Path; Esc or a click outside closes it. Interactive sessions open their folder in VS Code/Cursor.
+
+**Terminal:** the Terminal pill on the Overview (or **⌘T** in the Agents app) opens a terminal of your own in
+the notch, in the last folder you used; right-click the pill, a folder or a session for **Open Terminal Here**.
+The keyboard goes straight to it and the notch stays open until you click outside. **+** (or ⌘T while typing)
+opens another tab in the same folder, and its menu picks another one (Home, your Claude Code projects, Choose
+Folder…). Tabs are named after the folder they're in and follow `cd`; **Open in VS Code** (or Cursor, per
+Settings) opens that folder, and the folder button shows it in Finder. When you `git clone` in any notch terminal
+(an agent's shells too), a pill in the corner shows the clone's progress, then **Open in VS Code** or **cd**
+into the new folder. The terminals keep running when you go back to the Overview or the notch closes; `exit` or
+× closes one.
 **New Agent** starts `claude --bg "<prompt>"` in a project folder (worktree sessions are listed as their repo).
 Pick its mode first: **Plan** (the default; it plans and changes nothing until you approve), **Ask first**,
 **Accept edits** or **Auto**. The last mode you used is remembered. Return starts it, ⌥Return adds a line. You're notified when an agent needs you or

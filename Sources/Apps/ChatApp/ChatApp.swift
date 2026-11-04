@@ -99,6 +99,16 @@ public final class ChatApp: NotchApp {
     private(set) var shownTerminalID: String? {
         didSet { if shownTerminalID == nil { context?.holdOpen(false) } }
     }
+    /// Terminals of your own, not an agent's (⌘T, or Terminal on the Overview).
+    let shells = ShellWorkspace()
+    /// The Overview tab shows those terminals instead of the list.
+    private(set) var showingShells = false {
+        didSet { if !showingShells { context?.holdOpen(false) } }
+    }
+    /// Where a new terminal starts when you don't pick a folder: the last one you used.
+    var shellFolder = NSHomeDirectory() {
+        didSet { context?.defaults.set(shellFolder, forKey: "shellFolder") }
+    }
     private(set) var loading: Set<ChatService> = []
     /// Each service's current page (kept up to date as you navigate).
     private(set) var pageURLs: [ChatService: URL] = [:]
@@ -154,6 +164,10 @@ public final class ChatApp: NotchApp {
         editor = context.defaults.string(forKey: "editor").flatMap(AgentEditor.init(rawValue:)) ?? .vscode
         agentOpenMode = context.defaults.string(forKey: "agentOpenMode").flatMap(AgentOpenMode.init(rawValue:)) ?? .notch
         groupsAgentsByProject = context.defaults.object(forKey: "groupsAgentsByProject") as? Bool ?? true
+        shellFolder = context.defaults.string(forKey: "shellFolder") ?? NSHomeDirectory()
+        shells.onClick = { [weak self] in self?.terminalClicked() }
+        shells.onNewTab = { [weak self] in self?.openShell(in: self?.shells.selectedTab?.session.workingDirectory) }
+        shells.onEmpty = { [weak self] in self?.showingShells = false }
         agentMonitor = ClaudeAgentsMonitor(defaults: context.defaults)
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
         agentMonitor.onChange = { [weak self] in
@@ -524,6 +538,7 @@ public final class ChatApp: NotchApp {
         terminal.onClick = { [weak self] in self?.terminalClicked() }
         terminal.update(agent)
         showingOverview = true
+        showingShells = false
         shownTerminalID = agent.id
         if !terminal.isRunning { reattach(terminal) }
     }
@@ -693,9 +708,34 @@ public final class ChatApp: NotchApp {
         if shownTerminalID == id { shownTerminalID = nil }
     }
 
-    /// Back to the agent list; the terminal keeps running and can be reopened from its row.
+    /// Back to the agent list; the terminal keeps running and can be reopened from its row (or Terminal's pill).
     func backToOverview() {
         shownTerminalID = nil
+        showingShells = false
+    }
+
+    /// Shows your own terminals with the keyboard in one: a new terminal in `folder` when given (or, when there are
+    /// none yet, in the last folder you used), else the one you were on.
+    func openShell(in folder: String? = nil) {
+        if folder != nil || shells.tabs.isEmpty {
+            let start = folder ?? shellFolder
+            shells.add(in: FileManager.default.fileExists(atPath: start) ? start : NSHomeDirectory())
+        }
+        if let folder { shellFolder = folder }
+        showingOverview = true
+        shownTerminalID = nil
+        showingShells = true
+        // You opened it to type: keep the notch open until a click outside, as clicking into a terminal does.
+        terminalClicked()
+        shells.selectedTab?.session.focusWhenShown()
+    }
+
+    /// ⌘T opens a terminal in the notch.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "t" else { return false }
+        openShell()
+        return true
     }
 
     /// Clicking into a terminal keeps the notch open while the mouse wanders (so typing isn't cut off) until a

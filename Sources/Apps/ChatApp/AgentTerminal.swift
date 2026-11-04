@@ -12,10 +12,17 @@ final class TerminalSession: Identifiable {
     private(set) var title = ""
     /// A file ⌘-clicked in the output, shown in a popup over the terminal.
     var preview: FilePreview?
+    /// The folder the process is in, as of the last `refresh()` (a shell's follows `cd`).
+    private(set) var currentDirectory: String?
+    /// A command is running in the shell (it isn't waiting at its prompt), as of the last `refresh()`.
+    private(set) var isBusy = false
+    /// The folder the latest `git clone` in this terminal went into, until it's opened or dismissed.
+    var clonedFolder: String?
     /// Where relative paths in the output are resolved from when the process's own directory can't be read.
     @ObservationIgnored var directory: String?
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
+    @ObservationIgnored private var cloneDetector = CloneDetector()
     /// Every key pressed in this terminal (after shortcut translation).
     @ObservationIgnored var onKey: ((NSEvent) -> Void)?
     /// The process exited.
@@ -23,6 +30,10 @@ final class TerminalSession: Identifiable {
     /// The user clicked into this terminal.
     @ObservationIgnored var onClick: (() -> Void)? {
         didSet { view.onClick = onClick }
+    }
+    /// ⌘T in this terminal.
+    @ObservationIgnored var onNewTab: (() -> Void)? {
+        didSet { view.onNewTab = onNewTab }
     }
 
     init() {
@@ -41,6 +52,7 @@ final class TerminalSession: Identifiable {
         events.onTitle = { [weak self] title in self?.title = title }
         view.onKey = { [weak self] event in self?.onKey?(event) }
         view.workingDirectory = { [weak self] in self?.workingDirectory }
+        view.onOutput = { [weak self] bytes in self?.output(bytes) }
         view.onOpenFile = { [weak self] mention, anchor in
             withAnimation(.easeOut(duration: 0.12)) { self?.preview = FilePreview(mention: mention, anchor: anchor) }
         }
@@ -70,6 +82,27 @@ final class TerminalSession: Identifiable {
         return path.isEmpty ? nil : path
     }
 
+    /// Re-reads the folder and whether a command is running; the screens call this while they're shown.
+    func refresh() {
+        let folder = workingDirectory
+        if folder != currentDirectory { currentDirectory = folder }
+        // While a command runs it holds the terminal; at the prompt the shell's own process group does.
+        let fd = view.process?.childfd ?? -1
+        let busy = isRunning && fd >= 0 && tcgetpgrp(fd) != (view.process?.shellPid ?? 0)
+        if busy != isBusy { isBusy = busy }
+    }
+
+    /// git prints "Cloning into 'name'..." as a clone starts; the name is relative to where it ran (this
+    /// terminal's folder, as `cd` and `git clone` on one line still leave the shell in the new folder).
+    private func output(_ bytes: ArraySlice<UInt8>) {
+        for name in cloneDetector.feed(String(decoding: bytes, as: UTF8.self)) {
+            let base = URL(fileURLWithPath: workingDirectory ?? NSHomeDirectory())
+            let folder = name.hasPrefix("/") ? URL(fileURLWithPath: name) : base.appendingPathComponent(name)
+            clonedFolder = folder.standardizedFileURL.path
+            refresh()
+        }
+    }
+
     private static var environment: [String] {
         Terminal.getEnvironmentVariables(termName: "xterm-256color")
     }
@@ -97,6 +130,17 @@ final class TerminalSession: Identifiable {
     func focus() {
         view.window?.makeKey()
         view.window?.makeFirstResponder(view)
+    }
+
+    /// Puts keyboard focus in this terminal once it's on screen (a new tab takes a moment to be attached).
+    func focusWhenShown() {
+        Task { [weak self] in
+            for _ in 0..<20 {
+                guard let self else { return }
+                if self.view.window != nil { return self.focus() }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
     }
 
     /// The visible text (for tests and diagnostics).
@@ -149,6 +193,7 @@ final class AgentTerminal: Identifiable {
         id = agent.id
         self.agent = agent
         claude.onKey = { [weak self] event in self?.keyPressed(event) }
+        claude.onNewTab = { [weak self] in self?.addShell().session.focusWhenShown() }
     }
 
     // The Claude session is the workspace's main terminal.
@@ -195,6 +240,7 @@ final class AgentTerminal: Identifiable {
         nextShellNumber += 1
         session.onExit = { [weak self] in self?.removeShell(shell.id) }  // `exit` closes the tab
         session.onClick = onClick
+        session.onNewTab = { [weak self] in self?.addShell().session.focusWhenShown() }
         session.runShell(in: agent.cwd)
         shells.append(shell)
         selected = .shell(shell.id)
@@ -271,6 +317,10 @@ final class NotchTerminalView: LocalProcessTerminalView {
     var workingDirectory: (() -> String?)?
     /// Esc closes a popup over the terminal, if one is showing, instead of reaching the program.
     var dismissPopup: (() -> Bool)?
+    /// ⌘T opens another terminal tab, where the screen offers one.
+    var onNewTab: (() -> Void)?
+    /// The process's output, as it arrives (before it's drawn).
+    var onOutput: ((ArraySlice<UInt8>) -> Void)?
     private var lastCommandClick: CGRect?
     private var suppressLinkOpen = false
 
@@ -351,6 +401,11 @@ final class NotchTerminalView: LocalProcessTerminalView {
         return FileMentions.resolve(token, in: workingDirectory?())
     }
 
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        onOutput?(slice)
+        super.dataReceived(slice: slice)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         Self.installKeyMonitor()
@@ -368,6 +423,11 @@ final class NotchTerminalView: LocalProcessTerminalView {
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let terminal = event.window?.firstResponder as? NotchTerminalView else { return false }
                 if event.keyCode == 53, terminal.dismissPopup?() == true { return true }  // Esc
+                if let newTab = terminal.onNewTab, event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
+                   event.charactersIgnoringModifiers?.lowercased() == "t" {
+                    newTab()
+                    return true
+                }
                 let handled = terminal.handle(event)
                 if !handled { terminal.onKey?(event) }
                 return handled
@@ -490,7 +550,13 @@ struct AgentTerminalScreen: View {
                 }
             }
         }
-
+        .task {
+            // Keeps each terminal's folder and busy state current (for the clone banner).
+            while !Task.isCancelled {
+                ([terminal.claude] + terminal.shells.map(\.session)).forEach { $0.refresh() }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     private var header: some View {
@@ -543,6 +609,7 @@ struct AgentTerminalScreen: View {
                 FilePreviewOverlay(preview: preview, close: session.closePreview)
                     .id(preview.id)
             }
+            CloneBanner(app: app, session: session)
             if detachedOverlay && !session.isRunning {
                 VStack(spacing: 8) {
                     Text("Detached from \(terminal.agent.name).")
