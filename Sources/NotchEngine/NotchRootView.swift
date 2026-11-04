@@ -131,7 +131,7 @@ struct NotchRootView: View {
                     .padding(.top, 6)
             }
         }
-        .padding(.horizontal, model.topCornerRadius + 16)
+        .padding(.horizontal, model.topCornerRadius + model.expandedContentInset)
         .padding(.bottom, model.expandedBottomPadding)
         .frame(maxHeight: .infinity, alignment: .top)
     }
