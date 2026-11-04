@@ -364,6 +364,7 @@ private struct ProjectRow: View {
                 .help("Its sessions go back to their projects' folders")
             if let path = project.path {
                 Divider()
+                Button("New Agent Here…") { app.composeAgent(in: path) }
                 Button("Open Project in \(app.editor.name)") { app.editor.open(path) }
                 Button("Open Terminal Here") { app.openShell(in: path) }
                 Button("Reveal Project in Finder") {
@@ -772,6 +773,8 @@ private struct AgentRow: View {
             }
             MoveToFolderMenu(app: app, sessions: [agent.id])
             Divider()
+            // In the project itself, not a worktree an earlier session left behind.
+            Button("New Agent Here…") { app.composeAgent(in: ownProject) }
             Button("Open Folder in \(app.editor.name)") { app.editor.open(agent.cwd) }
             Button("Open Terminal in Folder") { app.openShell(in: agent.cwd) }
             Button("Reveal in Finder") {
@@ -829,6 +832,7 @@ private struct NewAgentForm: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
                 Menu {
                     Picker("Mode", selection: $mode) {
                         ForEach(AgentMode.allCases) { mode in
@@ -869,8 +873,16 @@ private struct NewAgentForm: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15)))
         .onAppear {
-            folder = app.agentMonitor.recentFolders.first ?? ""
+            folder = app.newAgentFolder ?? app.agentMonitor.recentFolders.first ?? ""
+            app.newAgentFolder = nil
             mode = app.agentMonitor.newAgentMode
+            focused = true
+        }
+        .onChange(of: app.newAgentFolder) { _, picked in
+            // New Agent Here on another folder while the form is already open.
+            guard let picked else { return }
+            folder = picked
+            app.newAgentFolder = nil
             focused = true
         }
     }

@@ -27,6 +27,13 @@ import Testing
         #expect(monitor.recentFolders == ["/r/NotchMan", "/r/JobManager"])
     }
 
+    @Test func newAgentHereOpensTheFormInThatFolder() {
+        let app = ChatApp()
+        app.composeAgent(in: "/r/NotchMan")
+        #expect(app.composingAgent)
+        #expect(app.newAgentFolder == "/r/NotchMan")
+    }
+
     @Test func remembersTheLastMode() {
         let defaults = UserDefaults(suiteName: "notchman.tests.newagent.mode")!
         defaults.removePersistentDomain(forName: "notchman.tests.newagent.mode")

@@ -28,6 +28,8 @@ public final class ChatApp: NotchApp {
     }
     /// The inline New Agent form is open on the Overview.
     var composingAgent = false
+    /// The folder the New Agent form switches to, from a folder's or session's right-click New Agent Here.
+    var newAgentFolder: String?
     /// Filters the Overview's sessions by name or project.
     var agentQuery = ""
     /// Show every finished session, not just the most recent few.
@@ -728,6 +730,12 @@ public final class ChatApp: NotchApp {
         // You opened it to type: keep the notch open until a click outside, as clicking into a terminal does.
         terminalClicked()
         shells.selectedTab?.session.focusWhenShown()
+    }
+
+    /// Opens the New Agent form (or keeps it open) with `folder` picked, so only the prompt is left to type.
+    func composeAgent(in folder: String) {
+        newAgentFolder = folder
+        composingAgent = true
     }
 
     /// ⌘T opens a terminal in the notch.

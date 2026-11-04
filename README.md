@@ -223,6 +223,7 @@ Settings) opens that folder, and the folder button shows it in Finder. When you 
 into the new folder. The terminals keep running when you go back to the Overview or the notch closes; `exit` or
 × closes one.
 **New Agent** starts `claude --bg "<prompt>"` in a project folder (worktree sessions are listed as their repo).
+Right-click a project's folder or a session → **New Agent Here…** to open it with that project already picked.
 Pick its mode first: **Plan** (the default; it plans and changes nothing until you approve), **Ask first**,
 **Accept edits** or **Auto**. The last mode you used is remembered. Return starts it, ⌥Return adds a line. You're notified when an agent needs you or
 finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
