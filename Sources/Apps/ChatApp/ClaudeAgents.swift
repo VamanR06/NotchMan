@@ -329,7 +329,11 @@ final class ClaudeAgentsMonitor {
         Task { await refresh() }
     }
 
-    /// Runs `claude agents --json`, at most once a second; changes arriving mid-run trigger one more run.
+    /// Shortest time between runs of `claude agents --json`. Busy agents touch their session files constantly, and
+    /// each run costs about a quarter second of CPU, so running on every change drained the battery.
+    static let minimumRefreshInterval: TimeInterval = 3
+
+    /// Runs `claude agents --json`, at most every few seconds; changes arriving mid-run trigger one more run.
     func refresh() async {
         guard !running else { queued = true; return }
         running = true
@@ -340,7 +344,7 @@ final class ClaudeAgentsMonitor {
                 Task { await refresh() }
             }
         }
-        let wait = 1 - Date().timeIntervalSince(lastRun)
+        let wait = Self.minimumRefreshInterval - Date().timeIntervalSince(lastRun)
         if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
         lastRun = Date()
 

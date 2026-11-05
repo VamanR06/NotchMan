@@ -73,7 +73,6 @@ public final class NotchEngine {
         installMouseMonitors()
         hotKey = HotKey { [weak self] in self?.toggleFromHotKey() }
         hotKey?.update()
-        startWatchingFileDrags()
         huds = SystemHUDs { [weak self] transient in self?.showTransient(transient) }
         huds?.start()
         huds?.waitForAccessibility()
@@ -232,6 +231,7 @@ public final class NotchEngine {
             MainActor.assumeIsolated {
                 self?.handleMouse()
                 guard isClick else { return }
+                self?.watchFileDragsWhileMouseDown()
                 let point = NSEvent.mouseLocation
                 // Clicking macOS's password AutoFill / unlock prompt: give it the keyboard, keep the notch open.
                 if self?.notches.values.contains(where: { $0.model.state == .expanded }) == true,
@@ -252,9 +252,11 @@ public final class NotchEngine {
             monitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { [weak self] event in
-            let clickedNotch = event.type == .leftMouseDown && event.window is NotchPanel
+            let isClick = event.type == .leftMouseDown
+            let clickedNotch = isClick && event.window is NotchPanel
             MainActor.assumeIsolated {
                 self?.handleMouse()
+                if isClick { self?.watchFileDragsWhileMouseDown() }
                 // Clicking back into the notch closes macOS's password AutoFill, like clicking back into an app.
                 if clickedNotch { NotchFocus.dismissSystemHelpers() }
             }
@@ -276,9 +278,11 @@ public final class NotchEngine {
     // MARK: - File drags
 
     /// Files dragged from anywhere (Finder, a browser, Mail) toward the notch open the app that takes them.
-    /// Polls lightly while the button is down: other apps' drags don't reliably reach event monitors.
-    private func startWatchingFileDrags() {
-        guard apps.contains(where: \.acceptsFileDrags) else { return }
+    /// Polls lightly while the button is down (other apps' drags don't reliably reach event monitors): a mouse-down
+    /// starts it and it stops once the button is up, so an idle Mac isn't woken ten times a second.
+    private func watchFileDragsWhileMouseDown() {
+        guard dragTimer == nil, apps.contains(where: \.acceptsFileDrags) else { return }
+        checkFileDrag()  // notes what's on the drag pasteboard before this press
         dragTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkFileDrag() }
         }
@@ -292,6 +296,8 @@ public final class NotchEngine {
         if !down {
             // Drag over: release the hold; the usual hover rules close the notch once the mouse leaves.
             if mouseWasDown { notches.values.forEach { $0.model.dragHeld = false } }
+            dragTimer?.invalidate()
+            dragTimer = nil
             return
         }
         guard pasteboard.changeCount != dragChangeCount,

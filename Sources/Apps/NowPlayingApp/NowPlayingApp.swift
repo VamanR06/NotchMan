@@ -50,13 +50,21 @@ public final class NowPlayingApp: NotchApp {
             }))
         }
 
-        // Light polling keeps the position in sync while Spotify is open.
+        // Spotify announces play/pause/track changes itself, so polling only keeps the position bar in sync: it
+        // asks Spotify only while a track plays with Now Playing on screen.
+        refreshSoon()
         poller = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
                 try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                if self.snapshot?.isPlaying == true, self.context?.isVisible == true { await self.refresh() }
             }
         }
+    }
+
+    /// Catches up on the position (not polled while the notch is closed) as the notch opens.
+    public func notchWillOpen() {
+        if isRunning { refreshSoon() }
     }
 
     public func deactivate() {

@@ -97,10 +97,17 @@ private final class FakeApp: NotchApp {
     }
 
     @Test func spinnerIsVisibleOnBlack() throws {
-        let renderer = ImageRenderer(content: NotchSpinner(size: 24).padding(8).background(.black))
-        renderer.scale = 2
-        let tiff = try #require(renderer.nsImage?.tiffRepresentation)
-        let rep = try #require(NSBitmapImageRep(data: tiff))
+        // A layer-backed AppKit view (ImageRenderer can't draw those), so render its layer directly.
+        let spinner = SpinnerView(frame: CGRect(x: 0, y: 0, width: 24, height: 24))
+        spinner.layout()
+        let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 48, pixelsHigh: 48, bitsPerSample: 8,
+                                                samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let context = try #require(NSGraphicsContext(bitmapImageRep: rep)).cgContext
+        context.setFillColor(.black)
+        context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        context.scaleBy(x: 2, y: 2)
+        try #require(spinner.layer).render(in: context)
         // Some pixel must be bright: the system spinner rendered near-black here.
         var brightest: CGFloat = 0
         for x in 0..<rep.pixelsWide { for y in 0..<rep.pixelsHigh {
