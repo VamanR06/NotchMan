@@ -5,9 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ARCHS=(--arch arm64 --arch x86_64)
-swift build -c release $ARCHS
-BIN="$(swift build -c release $ARCHS --show-bin-path)/NotchMan"
+# One build per architecture, merged with lipo: a multi-arch `swift build` uses the Xcode build
+# system, which fails on SwiftTerm's build plugin.
+for ARCH in arm64 x86_64; do swift build -c release --arch $ARCH; done
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)"
 
 STAGE="build/package"
@@ -15,7 +15,9 @@ APP="$STAGE/NotchMan.app"
 ZIP="build/NotchMan-v$VERSION.zip"
 rm -rf "$STAGE" "$ZIP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/NotchMan"
+lipo -create -output "$APP/Contents/MacOS/NotchMan" \
+    "$(swift build -c release --arch arm64 --show-bin-path)/NotchMan" \
+    "$(swift build -c release --arch x86_64 --show-bin-path)/NotchMan"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP"
 ditto -c -k --keepParent "$APP" "$ZIP"
