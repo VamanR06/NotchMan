@@ -233,8 +233,8 @@ public final class ChatApp: NotchApp {
                 self?.scrollSpots[service, default: [:]][path] = spot
             })
         }
-        ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] busy, title in
-            self?.replyStateChanged(service, busy: busy, pageTitle: title)
+        ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] state in
+            self?.replyStateChanged(service, state)
         })
         PageDiagnostics.install(in: config.userContentController, handler: DiagnosticsMessageProxy(logger: coordinator.logger))
         let view = NotchWebView(frame: .zero, configuration: config)
@@ -351,12 +351,14 @@ public final class ChatApp: NotchApp {
 
     // MARK: - Reply notifications
 
-    private func replyStateChanged(_ service: ChatService, busy: Bool, pageTitle: String) {
-        if busy {
+    private func replyStateChanged(_ service: ChatService, _ state: ReplyState) {
+        context?.logger.notice("Reply \(service.rawValue, privacy: .public): \(state.busy ? "writing" : state.aborted ? "cancelled" : "done", privacy: .public) (\(state.via, privacy: .public))")
+        let pageTitle = state.title
+        if state.busy {
             busySince[service] = busySince[service] ?? Date()
             return
         }
-        guard let started = busySince.removeValue(forKey: service) else { return }
+        guard let started = busySince.removeValue(forKey: service), !state.aborted else { return }
         // A reply landed: the conversation moves to the top of the Chats list.
         if let view = webViews[service], let url = view.url, let conversation = service.conversation(at: url) {
             updateChats([ChatThread(service: service, conversationID: conversation.id, url: url.absoluteString,

@@ -14,6 +14,11 @@ finished each milestone; their `Info.plist` still says 0.1.0.
   pins, so you can open any of them in the notch without the site's sidebar. Sync reads every chat (all pages
   and ChatGPT projects) and removes ones deleted on the site.
 
+### Fixed
+- **Agents:** "writing" / "replied" for ChatGPT, Claude and Muse is more accurate: it follows the reply's
+  network stream, counts reasoning models' thinking, ignores other Stop buttons (dictation, voice), doesn't end
+  between a reply's steps, and doesn't notify when you stop a reply or switch chats.
+
 ## [1.0.0] — 2026-11-04
 
 First public release.

@@ -322,7 +322,11 @@ filter, so pick one service to sync just that one.
 
 When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
-Detection watches only for the site's Stop button — it never reads the conversation.
+Detection follows the reply's network stream, which ends exactly when the reply does (even while the notch is
+closed), backed up by the site's Stop button and its "thinking" marker; a pause between a reply's steps
+(searching, thinking) doesn't count as done. Pressing Stop or switching chats mid-reply doesn't notify. It only
+notes when streams open and close — what they carry is discarded unread, and it never reads the conversation.
+Console.app shows each decision (subsystem `com.notchman`, "Reply …") if one looks wrong.
 
 ### Ask from anywhere
 
@@ -396,7 +400,7 @@ NotchMan runs entirely on your Mac and has no server of its own.
   are stored in the macOS Keychain, not in plain files.
 - **It talks only to the services you connect:** Google Calendar, Notion, Spotify and your JobManager server.
   The Chat tabs are the real websites, signed in with your own accounts; nothing is sent unless you send it, and
-  reply detection only watches for the site's Stop button. The Chats list keeps your conversations' titles,
+  reply detection only notes when the reply's stream opens and closes, and the site's Stop button. The Chats list keeps your conversations' titles,
   links, projects and times in NotchMan's preferences on this Mac — never their messages.
 - **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
   is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
