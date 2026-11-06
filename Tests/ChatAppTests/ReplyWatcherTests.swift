@@ -4,14 +4,18 @@ import Testing
 import WebKit
 @testable import ChatApp
 
-/// Runs the reply watcher on a stand-in chat page whose `fetch` returns streams the test opens, ends and cancels.
+/// Runs the reply watcher on a stand-in ChatGPT page whose `fetch` returns streams the test opens, ends and cancels.
 @MainActor @Suite(.serialized) struct ReplyWatcherTests {
+    static let chatA = "/c/aaaa1111-0000"
+    static let chatB = "/c/bbbb2222-0000"
+
     @MainActor final class Page {
         let web: WKWebView
         let window: NSWindow
-        var states: [ReplyState] = []
+        var events: [ReplyEvent] = []
+        var states: [ReplyState] { events.compactMap { if case .state(let state) = $0 { state } else { nil } } }
 
-        init(body: String = "") async throws {
+        init(path: String = ReplyWatcherTests.chatA, body: String = "") async throws {
             web = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
             // Stands in for the site's network before the watcher wraps it (as the real fetch would be).
             web.configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -24,16 +28,17 @@ import WebKit
               const type = String(url).includes('json') ? 'application/json' : 'text/event-stream';
               return Promise.resolve(new Response(stream, { headers: { 'content-type': type } }));
             };
+            window.__chunk = () => controllers[0].enqueue(new TextEncoder().encode('data: {}\\n\\n'));
             window.__end = () => controllers.shift().close();
             window.__cancel = () => controllers.shift().error(new DOMException('cancelled', 'AbortError'));
             """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
             window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = web
-            ReplyWatcher.install(in: web.configuration.userContentController,
-                                 handler: ReplyMessageProxy { [weak self] in self?.states.append($0) })
+            ReplyWatcher.install(in: web.configuration.userContentController, service: .chatgpt,
+                                 handler: ReplyMessageProxy { [weak self] in self?.events.append($0) })
             web.loadHTMLString("<html><head><title>Trip plan</title></head><body><form id=\"composer\"></form>\(body)</body></html>",
-                               baseURL: URL(string: "https://chatgpt.com/c/1"))
+                               baseURL: URL(string: "https://chatgpt.com\(path)"))
             for _ in 0..<60 where web.isLoading { try await Task.sleep(for: .milliseconds(50)) }
             try await Task.sleep(for: .milliseconds(300))
         }
@@ -46,10 +51,12 @@ import WebKit
             try await js("fetch('\(url)', { method: '\(method)' })")
         }
 
-        /// Waits until `count` states were reported (or the time runs out).
+        func go(to path: String) async throws { try await js("history.pushState({}, '', '\(path)')") }
+
+        /// Waits until `count` events were reported (or the time runs out).
         func wait(for count: Int, seconds: Double = 4) async throws {
             let deadline = Date().addingTimeInterval(seconds)
-            while states.count < count && Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+            while events.count < count && Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
         }
 
         func close() { window.close() }
@@ -60,10 +67,10 @@ import WebKit
         defer { page.close() }
         try await page.send()
         try await page.wait(for: 1)
-        #expect(page.states == [ReplyState(busy: true, title: "Trip plan", via: "stream")])
+        #expect(page.states == [ReplyState(busy: true, title: "Trip plan", path: Self.chatA, via: "stream")])
         try await page.js("__end()")
         try await page.wait(for: 2)
-        #expect(page.states.last == ReplyState(busy: false, title: "Trip plan", aborted: false, via: "quiet"))
+        #expect(page.states.last == ReplyState(busy: false, title: "Trip plan", path: Self.chatA, via: "quiet"))
     }
 
     @Test func aPauseBetweenStepsDoesntEndTheReply() async throws {
@@ -81,7 +88,7 @@ import WebKit
         #expect(page.states.map(\.busy) == [true, false])
     }
 
-    @Test func aCancelledStreamDoesntCountAsAReply() async throws {
+    @Test func stoppingAReplyDoesntCountAsOne() async throws {
         let page = try await Page()
         defer { page.close() }
         try await page.send()
@@ -98,10 +105,10 @@ import WebKit
         <button aria-label="Stop sharing">×</button>
         """)
         defer { page.close() }
-        try await page.send("/backend-api/settings.json")         // not a stream
-        try await page.send("/backend-api/notifications", method: "GET")  // a GET stream that isn't a reply
+        try await page.send("/backend-api/settings.json")                  // not a stream
+        try await page.send("/backend-api/notifications", method: "GET")   // a GET stream that isn't a reply
         try await Task.sleep(for: .milliseconds(1500))
-        #expect(page.states.isEmpty)
+        #expect(page.events.isEmpty)
     }
 
     @Test func theThinkingMarkerCountsWithoutAStopButton() async throws {
@@ -114,24 +121,99 @@ import WebKit
         document.body.appendChild(status)
         """)
         try await page.wait(for: 1)
-        #expect(page.states.first == ReplyState(busy: true, title: "Trip plan", via: "page"))
+        #expect(page.states.first == ReplyState(busy: true, title: "Trip plan", path: Self.chatA, via: "page"))
         try await page.js("document.getElementById('thinking').remove()")
         try await page.wait(for: 2)
         #expect(page.states.last?.busy == false && page.states.last?.aborted == false)
     }
 
-    @Test func leavingForAnotherChatIsntAReply() async throws {
+    @Test func leavingMidReplyThenItsStreamFinishing() async throws {
         let page = try await Page()
         defer { page.close() }
-        try await page.js("""
-        const stop = document.createElement('button');
-        stop.setAttribute('data-testid', 'stop-button');
-        stop.id = 'stop';
-        document.getElementById('composer').appendChild(stop)
-        """)
+        try await page.send()
         try await page.wait(for: 1)
-        try await page.js("history.pushState({}, '', '/c/2'); document.getElementById('stop').remove()")
+        try await page.go(to: Self.chatB)
         try await page.wait(for: 2)
-        #expect(page.states.last?.busy == false && page.states.last?.aborted == true)
+        #expect(page.states.last == ReplyState(busy: false, title: "Trip plan", path: Self.chatA, left: true,
+                                               streamOpen: true, via: "left"))
+        // Chat B isn't writing just because A's stream is still open.
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(page.states.count == 2)
+        try await page.js("__end()")
+        try await page.wait(for: 3)
+        #expect(page.events.last == .elsewhere(path: Self.chatA, reason: "complete"))
+    }
+
+    @Test func leavingCutsTheStream() async throws {
+        let page = try await Page()
+        defer { page.close() }
+        try await page.send()
+        try await page.wait(for: 1)
+        try await page.js("history.pushState({}, '', '\(Self.chatB)'); __cancel()")
+        try await page.wait(for: 3)
+        #expect(page.states.last?.left == true && page.states.last?.path == Self.chatA)
+        #expect(page.events.contains(.elsewhere(path: Self.chatA, reason: "aborted")))
+    }
+
+    @Test func aNewChatTakingItsAddressIsntLeaving() async throws {
+        let page = try await Page(path: "/")
+        defer { page.close() }
+        try await page.send()
+        try await page.wait(for: 1)
+        try await page.go(to: "/c/cccc3333-0000")  // the site gives the new chat its address mid-reply
+        try await page.js("__chunk()")
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(page.states.map(\.busy) == [true])
+        try await page.js("__end()")
+        try await page.wait(for: 2)
+        #expect(page.states.last == ReplyState(busy: false, title: "Trip plan", path: "/c/cccc3333-0000", via: "quiet"))
+    }
+}
+
+/// Follows a reply in a hidden page, on stand-in pages served from disk.
+@MainActor @Suite(.serialized) struct BackgroundReplyWatchTests {
+    private func page(_ html: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "notchman-reply-\(UUID().uuidString).html")
+        try html.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private func follow(_ html: String, probe: String = "return null;", timeout: Double = 15) async throws -> (Bool?, TimeInterval) {
+        let watch = BackgroundReplyWatch(service: .muse, url: try page(html), userAgent: nil)
+        watch.checkEvery = .milliseconds(300)
+        watch.quietFor = 1
+        watch.neverStartedAfter = 2
+        watch.statusStuckAfter = 3
+        watch.probeScript = probe
+        var result: Bool?
+        watch.onDone = { result = $0 }
+        let started = Date()
+        watch.start()
+        while result == nil && Date().timeIntervalSince(started) < timeout { try await Task.sleep(for: .milliseconds(100)) }
+        watch.stop()
+        return (result, Date().timeIntervalSince(started))
+    }
+
+    @Test func waitsForTheResumedReplyToFinish() async throws {
+        let (done, took) = try await follow("""
+        <html><body><form><button data-testid="stop-button" id="stop">■</button></form>
+        <script>setTimeout(() => document.getElementById('stop').remove(), 3000);</script></body></html>
+        """)
+        #expect(done == true)
+        #expect(took >= 3, "not before the Stop button went away")
+    }
+
+    @Test func aReplyThatFinishedWhileSwitchingIsDoneSoon() async throws {
+        let (done, took) = try await follow("<html><body><p>Finished reply</p></body></html>")
+        #expect(done == true)
+        #expect(took < 5)
+    }
+
+    @Test func theSitesStatusKeepsItWriting() async throws {
+        let (done, took) = try await follow("""
+        <html><body data-streaming="yes"><script>setTimeout(() => document.body.dataset.streaming = 'no', 3000);</script></body></html>
+        """, probe: "return document.body.dataset.streaming === 'yes';")
+        #expect(done == true)
+        #expect(took >= 3)
     }
 }

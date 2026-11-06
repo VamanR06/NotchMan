@@ -291,12 +291,13 @@ private struct ChatThreadRow: View {
         }
     }
 
-    /// Writing a reply (spinner) or a reply you haven't read (green dot), for the chat open in its tab.
+    /// Writing a reply (spinner) — open in its tab or one you left mid-reply — or a reply you haven't read
+    /// (green dot).
     @ViewBuilder
     private var status: some View {
-        if app.isCurrent(thread) && app.isBusy(thread.service) {
+        if app.isWriting(thread) {
             NotchSpinner(size: 10, lineWidth: 1.5)
-        } else if app.isCurrent(thread) && app.unread.contains(thread.service) {
+        } else if app.isUnread(thread) {
             Circle().fill(.green).frame(width: 6, height: 6).frame(width: 10)
         } else {
             Color.clear.frame(width: 10, height: 10)

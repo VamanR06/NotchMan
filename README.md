@@ -324,7 +324,11 @@ When a reply that took 3+ seconds finishes while you're not looking at that chat
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
 Detection follows the reply's network stream, which ends exactly when the reply does (even while the notch is
 closed), backed up by the site's Stop button and its "thinking" marker; a pause between a reply's steps
-(searching, thinking) doesn't count as done. Pressing Stop or switching chats mid-reply doesn't notify. It only
+(searching, thinking) doesn't count as done. Pressing Stop doesn't notify. **Switching chats mid-reply** still
+gets you the notification: the sites finish the reply on their side, so NotchMan keeps following that chat — its
+stream if it's still open, otherwise a hidden copy of the chat (signed in as you) that watches for the reply to
+finish, using ChatGPT's status for the conversation or Claude's "still creating a response" note, and closes when
+it's done (or after an hour). The chat keeps a spinner in the Chats list meanwhile, and the notification opens it. It only
 notes when streams open and close — what they carry is discarded unread, and it never reads the conversation.
 Console.app shows each decision (subsystem `com.notchman`, "Reply …") if one looks wrong.
 

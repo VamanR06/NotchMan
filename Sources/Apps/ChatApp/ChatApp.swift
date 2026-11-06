@@ -233,8 +233,9 @@ public final class ChatApp: NotchApp {
                 self?.scrollSpots[service, default: [:]][path] = spot
             })
         }
-        ReplyWatcher.install(in: config.userContentController, handler: ReplyMessageProxy { [weak self] state in
-            self?.replyStateChanged(service, state)
+        ReplyWatcher.install(in: config.userContentController, service: service,
+                             handler: ReplyMessageProxy { [weak self] event in
+            self?.replyEvent(service, event)
         })
         PageDiagnostics.install(in: config.userContentController, handler: DiagnosticsMessageProxy(logger: coordinator.logger))
         let view = NotchWebView(frame: .zero, configuration: config)
@@ -286,7 +287,14 @@ public final class ChatApp: NotchApp {
                 return
             }
             if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) {
-                show(opened)
+                // A reply in a conversation you'd left: open that conversation.
+                if let url = message.payload["url"].flatMap(URL.init(string:)),
+                   let conversation = opened.conversation(at: url) {
+                    open(chatThreads.first { $0.id == "\(opened.rawValue):\(conversation.id)" }
+                         ?? ChatThread(service: opened, conversationID: conversation.id, url: url.absoluteString, title: ""))
+                } else {
+                    show(opened)
+                }
             } else if message.payload["agent"] != nil {
                 showingOverview = true
             }
@@ -351,30 +359,132 @@ public final class ChatApp: NotchApp {
 
     // MARK: - Reply notifications
 
+    private func replyEvent(_ service: ChatService, _ event: ReplyEvent) {
+        switch event {
+        case .state(let state):
+            let what = state.busy ? "writing" : state.left ? "left" : state.aborted ? "cancelled" : "done"
+            context?.logger.notice("Reply \(service.rawValue, privacy: .public): \(what, privacy: .public) (\(state.via, privacy: .public))")
+            replyStateChanged(service, state)
+        case let .elsewhere(path, reason):
+            context?.logger.notice("Reply \(service.rawValue, privacy: .public) in a chat you left: stream \(reason, privacy: .public)")
+            guard let url = conversationURL(service, path: path) else { return }
+            // Its stream finished on this page: done. Cut off when you left: follow it in the background.
+            if reason == "complete" { backgroundReplyFinished(service, url: url) } else { followInBackground(service, url: url) }
+        }
+    }
+
     private func replyStateChanged(_ service: ChatService, _ state: ReplyState) {
-        context?.logger.notice("Reply \(service.rawValue, privacy: .public): \(state.busy ? "writing" : state.aborted ? "cancelled" : "done", privacy: .public) (\(state.via, privacy: .public))")
-        let pageTitle = state.title
         if state.busy {
             busySince[service] = busySince[service] ?? Date()
             return
         }
         guard let started = busySince.removeValue(forKey: service), !state.aborted else { return }
+        let url = conversationURL(service, path: state.path)
+        if state.left {
+            // Still writing in the chat you left. If its stream is still open here, its end comes as `elsewhere`.
+            guard let url else { return }
+            if state.streamOpen {
+                if let id = service.conversation(at: url)?.id { writingChats.insert("\(service.rawValue):\(id)") }
+            } else {
+                followInBackground(service, url: url)
+            }
+            return
+        }
         // A reply landed: the conversation moves to the top of the Chats list.
-        if let view = webViews[service], let url = view.url, let conversation = service.conversation(at: url) {
+        if let url, let conversation = service.conversation(at: url) {
             updateChats([ChatThread(service: service, conversationID: conversation.id, url: url.absoluteString,
-                                    title: ChatService.chatTitle(fromPageTitle: view.title ?? ""), updated: Date())])
+                                    title: ChatService.chatTitle(fromPageTitle: state.title), updated: Date())])
         }
         guard Date().timeIntervalSince(started) >= Self.notableReplyDuration, !isLooking(at: service) else { return }
-        unread.insert(service)
-        context?.requestAttention(.pulse)
-        if notifyWhenDone {
-            let title = pageTitle.replacingOccurrences(of: " - Claude", with: "").trimmingCharacters(in: .whitespaces)
-            let generic = ["", "ChatGPT", "Claude", "muse.ai"].contains(title)
-            context?.notify(title: "\(service.name) replied",
-                            body: generic ? "Your response is ready." : title,
-                            payload: ["service": service.rawValue])
-        }
+        notifyReplied(service, url: url, pageTitle: state.title)
     }
+
+    private func notifyReplied(_ service: ChatService, url: URL?, pageTitle: String) {
+        unread.insert(service)
+        if let url, let id = service.conversation(at: url)?.id { unreadChats.insert("\(service.rawValue):\(id)") }
+        context?.requestAttention(.pulse)
+        guard notifyWhenDone else { return }
+        let title = ChatService.chatTitle(fromPageTitle: pageTitle)
+        var payload = ["service": service.rawValue]
+        if let url { payload["url"] = url.absoluteString }
+        context?.notify(title: "\(service.name) replied", body: title.isEmpty ? "Your response is ready." : title,
+                        payload: payload)
+    }
+
+    /// The full conversation link for a page path on `service`, if the path is a conversation.
+    private func conversationURL(_ service: ChatService, path: String) -> URL? {
+        guard !path.isEmpty, let url = URL(string: path, relativeTo: service.home)?.absoluteURL,
+              service.conversation(at: url) != nil else { return nil }
+        return url
+    }
+
+    // MARK: - Replies in conversations you left
+
+    /// Conversations still writing a reply after you left them, by `ChatThread.id`.
+    private(set) var writingChats: Set<String> = []
+    /// Conversations with a reply you haven't opened yet, by `ChatThread.id`.
+    private(set) var unreadChats: Set<String> = []
+    /// Hidden pages following those replies, by `ChatThread.id`.
+    @ObservationIgnored private var backgroundWatches: [String: BackgroundReplyWatch] = [:]
+    /// At most this many followed at once; the oldest goes first.
+    private static let maxBackgroundWatches = 4
+    @ObservationIgnored private var backgroundOrder: [String] = []
+
+    /// Follows the reply in a conversation you left mid-reply, in a hidden page, to notify when it's done.
+    func followInBackground(_ service: ChatService, url: URL) {
+        guard let id = service.conversation(at: url)?.id else { return }
+        let key = "\(service.rawValue):\(id)"
+        writingChats.insert(key)
+        // Back on it in the notch: the notch's page follows it.
+        if pageURLs[service].flatMap({ service.conversation(at: $0)?.id }) == id || backgroundWatches[key] != nil { return }
+        if backgroundOrder.count >= Self.maxBackgroundWatches {
+            let oldest = backgroundOrder.removeFirst()
+            backgroundWatches.removeValue(forKey: oldest)?.stop()
+            writingChats.remove(oldest)
+        }
+        let watch = BackgroundReplyWatch(service: service, url: url, userAgent: Self.userAgent)
+        watch.onDone = { [weak self] finished in
+            guard let self else { return }
+            self.context?.logger.notice("Reply \(service.rawValue, privacy: .public) followed in the background: \(finished ? "done" : "gave up", privacy: .public)")
+            if finished { self.backgroundReplyFinished(service, url: url) } else { self.stopFollowing(key) }
+        }
+        backgroundWatches[key] = watch
+        backgroundOrder.append(key)
+        watch.start()
+    }
+
+    private func stopFollowing(_ key: String) {
+        backgroundWatches.removeValue(forKey: key)?.stop()
+        backgroundOrder.removeAll { $0 == key }
+        writingChats.remove(key)
+    }
+
+    /// A reply in a conversation you'd left is done: notify (unless you're looking at it now).
+    private func backgroundReplyFinished(_ service: ChatService, url: URL) {
+        guard let id = service.conversation(at: url)?.id else { return }
+        let key = "\(service.rawValue):\(id)"
+        let wasFollowed = writingChats.contains(key)
+        stopFollowing(key)
+        let thread = chatThreads.first { $0.id == key }
+        updateChats([ChatThread(service: service, conversationID: id, url: url.absoluteString, title: "", updated: Date())])
+        // Back on that conversation and looking: you saw it finish.
+        let onScreen = pageURLs[service].flatMap { service.conversation(at: $0)?.id } == id && isLooking(at: service)
+        guard wasFollowed || thread != nil, !onScreen else { return }
+        notifyReplied(service, url: url, pageTitle: thread?.title ?? "")
+    }
+
+    /// You opened a conversation in the notch: its page takes over following its reply, and it's been seen.
+    private func conversationOpened(_ service: ChatService, id: String) {
+        let key = "\(service.rawValue):\(id)"
+        unreadChats.remove(key)
+        if backgroundWatches[key] != nil || writingChats.contains(key) { stopFollowing(key) }
+    }
+
+    func isWriting(_ thread: ChatThread) -> Bool {
+        writingChats.contains(thread.id) || (isCurrent(thread) && busySince[thread.service] != nil)
+    }
+
+    func isUnread(_ thread: ChatThread) -> Bool { unreadChats.contains(thread.id) }
 
     /// The chat is on screen: open in the notch on this service, or its own window is focused.
     private func isLooking(at service: ChatService) -> Bool {
@@ -521,6 +631,7 @@ public final class ChatApp: NotchApp {
         guard let url, let conversation = service.conversation(at: url) else { return }
         let thread = ChatThread(service: service, conversationID: conversation.id, url: url.absoluteString,
                                 title: ChatService.chatTitle(fromPageTitle: title), opened: opened ? Date() : nil)
+        if opened { conversationOpened(service, id: conversation.id) }
         // Renames of a conversation we don't know yet wait for it to be opened.
         guard opened || chatThreads.contains(where: { $0.id == thread.id }) else { return }
         updateChats([thread])
@@ -946,9 +1057,15 @@ public final class ChatApp: NotchApp {
     /// Called by the view when a service is on screen.
     func markSeen(_ service: ChatService) {
         unread.remove(service)
+        if let id = pageURLs[service].flatMap({ service.conversation(at: $0)?.id }) {
+            unreadChats.remove("\(service.rawValue):\(id)")
+        }
     }
 
-    func isBusy(_ service: ChatService) -> Bool { busySince[service] != nil }
+    /// Writing a reply: on its page, or in a conversation you left.
+    func isBusy(_ service: ChatService) -> Bool {
+        busySince[service] != nil || writingChats.contains { $0.hasPrefix(service.rawValue + ":") }
+    }
 
     /// One summary of all AI activity, most urgent first.
     struct Summary: Equatable {

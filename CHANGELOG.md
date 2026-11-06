@@ -17,7 +17,9 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 ### Fixed
 - **Agents:** "writing" / "replied" for ChatGPT, Claude and Muse is more accurate: it follows the reply's
   network stream, counts reasoning models' thinking, ignores other Stop buttons (dictation, voice), doesn't end
-  between a reply's steps, and doesn't notify when you stop a reply or switch chats.
+  between a reply's steps, and doesn't notify when you stop a reply.
+- **Agents:** switching chats mid-reply no longer loses the "replied" notification: NotchMan keeps following
+  that chat (in a hidden page if needed) and the notification opens it.
 
 ## [1.0.0] — 2026-11-04
 
