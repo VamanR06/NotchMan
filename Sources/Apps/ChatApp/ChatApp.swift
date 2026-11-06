@@ -175,6 +175,7 @@ public final class ChatApp: NotchApp {
             service = saved
         }
         notifyWhenDone = context.defaults.object(forKey: "notifyWhenDone") as? Bool ?? true
+        maxBackgroundWatches = min(context.defaults.object(forKey: "maxBackgroundWatches") as? Int ?? 4, Self.backgroundWatchLimit)
         showingOverview = context.defaults.object(forKey: "showingOverview") as? Bool ?? true
         agentFolders = Self.foldersWithPlacements(
             context.defaults.data(forKey: "agentFolders").flatMap { try? JSONDecoder().decode([AgentFolder].self, from: $0) } ?? [],
@@ -426,8 +427,16 @@ public final class ChatApp: NotchApp {
     private(set) var unreadChats: Set<String> = []
     /// Hidden pages following those replies, by `ChatThread.id`.
     @ObservationIgnored private var backgroundWatches: [String: BackgroundReplyWatch] = [:]
-    /// At most this many followed at once; the oldest goes first.
-    private static let maxBackgroundWatches = 4
+    /// At most this many followed at once (Settings → Agents; 0 turns it off); the oldest goes first.
+    var maxBackgroundWatches = 4 {
+        didSet {
+            context?.defaults.set(maxBackgroundWatches, forKey: "maxBackgroundWatches")
+            while backgroundOrder.count > maxBackgroundWatches { stopFollowing(backgroundOrder[0]) }
+        }
+    }
+    static let backgroundWatchLimit = 10
+    /// How long a chat you left is followed before giving up.
+    static let backgroundWatchMinutes: Double = 15
     @ObservationIgnored private var backgroundOrder: [String] = []
 
     /// Follows the reply in a conversation you left mid-reply, in a hidden page, to notify when it's done.
@@ -437,12 +446,13 @@ public final class ChatApp: NotchApp {
         writingChats.insert(key)
         // Back on it in the notch: the notch's page follows it.
         if pageURLs[service].flatMap({ service.conversation(at: $0)?.id }) == id || backgroundWatches[key] != nil { return }
-        if backgroundOrder.count >= Self.maxBackgroundWatches {
-            let oldest = backgroundOrder.removeFirst()
-            backgroundWatches.removeValue(forKey: oldest)?.stop()
-            writingChats.remove(oldest)
+        guard maxBackgroundWatches > 0 else {
+            writingChats.remove(key)
+            return
         }
+        while backgroundOrder.count >= maxBackgroundWatches { stopFollowing(backgroundOrder[0]) }
         let watch = BackgroundReplyWatch(service: service, url: url, userAgent: Self.userAgent)
+        watch.giveUpAfter = Self.backgroundWatchMinutes * 60
         watch.onDone = { [weak self] finished in
             guard let self else { return }
             self.context?.logger.notice("Reply \(service.rawValue, privacy: .public) followed in the background: \(finished ? "done" : "gave up", privacy: .public)")

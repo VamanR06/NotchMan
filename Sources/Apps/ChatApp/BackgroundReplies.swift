@@ -23,7 +23,7 @@ final class BackgroundReplyWatch: NSObject, WKNavigationDelegate {
     /// The page went quiet but the site's status still says writing: after this long, believe the page (ChatGPT's
     /// status has been seen stuck on "streaming" after a reply ended).
     var statusStuckAfter: TimeInterval = 45
-    var giveUpAfter: TimeInterval = 60 * 60
+    var giveUpAfter: TimeInterval = 15 * 60
     var checkEvery: Duration = .seconds(2)
     /// Asks the site whether it's still writing (see `ChatService.replyProbeScript`).
     lazy var probeScript = service.replyProbeScript

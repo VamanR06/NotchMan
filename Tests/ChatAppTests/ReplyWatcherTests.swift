@@ -170,6 +170,22 @@ import WebKit
     }
 }
 
+@MainActor @Suite struct BackgroundWatchLimitTests {
+    @Test func followsUpToTheLimitAndStopsTheOldest() throws {
+        let app = ChatApp()
+        app.maxBackgroundWatches = 2
+        let chats = ["aaaa1111-0001", "aaaa1111-0002", "aaaa1111-0003"]
+        for id in chats { app.followInBackground(.chatgpt, url: try #require(URL(string: "https://chatgpt.com/c/\(id)"))) }
+        #expect(app.writingChats == ["chatgpt:aaaa1111-0002", "chatgpt:aaaa1111-0003"])
+        app.maxBackgroundWatches = 1
+        #expect(app.writingChats == ["chatgpt:aaaa1111-0003"])
+        app.maxBackgroundWatches = 0
+        #expect(app.writingChats.isEmpty)
+        app.followInBackground(.chatgpt, url: try #require(URL(string: "https://chatgpt.com/c/\(chats[0])")))
+        #expect(app.writingChats.isEmpty, "off: nothing followed")
+    }
+}
+
 /// Follows a reply in a hidden page, on stand-in pages served from disk.
 @MainActor @Suite(.serialized) struct BackgroundReplyWatchTests {
     private func page(_ html: String) throws -> URL {
