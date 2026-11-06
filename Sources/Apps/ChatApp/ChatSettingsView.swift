@@ -14,6 +14,12 @@ struct ChatSettingsView: View {
                     Text("Notify about agents and chats")
                     Text("A macOS notification when a Claude Code agent needs you or finishes, or when ChatGPT, Claude or Muse finishes a reply (3 seconds or longer), while you aren't looking at it. The notch always shows it until you look.")
                 }
+                Stepper(value: $app.maxBackgroundWatches, in: 0...ChatApp.backgroundWatchLimit) {
+                    Text("Keep watching up to \(app.maxBackgroundWatches) chat\(app.maxBackgroundWatches == 1 ? "" : "s") you leave mid-reply")
+                    Text(app.maxBackgroundWatches == 0
+                         ? "Off: leaving a chat mid-reply means no \"replied\" notification for it."
+                         : "Each one is a hidden copy of the chat, watched for up to \(Int(ChatApp.backgroundWatchMinutes)) minutes until its reply finishes. Over the limit, the oldest stops.")
+                }
             } header: {
                 Text("Notifications")
             }

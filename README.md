@@ -307,9 +307,32 @@ you send it. Links to other sites open in your browser. Use the pin button to ke
 or Pop out to move the chat (conversation and all) into a normal resizable window for more room — handy for
 file previews, especially on non-Retina monitors. Closing the window puts it back in the notch.
 
+**Chats list:** the notch is too narrow for the sites' own sidebars, so the **Chats** button in the toolbar lists
+your conversations from all three in one place instead — grouped by Today, Yesterday, Previous 7 Days and so on,
+with each one's project and when it last changed. Type to search, filter to one service (All · ChatGPT · Claude ·
+Muse), and click (or ↑/↓ and Return) to open it in its tab; Esc goes back. Hover a chat to pin it to the top;
+right-click to open it in your browser, copy its link or remove it from the list. The list is read from your
+signed-in accounts — ChatGPT's and Claude's own chat lists (titles and times only, never messages) plus the chats
+linked in their sidebars, through a hidden copy of the site — and chats you open in the notch are added as you go
+(Muse has no such list, so its come from its sidebar links and the chats you open). A chat that's writing a reply shows a spinner. Opening the list re-reads the newest
+100 chats of each, at most every couple of minutes. **Sync** reads everything: every page of each site's list,
+every ChatGPT project's chats, and (for Muse) the sidebar scrolled to its end — then removes chats you deleted on
+the site (pinned ones stay). It takes longer, and if any part fails to load nothing is removed. Sync follows the
+filter, so pick one service to sync just that one.
+
 When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
-Detection watches only for the site's Stop button — it never reads the conversation.
+Detection follows the reply's network stream, which ends exactly when the reply does (even while the notch is
+closed), backed up by the site's Stop button and its "thinking" marker; a pause between a reply's steps
+(searching, thinking) doesn't count as done. Pressing Stop doesn't notify. **Switching chats mid-reply** still
+gets you the notification: the sites finish the reply on their side, so NotchMan keeps following that chat — its
+stream if it's still open, otherwise a hidden copy of the chat (signed in as you) that watches for the reply to
+finish, using ChatGPT's status for the conversation or Claude's "still creating a response" note, and closes when
+it's done (or after 15 minutes). The chat keeps a spinner in the Chats list meanwhile, and the notification opens
+it. Settings → Agents sets how many chats are followed at once (4 by default, up to 10; 0 turns it off); over the
+limit, the oldest stops. It only
+notes when streams open and close — what they carry is discarded unread, and it never reads the conversation.
+Console.app shows each decision (subsystem `com.notchman`, "Reply …") if one looks wrong.
 
 ### Ask from anywhere
 
@@ -383,7 +406,8 @@ NotchMan runs entirely on your Mac and has no server of its own.
   are stored in the macOS Keychain, not in plain files.
 - **It talks only to the services you connect:** Google Calendar, Notion, Spotify and your JobManager server.
   The Chat tabs are the real websites, signed in with your own accounts; nothing is sent unless you send it, and
-  reply detection only watches for the site's Stop button.
+  reply detection only notes when the reply's stream opens and closes, and the site's Stop button. The Chats list keeps your conversations' titles,
+  links, projects and times in NotchMan's preferences on this Mac — never their messages.
 - **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
   is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
   changed.

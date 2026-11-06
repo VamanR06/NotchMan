@@ -10,6 +10,16 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 - MIT license.
 - Downloadable app: every release, including the earlier ones, now has a universal `NotchMan-vX.Y.Z.zip`, and
   `make zip` builds one.
+- **Agents:** a Chats list — your ChatGPT, Claude and Muse conversations in one searchable list by date, with
+  pins, so you can open any of them in the notch without the site's sidebar. Sync reads every chat (all pages
+  and ChatGPT projects) and removes ones deleted on the site.
+
+### Fixed
+- **Agents:** "writing" / "replied" for ChatGPT, Claude and Muse is more accurate: it follows the reply's
+  network stream, counts reasoning models' thinking, ignores other Stop buttons (dictation, voice), doesn't end
+  between a reply's steps, and doesn't notify when you stop a reply.
+- **Agents:** switching chats mid-reply no longer loses the "replied" notification: NotchMan keeps following
+  that chat (in a hidden page if needed) and the notification opens it.
 
 ## [1.0.0] — 2026-11-04
 
