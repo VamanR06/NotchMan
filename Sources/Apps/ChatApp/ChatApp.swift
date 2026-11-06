@@ -130,6 +130,23 @@ public final class ChatApp: NotchApp {
         didSet { context?.defaults.set(notifyWhenDone, forKey: "notifyWhenDone") }
     }
 
+    /// Conversations on the chat sites for the Chats list, read from your accounts and remembered as you open them.
+    private(set) var chatThreads: [ChatThread] = []
+    /// Conversations kept at the top of the Chats list, by `ChatThread.id`.
+    private(set) var pinnedChats: Set<String> = []
+    /// The Chats list is showing in place of the chat page.
+    var showingChatList = false
+    /// The Chats list shows one service, or all of them (nil).
+    var chatListFilter: ChatService? {
+        didSet { context?.defaults.set(chatListFilter?.rawValue ?? "all", forKey: "chatListFilter") }
+    }
+    var chatListQuery = ""
+    let chatListSelection = NotchListSelection()
+    /// Services whose chat list is being read, and why the last read failed.
+    private(set) var chatListLoading: Set<ChatService> = []
+    private(set) var chatListErrors: [ChatService: String] = [:]
+    @ObservationIgnored private var chatListReadAt: [ChatService: Date] = [:]
+
     /// Projects per service (for "Ask …" menus), and which one new asks go to by default.
     private(set) var projects: [ChatService: [AskProject]] = [:]
     private(set) var defaultProjects: [ChatService: String] = [:]
@@ -194,6 +211,12 @@ public final class ChatApp: NotchApp {
             }
             defaultProjects[service] = context.defaults.string(forKey: "defaultProject.\(service.rawValue)")
         }
+        if let data = context.defaults.data(forKey: "chatThreads"),
+           let saved = try? JSONDecoder().decode([ChatThread].self, from: data) {
+            chatThreads = saved
+        }
+        pinnedChats = Set(context.defaults.stringArray(forKey: "pinnedChats") ?? [])
+        chatListFilter = context.defaults.string(forKey: "chatListFilter").flatMap(ChatService.init(rawValue:))
         AskAI.shared.promptTemplate = context.defaults.string(forKey: "askTemplate") ?? AskAI.defaultTemplate
         publishAskServices()
     }
@@ -222,9 +245,17 @@ public final class ChatApp: NotchApp {
         view.uiDelegate = coordinator
         view.allowsBackForwardNavigationGestures = true
         view.underPageBackgroundColor = .black
-        observations.append(view.observe(\.url, options: [.new]) { [weak self] _, change in
+        observations.append(view.observe(\.url, options: [.new]) { [weak self] view, change in
             let url = change.newValue ?? nil
-            Task { @MainActor in self?.pageURLs[service] = url }
+            Task { @MainActor in
+                self?.pageURLs[service] = url
+                // The title is still the last page's here; its own change names the conversation.
+                self?.recordChat(service, url: url, title: "", opened: true)
+            }
+        })
+        observations.append(view.observe(\.title, options: [.new]) { [weak self] view, change in
+            let title = (change.newValue ?? nil) ?? ""
+            Task { @MainActor in self?.recordChat(service, url: view.url, title: title, opened: false) }
         })
         observations.append(view.observe(\.isLoading, options: [.new]) { [weak self] _, change in
             let isLoading = change.newValue ?? false
@@ -326,6 +357,11 @@ public final class ChatApp: NotchApp {
             return
         }
         guard let started = busySince.removeValue(forKey: service) else { return }
+        // A reply landed: the conversation moves to the top of the Chats list.
+        if let view = webViews[service], let url = view.url, let conversation = service.conversation(at: url) {
+            updateChats([ChatThread(service: service, conversationID: conversation.id, url: url.absoluteString,
+                                    title: ChatService.chatTitle(fromPageTitle: view.title ?? ""), updated: Date())])
+        }
         guard Date().timeIntervalSince(started) >= Self.notableReplyDuration, !isLooking(at: service) else { return }
         unread.insert(service)
         context?.requestAttention(.pulse)
@@ -341,7 +377,8 @@ public final class ChatApp: NotchApp {
     /// The chat is on screen: open in the notch on this service, or its own window is focused.
     private func isLooking(at service: ChatService) -> Bool {
         if windows[service]?.isKeyWindow == true { return true }
-        return (context?.isVisible ?? false) && !showingOverview && self.service == service && !poppedOut.contains(service)
+        return (context?.isVisible ?? false) && !showingOverview && !showingChatList && self.service == service
+            && !poppedOut.contains(service)
     }
 
     private var isLookingAtOverview: Bool {
@@ -352,6 +389,111 @@ public final class ChatApp: NotchApp {
     func show(_ service: ChatService) {
         self.service = service
         showingOverview = false
+        showingChatList = false
+    }
+
+    // MARK: - Chats list
+
+    /// The Chats list's rows: the filter's service (or all), matching the search, pinned first then newest.
+    var shownChats: [ChatThread] {
+        ChatThreads.grouped(chatThreads.filter { (chatListFilter == nil || $0.service == chatListFilter)
+            && ChatThreads.matches($0, query: chatListQuery) }, pinned: pinnedChats).flatMap(\.threads)
+    }
+
+    func toggleChatList() {
+        if showingChatList {
+            showingChatList = false
+            return
+        }
+        chatListQuery = ""
+        chatListSelection.index = nil
+        showingChatList = true
+        Task { await refreshChats() }
+    }
+
+    /// Opens a conversation in its service's tab (or its own window, if that service is popped out).
+    func open(_ thread: ChatThread) {
+        show(thread.service)
+        guard let url = URL(string: thread.url) else { return }
+        let view = webView(for: thread.service)
+        if view.url.flatMap({ thread.service.conversation(at: $0)?.id }) != thread.conversationID {
+            view.load(URLRequest(url: url))
+        }
+        if poppedOut.contains(thread.service) { showWindow() }
+    }
+
+    /// The conversation on screen in `service`'s tab right now, if it's one.
+    func isCurrent(_ thread: ChatThread) -> Bool {
+        pageURLs[thread.service].flatMap { thread.service.conversation(at: $0)?.id } == thread.conversationID
+    }
+
+    /// Reads each service's chat list from your account, one at a time (each loads the site in a hidden page).
+    /// Skips services read in the last couple of minutes unless `force`.
+    func refreshChats(force: Bool = false) async {
+        let services = chatListFilter.map { [$0] } ?? ChatService.allCases
+        for service in services where !chatListLoading.contains(service) {
+            if !force, let last = chatListReadAt[service], Date().timeIntervalSince(last) < 120 { continue }
+            chatListLoading.insert(service)
+            chatListReadAt[service] = Date()
+            let names = Dictionary((projects[service] ?? []).compactMap { project -> (String, String)? in
+                guard let id = project.url.firstMatch(of: /\/g\/(g-p-[A-Za-z0-9]+)/).map({ String($0.1) }) else { return nil }
+                return (id, project.name)
+            }, uniquingKeysWith: { a, _ in a })
+            do {
+                let found = try await ChatListScraper(service: service, userAgent: Self.userAgent,
+                                                      projectNames: names).run()
+                context?.logger.notice("Chat list \(service.rawValue, privacy: .public): \(found.count, privacy: .public) chats")
+                chatListErrors[service] = nil
+                updateChats(found)
+            } catch {
+                chatListErrors[service] = error.localizedDescription
+            }
+            chatListLoading.remove(service)
+        }
+    }
+
+    func useChatsForTesting(_ threads: [ChatThread], pinned: Set<String> = []) {
+        chatThreads = threads
+        pinnedChats = pinned
+    }
+
+    func togglePin(_ thread: ChatThread) {
+        if pinnedChats.remove(thread.id) == nil { pinnedChats.insert(thread.id) }
+        context?.defaults.set(Array(pinnedChats), forKey: "pinnedChats")
+    }
+
+    /// Takes a conversation off the list (it comes back if the site still lists it or you open it again).
+    func removeFromList(_ thread: ChatThread) {
+        chatThreads.removeAll { $0.id == thread.id }
+        pinnedChats.remove(thread.id)
+        context?.defaults.set(Array(pinnedChats), forKey: "pinnedChats")
+        saveChats()
+    }
+
+    func copyLink(_ thread: ChatThread) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(thread.url, forType: .string)
+    }
+
+    /// The notch's page moved to (or renamed) a conversation: remember it, as just opened when `opened`.
+    private func recordChat(_ service: ChatService, url: URL?, title: String, opened: Bool) {
+        guard let url, let conversation = service.conversation(at: url) else { return }
+        let thread = ChatThread(service: service, conversationID: conversation.id, url: url.absoluteString,
+                                title: ChatService.chatTitle(fromPageTitle: title), opened: opened ? Date() : nil)
+        // Renames of a conversation we don't know yet wait for it to be opened.
+        guard opened || chatThreads.contains(where: { $0.id == thread.id }) else { return }
+        updateChats([thread])
+    }
+
+    private func updateChats(_ fresh: [ChatThread]) {
+        let merged = ChatThreads.merge(chatThreads, fresh)
+        guard merged != chatThreads else { return }
+        chatThreads = ChatThreads.trimmed(merged, pinned: pinnedChats)
+        saveChats()
+    }
+
+    private func saveChats() {
+        context?.defaults.set(try? JSONEncoder().encode(chatThreads), forKey: "chatThreads")
     }
 
     // MARK: - Claude Code agents
@@ -740,6 +882,14 @@ public final class ChatApp: NotchApp {
 
     /// ⌘T opens a terminal in the notch.
     public func handleKey(_ event: NSEvent) -> Bool {
+        if showingChatList {
+            if event.keyCode == 53 {  // Esc: back to the chat
+                showingChatList = false
+                return true
+            }
+            let shown = shownChats
+            if chatListSelection.handle(event, count: shown.count, open: { self.open(shown[$0]) }) { return true }
+        }
         guard event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
               event.charactersIgnoringModifiers?.lowercased() == "t" else { return false }
         openShell()
@@ -1048,11 +1198,14 @@ struct ChatView: View {
             HStack(spacing: 10) {
                 ServiceTabs(app: app)
 
-                if !app.showingOverview && app.loading.contains(app.service) {
+                if !app.showingOverview && !app.showingChatList && app.loading.contains(app.service) {
                     NotchSpinner(size: 11, color: .white.opacity(0.6), lineWidth: 1.6)
                 }
                 Spacer()
-                if app.showingOverview {
+                ChatsButton(app: app)
+                if app.showingChatList {
+                    button("arrow.clockwise", "Reload your chat lists") { Task { await app.refreshChats(force: true) } }
+                } else if app.showingOverview {
                     button("arrow.clockwise", "Refresh agents") { Task { await app.agentMonitor.refresh() } }
                     Button { app.composingAgent.toggle() } label: {
                         Label("New Agent", systemImage: "plus")
@@ -1084,7 +1237,9 @@ struct ChatView: View {
                 }
             }
 
-            if app.showingOverview {
+            if app.showingChatList {
+                ChatListView(app: app)
+            } else if app.showingOverview {
                 AgentsOverview(app: app)
             } else {
             // Both services stay loaded; only the selected one is shown.
@@ -1112,7 +1267,7 @@ struct ChatView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-        .onAppear { if !app.showingOverview { app.markSeen(app.service) } }
+        .onAppear { if !app.showingOverview && !app.showingChatList { app.markSeen(app.service) } }
         .onChange(of: app.service) { _, service in app.markSeen(service) }
         .onChange(of: app.showingOverview) { _, overview in if !overview { app.markSeen(app.service) } }
     }
@@ -1136,24 +1291,28 @@ private struct ServiceTabs: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Button { app.showingOverview = true } label: {
+            let overviewSelected = app.showingOverview && !app.showingChatList
+            Button {
+                app.showingOverview = true
+                app.showingChatList = false
+            } label: {
                 HStack(spacing: 5) {
                     Text("Overview")
                     if !app.unseenAgents.isEmpty {
                         Circle().fill(.orange).frame(width: 6, height: 6)
                     }
                 }
-                .font(.system(size: 12, weight: app.showingOverview ? .semibold : .regular))
-                .foregroundStyle(app.showingOverview ? .white : .white.opacity(0.65))
+                .font(.system(size: 12, weight: overviewSelected ? .semibold : .regular))
+                .foregroundStyle(overviewSelected ? .white : .white.opacity(0.65))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(app.showingOverview ? 0.2 : 0)))
+                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(overviewSelected ? 0.2 : 0)))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             ForEach(ChatService.allCases) { service in
-                let selected = !app.showingOverview && service == app.service
+                let selected = !app.showingOverview && !app.showingChatList && service == app.service
                 Button { app.show(service) } label: {
                     HStack(spacing: 5) {
                         Text(service.name)

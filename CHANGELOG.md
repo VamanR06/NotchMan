@@ -10,6 +10,8 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 - MIT license.
 - Downloadable app: every release, including the earlier ones, now has a universal `NotchMan-vX.Y.Z.zip`, and
   `make zip` builds one.
+- **Agents:** a Chats list — your ChatGPT, Claude and Muse conversations in one searchable list by date, with
+  pins, so you can open any of them in the notch without the site's sidebar.
 
 ## [1.0.0] — 2026-11-04
 

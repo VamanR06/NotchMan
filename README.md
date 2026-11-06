@@ -307,6 +307,16 @@ you send it. Links to other sites open in your browser. Use the pin button to ke
 or Pop out to move the chat (conversation and all) into a normal resizable window for more room — handy for
 file previews, especially on non-Retina monitors. Closing the window puts it back in the notch.
 
+**Chats list:** the notch is too narrow for the sites' own sidebars, so the **Chats** button in the toolbar lists
+your conversations from all three in one place instead — grouped by Today, Yesterday, Previous 7 Days and so on,
+with each one's project and when it last changed. Type to search, filter to one service (All · ChatGPT · Claude ·
+Muse), and click (or ↑/↓ and Return) to open it in its tab; Esc goes back. Hover a chat to pin it to the top;
+right-click to open it in your browser, copy its link or remove it from the list. The list is read from your
+signed-in accounts — ChatGPT's and Claude's own chat lists (titles and times only, never messages) plus the chats
+linked in their sidebars, through a hidden copy of the site — and chats you open in the notch are added as you go
+(Muse has no such list, so its come from its sidebar links and the chats you open). A chat that's writing a reply shows a spinner. Reload re-reads the lists;
+otherwise they're re-read when you open the list, at most every couple of minutes.
+
 When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).
 Detection watches only for the site's Stop button — it never reads the conversation.
@@ -383,7 +393,8 @@ NotchMan runs entirely on your Mac and has no server of its own.
   are stored in the macOS Keychain, not in plain files.
 - **It talks only to the services you connect:** Google Calendar, Notion, Spotify and your JobManager server.
   The Chat tabs are the real websites, signed in with your own accounts; nothing is sent unless you send it, and
-  reply detection only watches for the site's Stop button.
+  reply detection only watches for the site's Stop button. The Chats list keeps your conversations' titles,
+  links, projects and times in NotchMan's preferences on this Mac — never their messages.
 - **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
   is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
   changed.
