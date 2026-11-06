@@ -314,8 +314,11 @@ Muse), and click (or ↑/↓ and Return) to open it in its tab; Esc goes back. H
 right-click to open it in your browser, copy its link or remove it from the list. The list is read from your
 signed-in accounts — ChatGPT's and Claude's own chat lists (titles and times only, never messages) plus the chats
 linked in their sidebars, through a hidden copy of the site — and chats you open in the notch are added as you go
-(Muse has no such list, so its come from its sidebar links and the chats you open). A chat that's writing a reply shows a spinner. Reload re-reads the lists;
-otherwise they're re-read when you open the list, at most every couple of minutes.
+(Muse has no such list, so its come from its sidebar links and the chats you open). A chat that's writing a reply shows a spinner. Opening the list re-reads the newest
+100 chats of each, at most every couple of minutes. **Sync** reads everything: every page of each site's list,
+every ChatGPT project's chats, and (for Muse) the sidebar scrolled to its end — then removes chats you deleted on
+the site (pinned ones stay). It takes longer, and if any part fails to load nothing is removed. Sync follows the
+filter, so pick one service to sync just that one.
 
 When a reply that took 3+ seconds finishes while you're not looking at that chat, the notch pulses and shows a
 ✓ until you open it, and a macOS notification is posted (click it to jump back; turn off in Settings → Chat).

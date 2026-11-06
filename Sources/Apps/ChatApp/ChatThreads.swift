@@ -67,9 +67,13 @@ extension ChatService {
         return generic.contains(cleaned.lowercased()) ? "" : cleaned
     }
 
-    /// Runs on the signed-in site: the account's recent conversations from the site's own list (what its
-    /// sidebar shows), as `{api: [{id, title, updated (ms), project}], links: [{href, name}]}`. The links are
-    /// the page's, for chats the list leaves out (ChatGPT's project chats) and for sites without one (Muse).
+    /// Runs on the signed-in site: the account's conversations from the site's own list (what its sidebar
+    /// shows), as `{api: [{id, title, updated (ms), project}], links: [{href, name}]}`. The links are the
+    /// page's, for chats the list leaves out and for sites without one (Muse).
+    ///
+    /// Arguments (both optional): `full` reads everything — every page of the list, each ChatGPT project's chats
+    /// (`projects`: extra `g-p-…` ids to look in) and, without a list, the sidebar scrolled to its end — instead
+    /// of just the newest 100.
     var chatListScript: String {
         let api: String
         switch self {
@@ -77,41 +81,112 @@ extension ChatService {
             api = """
             const session = await (await fetch('/api/auth/session', { credentials: 'include' })).json();
             if (!session || !session.accessToken) return null;
-            const response = await fetch('/backend-api/conversations?offset=0&limit=100&order=updated',
-              { credentials: 'include', headers: { Authorization: 'Bearer ' + session.accessToken } });
-            if (!response.ok) return null;
-            const body = await response.json();
-            return (body.items || []).map(c => ({
-              id: c.id, title: c.title || '', updated: ms(c.update_time || c.create_time), project: c.gizmo_id || '',
-            }));
+            const get = async url => {
+              const response = await fetch(url,
+                { credentials: 'include', headers: { Authorization: 'Bearer ' + session.accessToken } });
+              return response.ok ? response.json() : null;
+            };
+            const row = (c, project) => ({
+              id: c.id, title: c.title || '', updated: ms(c.update_time || c.create_time), project: project || '',
+            });
+            const all = [];
+            for (let offset = 0; offset < 20000; offset += 100) {
+              const body = await get(`/backend-api/conversations?offset=${offset}&limit=100&order=updated`);
+              if (!body) { if (offset === 0) return null; partial = true; break; }
+              const items = body.items || [];
+              for (const c of items) all.push(row(c, c.gizmo_id));
+              if (!isFull || items.length < 100 || (body.total && offset + 100 >= body.total)) break;
+            }
+            if (isFull) {
+              // Project chats aren't in the main list: read each project's own.
+              const ids = new Set([...extraProjects, ...all.map(c => c.project)].filter(p => /^g-p-/.test(p)));
+              for (const a of document.querySelectorAll('a[href*="/g/g-p-"]')) {
+                const match = (a.getAttribute('href') || '').match(/\\/g\\/(g-p-[A-Za-z0-9]+)/);
+                if (match) ids.add(match[1]);
+              }
+              for (const project of ids) {
+                let cursor = 0;
+                for (let page = 0; page < 200; page++) {
+                  const body = await get(`/backend-api/gizmos/${project}/conversations?cursor=${cursor}`);
+                  if (!body) partial = true;
+                  const items = (body && body.items) || [];
+                  for (const c of items) all.push(row(c, project));
+                  if (!items.length || body.cursor == null || body.cursor === cursor) break;
+                  cursor = body.cursor;
+                }
+              }
+            }
+            return all;
             """
         case .claude:
             api = """
             const orgs = await (await fetch('/api/organizations', { credentials: 'include' })).json();
             if (!Array.isArray(orgs)) return null;
-            const all = [];
+            const all = [], seen = new Set();
+            const add = chats => {
+              let added = 0;
+              for (const c of chats) {
+                if (!c || seen.has(c.uuid)) continue;
+                seen.add(c.uuid);
+                added++;
+                all.push({
+                  id: c.uuid, title: c.name || '', updated: ms(c.updated_at || c.created_at),
+                  project: (c.project && c.project.name) || '',
+                });
+              }
+              return added;
+            };
+            const get = async url => {
+              const response = await fetch(url, { credentials: 'include' });
+              if (!response.ok) return null;
+              const body = await response.json();
+              return Array.isArray(body) ? body : null;
+            };
+            let any = false;
             for (const org of orgs) {
-              const response = await fetch(`/api/organizations/${org.uuid}/chat_conversations?limit=100`,
-                { credentials: 'include' });
-              if (!response.ok) continue;
-              const chats = await response.json();
-              if (!Array.isArray(chats)) continue;
-              for (const c of chats) all.push({
-                id: c.uuid, title: c.name || '', updated: ms(c.updated_at || c.created_at),
-                project: (c.project && c.project.name) || '',
-              });
+              const base = `/api/organizations/${org.uuid}/chat_conversations`;
+              for (let offset = 0; offset < 20000; offset += 100) {
+                const chats = await get(`${base}?limit=100&offset=${offset}`);
+                if (!chats) { if (offset > 0) partial = true; break; }
+                any = true;
+                const added = add(chats);
+                if (!isFull || chats.length < 100) break;
+                // The same page again: no paging here, so ask for the whole list at once.
+                if (added === 0) {
+                  const whole = await get(base);
+                  if (whole) add(whole); else partial = true;
+                  break;
+                }
+              }
             }
-            return all.length ? all : null;
+            return any ? all : null;
             """
         case .muse:
             api = "return null;"
         }
         return """
+        const isFull = typeof full !== 'undefined' && !!full;
+        const extraProjects = typeof projects !== 'undefined' && Array.isArray(projects) ? projects : [];
         const ms = v => typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : (Date.parse(v || '') || 0);
+        // Set when part of a full read failed, so nothing is taken as deleted.
+        let partial = false;
         let api = null;
         try { api = await (async () => { \(api) })(); } catch (e) { api = null; }
+        if (isFull && api === null) {
+          // No list to read: scroll the sidebar to its end so it loads every chat link.
+          const scrollers = [...document.querySelectorAll('nav, aside, nav *, aside *')].filter(el =>
+            /(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 20);
+          let count = -1, stable = 0;
+          for (let round = 0; round < 80 && scrollers.length && stable < 3; round++) {
+            scrollers.forEach(el => { el.scrollTop = el.scrollHeight; });
+            await new Promise(resolve => setTimeout(resolve, 600));
+            const now = document.querySelectorAll('a[href]').length;
+            stable = now === count ? stable + 1 : 0;
+            count = now;
+          }
+        }
         \(Self.linkScript.replacingOccurrences(of: "return [", with: "const links = ["))
-        return { api, links };
+        return { api, links, complete: isFull && api !== null && !partial };
         """
     }
 
@@ -183,6 +258,14 @@ enum ChatThreads {
         return result
     }
 
+    /// After reading a service's whole list: merges it in and drops that service's conversations it no longer
+    /// has (deleted on the site), except pinned ones.
+    static func replacing(_ existing: [ChatThread], with complete: [ChatThread], for service: ChatService,
+                          pinned: Set<String>) -> [ChatThread] {
+        let listed = Set(complete.map(\.id))
+        return merge(existing, complete).filter { $0.service != service || listed.contains($0.id) || pinned.contains($0.id) }
+    }
+
     /// Newest first; conversations without a time keep the order the site listed them in, after the rest.
     static func sorted(_ threads: [ChatThread]) -> [ChatThread] {
         threads.enumerated().sorted { a, b in
@@ -196,7 +279,7 @@ enum ChatThreads {
     }
 
     /// Keeps the list from growing forever: the newest `perService` of each service, plus every pinned one.
-    static func trimmed(_ threads: [ChatThread], pinned: Set<String>, perService: Int = 300) -> [ChatThread] {
+    static func trimmed(_ threads: [ChatThread], pinned: Set<String>, perService: Int = 3000) -> [ChatThread] {
         var counts: [ChatService: Int] = [:]
         return sorted(threads).filter { thread in
             counts[thread.service, default: 0] += 1
@@ -256,7 +339,14 @@ final class ChatListScraper: NSObject, WKNavigationDelegate {
         self.page = page ?? service.home
     }
 
-    func run(timeout: TimeInterval = 15) async throws -> [ChatThread] {
+    struct Result {
+        let threads: [ChatThread]
+        /// The site's whole list was read (a full read that got the list), so missing chats were deleted.
+        var complete = false
+    }
+
+    /// The newest chats; with `full`, every chat (see `chatListScript`) — slower, for a full sync.
+    func run(full: Bool = false, timeout: TimeInterval = 15) async throws -> Result {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // same cookies as the notch's page
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 1440, height: 900), configuration: config)
@@ -284,6 +374,16 @@ final class ChatListScraper: NSObject, WKNavigationDelegate {
                 throw ProjectScraper.ScrapeError.notSignedIn(service.name)
             }
             rounds += 1
+            if full {
+                // Give the site's app a moment to start (and its sidebar to show), then read it all once.
+                guard rounds >= 4 else { continue }
+                let raw = try? await view.callAsyncJavaScript(
+                    service.chatListScript, arguments: ["full": true, "projects": Array(projectNames.keys)], in: nil,
+                    contentWorld: .defaultClient)
+                let result = raw as? [String: Any] ?? [:]
+                return Result(threads: service.threads(fromList: result, projectNames: projectNames),
+                              complete: result["complete"] as? Bool ?? false)
+            }
             let raw = try? await view.callAsyncJavaScript(service.chatListScript, arguments: [:], in: nil,
                                                           contentWorld: .defaultClient)
             let result = raw as? [String: Any] ?? [:]
@@ -299,7 +399,7 @@ final class ChatListScraper: NSObject, WKNavigationDelegate {
             if fromList && rounds >= 3 { break }
             if !best.isEmpty && stableRounds >= 4 { break }
         }
-        return best
+        return Result(threads: best)
     }
 
     private func close() {

@@ -433,22 +433,61 @@ public final class ChatApp: NotchApp {
         let services = chatListFilter.map { [$0] } ?? ChatService.allCases
         for service in services where !chatListLoading.contains(service) {
             if !force, let last = chatListReadAt[service], Date().timeIntervalSince(last) < 120 { continue }
-            chatListLoading.insert(service)
-            chatListReadAt[service] = Date()
-            let names = Dictionary((projects[service] ?? []).compactMap { project -> (String, String)? in
-                guard let id = project.url.firstMatch(of: /\/g\/(g-p-[A-Za-z0-9]+)/).map({ String($0.1) }) else { return nil }
-                return (id, project.name)
-            }, uniquingKeysWith: { a, _ in a })
-            do {
-                let found = try await ChatListScraper(service: service, userAgent: Self.userAgent,
-                                                      projectNames: names).run()
-                context?.logger.notice("Chat list \(service.rawValue, privacy: .public): \(found.count, privacy: .public) chats")
-                chatListErrors[service] = nil
-                updateChats(found)
-            } catch {
-                chatListErrors[service] = error.localizedDescription
+            await readChats(service, full: false)
+        }
+    }
+
+    /// A full sync is running (the Sync button).
+    private(set) var chatListSyncing = false
+    /// What the last full sync found, for the list's footer.
+    private(set) var chatListSyncSummary: String?
+
+    /// Reads every chat of the filter's services (or all), not just the newest, and drops ones deleted on the
+    /// site. Slower than the automatic refresh: it pages through each site's whole list.
+    func syncAllChats() async {
+        guard !chatListSyncing else { return }
+        chatListSyncing = true
+        chatListSyncSummary = nil
+        let services = chatListFilter.map { [$0] } ?? ChatService.allCases
+        var counts: [String] = []
+        for service in services {
+            // Let a quick refresh of this service finish first.
+            while chatListLoading.contains(service) { try? await Task.sleep(for: .milliseconds(200)) }
+            if let count = await readChats(service, full: true) { counts.append("\(count) \(service.name)") }
+        }
+        chatListSyncing = false
+        let time = Date().formatted(date: .omitted, time: .shortened)
+        chatListSyncSummary = counts.isEmpty ? nil : "Synced \(counts.joined(separator: ", ")) chats at \(time)."
+    }
+
+    /// Reads one service's chat list and adds it to the list; returns how many chats it found, or nil if it
+    /// couldn't be read.
+    @discardableResult
+    private func readChats(_ service: ChatService, full: Bool) async -> Int? {
+        chatListLoading.insert(service)
+        chatListReadAt[service] = Date()
+        defer { chatListLoading.remove(service) }
+        let names = Dictionary((projects[service] ?? []).compactMap { project -> (String, String)? in
+            guard let id = project.url.firstMatch(of: /\/g\/(g-p-[A-Za-z0-9]+)/).map({ String($0.1) }) else { return nil }
+            return (id, project.name)
+        }, uniquingKeysWith: { a, _ in a })
+        do {
+            let result = try await ChatListScraper(service: service, userAgent: Self.userAgent, projectNames: names)
+                .run(full: full, timeout: full ? 60 : 15)
+            context?.logger.notice("Chat list \(service.rawValue, privacy: .public)\(full ? " (full)" : "", privacy: .public): \(result.threads.count, privacy: .public) chats, complete: \(result.complete, privacy: .public)")
+            chatListErrors[service] = nil
+            if result.complete {
+                chatThreads = ChatThreads.trimmed(
+                    ChatThreads.replacing(chatThreads, with: result.threads, for: service, pinned: pinnedChats),
+                    pinned: pinnedChats)
+                saveChats()
+            } else {
+                updateChats(result.threads)
             }
-            chatListLoading.remove(service)
+            return result.threads.count
+        } catch {
+            chatListErrors[service] = error.localizedDescription
+            return nil
         }
     }
 
@@ -1204,7 +1243,7 @@ struct ChatView: View {
                 Spacer()
                 ChatsButton(app: app)
                 if app.showingChatList {
-                    button("arrow.clockwise", "Reload your chat lists") { Task { await app.refreshChats(force: true) } }
+                    SyncChatsButton(app: app)
                 } else if app.showingOverview {
                     button("arrow.clockwise", "Refresh agents") { Task { await app.agentMonitor.refresh() } }
                     Button { app.composingAgent.toggle() } label: {

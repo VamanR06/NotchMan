@@ -127,6 +127,17 @@ import WebKit
         #expect(!ChatThreads.matches(chat, query: "resume robotics"))
     }
 
+    @Test func aCompleteSyncDropsDeletedChatsOfThatServiceOnly() {
+        let existing = [
+            thread("kept", title: "Kept"), thread("deleted"), thread("pinned-deleted"),
+            thread("claude-chat", .claude),
+        ]
+        let synced = ChatThreads.replacing(existing, with: [thread("kept", title: "Renamed"), thread("new")],
+                                           for: .chatgpt, pinned: ["chatgpt:pinned-deleted"])
+        #expect(synced.map(\.conversationID) == ["kept", "pinned-deleted", "claude-chat", "new"])
+        #expect(synced[0].title == "Renamed")
+    }
+
     @Test func trimmingKeepsTheNewestAndThePinned() {
         let threads = (0..<5).map { thread("t\($0)", updated: now.addingTimeInterval(Double(-$0) * 60)) }
         let kept = ChatThreads.trimmed(threads, pinned: ["chatgpt:t4"], perService: 2)
@@ -137,7 +148,7 @@ import WebKit
 @MainActor @Suite(.serialized) struct ChatListScriptTests {
     /// Loads `html` as if it were the site and runs the service's list script in the page's world, where the
     /// page's stand-in `fetch` (the site's list) is visible.
-    private func run(_ service: ChatService, _ html: String) async throws -> [String: Any] {
+    private func run(_ service: ChatService, _ html: String, arguments: [String: Any] = [:]) async throws -> [String: Any] {
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 800))
         let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -145,7 +156,7 @@ import WebKit
         defer { window.close() }
         web.loadHTMLString(html, baseURL: service.home)
         for _ in 0..<60 where web.isLoading { try await Task.sleep(for: .milliseconds(50)) }
-        return try await web.callAsyncJavaScript(service.chatListScript, arguments: [:], in: nil,
+        return try await web.callAsyncJavaScript(service.chatListScript, arguments: arguments, in: nil,
                                                  contentWorld: .page) as? [String: Any] ?? [:]
     }
 
@@ -185,6 +196,71 @@ import WebKit
         #expect(threads.map(\.title) == ["Thesis outline"])
         #expect(threads.first?.project == "Thesis")
         #expect(threads.first?.updated != nil)
+    }
+
+    /// A ChatGPT stand-in with 250 chats in pages of 100, and a project (linked in the sidebar) with 3 more in
+    /// pages of 2. `failProject` makes the project's list fail.
+    private func chatGPTWithHistory(failProject: Bool = false) -> String {
+        """
+        <html><body><a href="/g/g-p-abc123-robotics/project">Robotics</a><script>
+        const chats = Array.from({ length: 250 }, (_, i) => ({ id: 'chat' + String(i).padStart(4, '0'),
+          title: 'Chat ' + i, update_time: 1762300000 - i }));
+        const projectChats = [1, 2, 3].map(i => ({ id: 'proj000' + i, title: 'Project chat ' + i, update_time: 1762200000 }));
+        window.fetch = async (url) => {
+          const json = body => ({ ok: true, json: async () => body });
+          if (url === '/api/auth/session') return json({ accessToken: 'tok' });
+          const query = new URLSearchParams(url.split('?')[1]);
+          if (url.startsWith('/backend-api/conversations')) {
+            const offset = +query.get('offset'), limit = +query.get('limit');
+            return json({ items: chats.slice(offset, offset + limit), total: chats.length });
+          }
+          if (url.startsWith('/backend-api/gizmos/g-p-abc123/conversations')) {
+            if (\(failProject)) return { ok: false };
+            const cursor = +query.get('cursor');
+            const next = cursor + 2 < projectChats.length ? cursor + 2 : null;
+            return json({ items: projectChats.slice(cursor, cursor + 2), cursor: next });
+          }
+          return { ok: false };
+        };
+        </script></body></html>
+        """
+    }
+
+    @Test func aQuickReadTakesTheNewestHundred() async throws {
+        let result = try await run(.chatgpt, chatGPTWithHistory())
+        #expect(ChatService.chatgpt.threads(fromList: result).count == 100)
+        #expect(result["complete"] as? Bool == false)
+    }
+
+    @Test func aFullReadTakesEveryPageAndEachProject() async throws {
+        let result = try await run(.chatgpt, chatGPTWithHistory(), arguments: ["full": true])
+        let threads = ChatService.chatgpt.threads(fromList: result, projectNames: ["g-p-abc123": "Robotics"])
+        #expect(threads.count == 253)
+        #expect(threads.filter { $0.project == "Robotics" }.map(\.title) == ["Project chat 1", "Project chat 2", "Project chat 3"])
+        #expect(result["complete"] as? Bool == true)
+    }
+
+    @Test func aFailedProjectMeansTheReadIsntComplete() async throws {
+        let result = try await run(.chatgpt, chatGPTWithHistory(failProject: true), arguments: ["full": true])
+        #expect(ChatService.chatgpt.threads(fromList: result).count == 250)
+        #expect(result["complete"] as? Bool == false)
+    }
+
+    @Test func claudeWithoutPagingIsReadWhole() async throws {
+        // This stand-in ignores `offset`: every page is the first 100, and only the plain list has all 150.
+        let result = try await run(.claude, """
+        <html><body><script>
+        const chats = Array.from({ length: 150 }, (_, i) => ({
+          uuid: '0198a7c2-0000-7abc-9def-' + String(i).padStart(12, '0'), name: 'Chat ' + i, updated_at: '2025-11-06T12:00:00Z' }));
+        window.fetch = async (url) => {
+          const json = body => ({ ok: true, json: async () => body });
+          if (url === '/api/organizations') return json([{ uuid: 'org1' }]);
+          return json(url.includes('?') ? chats.slice(0, 100) : chats);
+        };
+        </script></body></html>
+        """, arguments: ["full": true])
+        #expect(ChatService.claude.threads(fromList: result).count == 150)
+        #expect(result["complete"] as? Bool == true)
     }
 
     @Test func fallsBackToTheSidebarWhenTheListFails() async throws {

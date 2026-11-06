@@ -18,6 +18,32 @@ struct ChatsButton: View {
     }
 }
 
+/// Reads every chat from the sites, not just the newest, and drops ones you deleted there.
+struct SyncChatsButton: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        let which = app.chatListFilter?.name ?? "ChatGPT, Claude and Muse"
+        Button { Task { await app.syncAllChats() } } label: {
+            HStack(spacing: 5) {
+                if app.chatListSyncing {
+                    NotchSpinner(size: 10, lineWidth: 1.5)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                Text(app.chatListSyncing ? "Syncing…" : "Sync")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(.white.opacity(0.12)))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .disabled(app.chatListSyncing)
+        .help("Read every \(which) chat from the site, and remove ones you deleted there")
+    }
+}
+
 /// Every conversation on ChatGPT, Claude and Muse in one list — searchable, by date, pinned ones first — so
 /// you can jump to one without the site's sidebar (which the notch is too narrow to show).
 struct ChatListView: View {
@@ -145,13 +171,13 @@ struct ChatListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Why a service's list couldn't be read (usually: not signed in yet).
+    /// What the last sync found, and why a service's list couldn't be read (usually: not signed in yet).
     @ViewBuilder
     private var footer: some View {
         let services = app.chatListFilter.map { [$0] } ?? ChatService.allCases
-        let errors = services.compactMap { app.chatListErrors[$0] }
-        if !errors.isEmpty {
-            Text(errors.joined(separator: " "))
+        let notes = [app.chatListSyncSummary].compactMap { $0 } + services.compactMap { app.chatListErrors[$0] }
+        if !notes.isEmpty {
+            Text(notes.joined(separator: " "))
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.45))
                 .lineLimit(2)
