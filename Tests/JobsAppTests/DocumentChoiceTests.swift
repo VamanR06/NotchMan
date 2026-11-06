@@ -33,8 +33,8 @@ import Testing
     }
 
     @Test func pathsWithQueriesKeepTheirQuestionMark() {
-        let base = URL(string: "https://jobs.vamanr.com")!
-        #expect(JobManagerClient.url(base, "api/documents?kind=resume").absoluteString == "https://jobs.vamanr.com/api/documents?kind=resume")
-        #expect(JobManagerClient.url(base, "api/jobs/4").absoluteString == "https://jobs.vamanr.com/api/jobs/4")
+        let base = URL(string: "https://jobs.example.com")!
+        #expect(JobManagerClient.url(base, "api/documents?kind=resume").absoluteString == "https://jobs.example.com/api/documents?kind=resume")
+        #expect(JobManagerClient.url(base, "api/jobs/4").absoluteString == "https://jobs.example.com/api/jobs/4")
     }
 }
