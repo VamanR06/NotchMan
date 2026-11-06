@@ -115,7 +115,7 @@ private let now = Date(timeIntervalSince1970: 1_792_497_600)
     @Test func rejectsPlainHTTPExceptLocalhost() throws {
         #expect(throws: JobManagerClient.ClientError.self) { try JobManagerClient.validate("http://jobs.example.com") }
         #expect(try JobManagerClient.validate("http://localhost:3000").port == 3000)
-        #expect(try JobManagerClient.validate("https://jobs.vamanr.com/").absoluteString == "https://jobs.vamanr.com")
+        #expect(try JobManagerClient.validate("https://jobs.example.com/").absoluteString == "https://jobs.example.com")
     }
 }
 

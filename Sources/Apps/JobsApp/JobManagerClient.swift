@@ -21,7 +21,7 @@ final class JobManagerClient {
         }
     }
 
-    static let defaultServer = "https://jobs.vamanr.com"
+    static let defaultServer = "http://localhost:3000"
     private static let cookieName = "jm_session"
 
     private let keychain: Keychain

@@ -6,6 +6,8 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-11-06
+
 ### Added
 - MIT license.
 - Downloadable app: every release, including the earlier ones, now has a universal `NotchMan-vX.Y.Z.zip`, and
@@ -13,6 +15,9 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 - **Agents:** a Chats list — your ChatGPT, Claude and Muse conversations in one searchable list by date, with
   pins, so you can open any of them in the notch without the site's sidebar. Sync reads every chat (all pages
   and ChatGPT projects) and removes ones deleted on the site.
+
+### Changed
+- **Jobs:** with no server set, the default is `http://localhost:3000` (a local JobManager).
 
 ### Fixed
 - **Agents:** "writing" / "replied" for ChatGPT, Claude and Muse is more accurate: it follows the reply's
@@ -129,7 +134,8 @@ First public release.
 - **Tasks:** Notion task boards.
 - A notch on every display.
 
-[Unreleased]: https://github.com/VamanR06/NotchMan/compare/v1.0.0...main
+[Unreleased]: https://github.com/VamanR06/NotchMan/compare/v1.1.0...main
+[1.1.0]: https://github.com/VamanR06/NotchMan/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/VamanR06/NotchMan/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/VamanR06/NotchMan/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/VamanR06/NotchMan/compare/v0.6.0...v0.7.0
