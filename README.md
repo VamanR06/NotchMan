@@ -118,10 +118,11 @@ shelved files, downloads, folders, Claude Code sessions, approvals, tasks and ap
 Start with "add", "todo" or "task" to add a task ("add call recruiter fri 3pm"). With [Jev](#intelligence-jev)
 connected you can also say what you want — "move the resume I downloaded to Resumes", "approve the npm test",
 "I called the recruiter" — and the action it understood shows on top with how sure it is; moving files, allowing or
-denying a request and checking off a task ask for a second Return. For anything else, the last rows hand it to
-Claude: **Ask Claude** answers right in the bar (Claude Code with read-only tools — it can look things up but not
-change anything), **Start a Claude Code agent** runs it as a background agent in your latest project that asks
-before every edit and command (approvals come to the notch; asks for a second Return), or open a Claude chat. Esc
+denying a request and checking off a task ask for a second Return. For anything else, the last rows hand it on:
+**Ask Claude** answers right in the bar as it writes (Claude Code with read-only tools — it can look things up but
+not change anything, and never stops to ask for permission; Esc stops it), **Ask ChatGPT** or **Ask in a Claude
+chat** sends it in that chat's tab, and **Start a Claude Code agent** runs it as a background agent in your latest
+project that asks before every edit and command (approvals come to the notch; asks for a second Return). Esc
 clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
 
 **Opens to what's relevant.** Hovering opens the app that fits the moment instead of the last one: a meeting about

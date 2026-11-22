@@ -16,8 +16,9 @@ public struct CommandItem: Identifiable {
     /// Asks for a second Return before running (it starts something that acts on your Mac).
     public var needsConfirm: Bool
     public var run: @MainActor () -> Void
-    /// Instead of running and closing, produce text the bar shows in place (Claude's answer to a question).
-    public var answer: (@MainActor () async throws -> String)?
+    /// Instead of running and closing, produce text the bar shows in place (Claude's answer to a question). Calls its
+    /// argument with the text so far while it works, so the bar can show it as it comes.
+    public var answer: (@MainActor (_ progress: @escaping @MainActor (String) -> Void) async throws -> String)?
 
     public init(id: String, title: String, subtitle: String? = nil, symbol: String, kind: String, keywords: [String] = [],
                 revealsApp: String? = nil, needsConfirm: Bool = false, run: @escaping @MainActor () -> Void) {
@@ -34,7 +35,7 @@ public struct CommandItem: Identifiable {
 
     /// An item whose result is text shown in the bar.
     public init(id: String, title: String, subtitle: String? = nil, symbol: String, kind: String,
-                answer: @escaping @MainActor () async throws -> String) {
+                answer: @escaping @MainActor (_ progress: @escaping @MainActor (String) -> Void) async throws -> String) {
         self.init(id: id, title: title, subtitle: subtitle, symbol: symbol, kind: kind, run: {})
         self.answer = answer
     }

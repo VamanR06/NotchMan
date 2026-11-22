@@ -98,9 +98,10 @@ public extension NotchMessage {
                         duration: payload["duration"].flatMap(Double.init))
     }
 
-    static func chatPrompt(_ text: String, service: String = "chatgpt", url: String? = nil) -> NotchMessage {
+    static func chatPrompt(_ text: String, service: String = "chatgpt", url: String? = nil, submit: Bool = false) -> NotchMessage {
         var payload = ["text": text, "service": service]
         payload["url"] = url
+        if submit { payload["submit"] = "1" }
         return NotchMessage(name: chatPromptName, payload: payload)
     }
 }

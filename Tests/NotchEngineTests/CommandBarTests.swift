@@ -132,7 +132,7 @@ import NotchKit
         let commands = bar.commands
         bar.commands = { query in
             var offered = commands(query)
-            offered.fallbacks = [CommandItem(id: "claude.ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { "42" })]
+            offered.fallbacks = [CommandItem(id: "claude.ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { _ in "42" })]
             return offered
         }
         bar.query = "resum"
@@ -143,12 +143,18 @@ import NotchKit
         let ran = Ran()
         let bar = bar(ran)
         bar.commands = { _ in
-            NotchCommands(fallbacks: [CommandItem(id: "ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { "It's 42." })])
+            NotchCommands(fallbacks: [CommandItem(id: "ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { progress in
+                progress("It's")
+                try await Task.sleep(for: .milliseconds(50))
+                return "It's 42."
+            })])
         }
         bar.query = "meaning of life"
         bar.runSelected()
         #expect(bar.answer?.title == "Ask Claude")
-        for _ in 0..<50 where bar.answer?.text == nil { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<50 where bar.answer?.text == nil { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(bar.answer?.text == "It's" && bar.answer?.isLoading == true, "shows the answer as it comes")
+        for _ in 0..<50 where bar.answer?.isDone != true { try await Task.sleep(for: .milliseconds(10)) }
         #expect(bar.answer?.text == "It's 42." && ran.revealed.isEmpty, "the bar stays open with the answer")
         bar.runSelected()
         #expect(bar.answer != nil, "Return doesn't run it again")

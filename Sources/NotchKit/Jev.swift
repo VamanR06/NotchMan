@@ -114,12 +114,22 @@ public enum JevSettings {
     static let identityKey = "jevIdentity"
     public static let model = "jev-latest"
 
+    /// Read from the Keychain once, then kept in memory (it's checked on every keystroke in the command bar).
+    private static var cachedKey: String??
+
     public static var apiKey: String? {
         get {
             if let test = JevTestEnvironment.current { return test.apiKey }
-            return keychain.string(for: "apiKey").flatMap { $0.isEmpty ? nil : $0 }
+            if let cachedKey { return cachedKey }
+            let key = keychain.string(for: "apiKey").flatMap { $0.isEmpty ? nil : $0 }
+            cachedKey = .some(key)
+            return key
         }
-        set { keychain.set(newValue?.trimmingCharacters(in: .whitespacesAndNewlines), for: "apiKey") }
+        set {
+            let key = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            keychain.set(key, for: "apiKey")
+            cachedKey = .some(key.flatMap { $0.isEmpty ? nil : $0 })
+        }
     }
 
     public static var privacy: JevPrivacy {

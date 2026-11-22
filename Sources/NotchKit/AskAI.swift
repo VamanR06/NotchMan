@@ -61,9 +61,9 @@ public final class AskAI {
         deliver?(.chatPrompt(prompt(for: item), service: service, url: project?.url))
     }
 
-    /// Opens a new chat with exactly `text` typed in (no template), not sent.
-    public func send(_ text: String, service: String) {
-        deliver?(.chatPrompt(text, service: service))
+    /// Opens a new chat with exactly `text` typed in (no template); with `submit`, sends it too.
+    public func send(_ text: String, service: String, submit: Bool = false) {
+        deliver?(.chatPrompt(text, service: service, submit: submit))
     }
 }
 

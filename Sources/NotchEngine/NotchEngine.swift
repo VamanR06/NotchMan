@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 import WebKit
 import NotchKit
@@ -26,6 +27,7 @@ public final class NotchEngine {
     }
 
     private var notches: [CGDirectDisplayID: ScreenNotch] = [:]
+    static let log = Logger(subsystem: "com.notchman", category: "engine")
     /// One command bar, shown on whichever notch opened it.
     let commandBar = CommandBarModel()
     /// ⌥Space (the hotkey) opens the notch with the command bar ready to type in.
@@ -304,6 +306,12 @@ public final class NotchEngine {
                         }
                     }
                     return
+                }
+                // A click the app behind got although it landed on the open notch: the panel was letting clicks
+                // through. Shouldn't happen; log it to find out why, and make the panel take clicks again.
+                for notch in self?.notches.values ?? [:].values where notch.model.state == .expanded && notch.model.contains(point) {
+                    Self.log.error("Click passed through the open notch (ignoresMouseEvents=\(notch.panel.ignoresMouseEvents, privacy: .public), key=\(notch.panel.isKeyWindow, privacy: .public))")
+                    notch.panel.ignoresMouseEvents = false
                 }
                 self?.notches.values.forEach { $0.model.clickedOutside(at: point) }
             }

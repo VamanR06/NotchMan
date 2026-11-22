@@ -177,6 +177,8 @@ public final class ChatApp: NotchApp {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// Prompts waiting for their service's new-chat page to finish loading.
     @ObservationIgnored private var pendingPrompts: [ChatService: String] = [:]
+    /// Prompts to send, not just type in, once the chat page is ready.
+    @ObservationIgnored private var pendingSubmits: Set<ChatService> = []
 
     /// Desktop Safari's user agent: Google sign-in refuses embedded browsers that don't look like one.
     private static let userAgent =
@@ -336,6 +338,7 @@ public final class ChatApp: NotchApp {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         pendingPrompts[target] = text
+        if message.payload["submit"] == "1" { pendingSubmits.insert(target) } else { pendingSubmits.remove(target) }
         // A page on the service's own site (e.g. a ChatGPT project) starts the chat there; else a new chat.
         let start = target.page(message.payload["url"]) ?? target.home
         let isNew = webViews[target] == nil
@@ -347,10 +350,11 @@ public final class ChatApp: NotchApp {
     private func typePendingPrompt(into view: WKWebView) {
         guard let service = webViews.first(where: { $0.value === view })?.key,
               let text = pendingPrompts.removeValue(forKey: service) else { return }
+        let submit = pendingSubmits.remove(service) != nil
         Task {
             do {
                 let filled = try await view.callAsyncJavaScript(
-                    Self.fillComposerScript, arguments: ["text": text], in: nil, contentWorld: .defaultClient)
+                    Self.fillComposerScript, arguments: ["text": text, "submit": submit], in: nil, contentWorld: .defaultClient)
                 if filled as? Bool != true {
                     context?.logger.notice("Couldn't find the message box; prompt is on the clipboard")
                 }
@@ -378,6 +382,16 @@ public final class ChatApp: NotchApp {
             } else {
                 document.execCommand('selectAll', false);
                 document.execCommand('insertText', false, text);
+            }
+            if (submit) {
+                // Send it: the site's send button once it's enabled, else Return in the box.
+                for (let i = 0; i < 20; i++) {
+                    await new Promise(r => setTimeout(r, 150));
+                    const send = document.querySelector('button[data-testid="send-button"], #composer-submit-button, '
+                        + 'button[aria-label="Send message"], button[aria-label="Send prompt"], button[aria-label="Send"]');
+                    if (send && !send.disabled) { send.click(); return true; }
+                }
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
             }
             return true;
         }

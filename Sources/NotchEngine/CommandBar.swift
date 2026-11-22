@@ -22,12 +22,13 @@ final class CommandBarModel {
         }
     }
 
-    /// An item's answer, shown in place of the rows.
+    /// An item's answer, shown in place of the rows; `text` grows while it streams in.
     struct Answer {
         let title: String
         var text: String?
         var error: String?
-        var isLoading: Bool { text == nil && error == nil }
+        var isDone = false
+        var isLoading: Bool { !isDone && error == nil }
     }
 
     var query = "" {
@@ -81,12 +82,13 @@ final class CommandBarModel {
         fallbacks = text.isEmpty ? [] : offered.fallbacks
         rebuild(items: text.isEmpty ? [] : CommandRouting.search(text, in: offered.items))
         guard Self.shouldAskJev(text), !offered.actions.isEmpty, JevSettings.isAvailable else { return }
-        let request = CommandRouting.request(query: text, actions: offered.actions, context: .current(),
-                                             redactor: Jev.redactor())
         isAsking = true
         jevTask = Task { [weak self, debounce] in
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
+            // Built after the pause (redacting every choice takes a moment), not on every keystroke.
+            let request = CommandRouting.request(query: text, actions: offered.actions, context: .current(),
+                                                 redactor: Jev.redactor())
             do {
                 let answers = try await Jev.ask(state: request.state, questions: request.questions, timeout: 2)
                 guard let self, !Task.isCancelled, self.query.trimmingCharacters(in: .whitespaces) == text else { return }
@@ -103,14 +105,19 @@ final class CommandBarModel {
         }
     }
 
-    private func show(_ produce: @escaping @MainActor () async throws -> String, title: String) {
+    private func show(_ produce: @escaping @MainActor (@escaping @MainActor (String) -> Void) async throws -> String,
+                      title: String) {
         answerTask?.cancel()
         answer = Answer(title: title)
         answerTask = Task { [weak self] in
             do {
-                let text = try await produce()
+                let text = try await produce { partial in
+                    guard !Task.isCancelled, self?.answer?.isDone == false else { return }
+                    self?.answer?.text = partial
+                }
                 guard !Task.isCancelled else { return }
                 self?.answer?.text = text
+                self?.answer?.isDone = true
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.answer?.error = error.localizedDescription
@@ -118,7 +125,7 @@ final class CommandBarModel {
         }
     }
 
-    /// Back from an answer to the rows (Esc).
+    /// Back from an answer to the rows (Esc); stops it if it's still coming.
     func closeAnswer() {
         answerTask?.cancel()
         answer = nil
@@ -236,6 +243,8 @@ struct CommandBarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.black)
         .onAppear { focused = true }
+        // Closing the bar (or the notch) stops whatever it was doing, such as Claude answering.
+        .onDisappear { bar.reset() }
     }
 
     private var hints: some View {
@@ -267,15 +276,17 @@ private struct AnswerView: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
             ScrollView(.vertical) {
-                Group {
-                    if let text = answer.text {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let text = answer.text, !text.isEmpty {
                         Text(text).textSelection(.enabled)
-                    } else if let error = answer.error {
+                    }
+                    if let error = answer.error {
                         Text(error).foregroundStyle(.orange)
-                    } else {
+                    } else if answer.isLoading {
                         HStack(spacing: 6) {
                             NotchSpinner(size: 11, lineWidth: 1.6)
-                            Text("Claude is thinking…").foregroundStyle(.white.opacity(0.5))
+                            Text(answer.text?.isEmpty == false ? "Still going… (Esc stops)" : "Thinking… (Esc stops)")
+                                .foregroundStyle(.white.opacity(0.5))
                         }
                     }
                 }

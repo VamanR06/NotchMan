@@ -121,12 +121,32 @@ public final class ShelfApp: NotchApp {
     /// and Desktop you've touched most recently.
     func dropCandidates() -> [DropCandidate] {
         let places = Self.places.filter { $0.name != "Home" }.map(\.url)
-        let extra = places.prefix(2).flatMap { Self.recentlyModifiedSubfolders(of: $0, limit: 10) }
         return DropRanking.candidates(recents: recentFolders, projects: projects.map { URL(fileURLWithPath: $0.cwd) },
-                                      places: places, extra: extra)
+                                      places: places, extra: recentSubfolders())
     }
 
-    static func recentlyModifiedSubfolders(of folder: URL, limit: Int) -> [URL] {
+    @ObservationIgnored private var subfolderCache: (folders: [URL], read: Date)?
+    @ObservationIgnored private var readingSubfolders = false
+
+    /// The folders in Documents and Desktop touched most recently. Reading them means listing both folders, so it's
+    /// done in the background at most every 30 seconds; callers (the command bar, on every keystroke) get the last
+    /// result straight away.
+    private func recentSubfolders(now: Date = Date()) -> [URL] {
+        if (subfolderCache.map { now.timeIntervalSince($0.read) > 30 } ?? true), !readingSubfolders {
+            readingSubfolders = true
+            let places = Array(Self.places.filter { $0.name != "Home" }.map(\.url).prefix(2))
+            Task { [weak self] in
+                let folders = await Task.detached(priority: .utility) {
+                    places.flatMap { ShelfApp.recentlyModifiedSubfolders(of: $0, limit: 10) }
+                }.value
+                self?.subfolderCache = (folders, Date())
+                self?.readingSubfolders = false
+            }
+        }
+        return subfolderCache?.folders ?? []
+    }
+
+    nonisolated static func recentlyModifiedSubfolders(of folder: URL, limit: Int) -> [URL] {
         let modified = { (url: URL) in
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
         }
@@ -171,6 +191,7 @@ public final class ShelfApp: NotchApp {
         refreshDownloads()
         watcher = DirectoryWatcher(paths: [DownloadsFolder.url.path]) { [weak self] in self?.refreshDownloads() }
         watchProgress()
+        _ = recentSubfolders()  // warm the folder cache for the first drag or command bar
         HookServer.shared.route("/progress") { [weak self] request in
             let json = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             let id = json["id"] as? String, title = json["title"] as? String, state = json["state"] as? String

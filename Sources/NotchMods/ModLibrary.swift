@@ -89,8 +89,9 @@ public final class ModLibrary {
         guard text.split(whereSeparator: \.isWhitespace).count >= 2 else { return .none }
         let make = CommandItem(id: "mods.make", title: "Make a notch app: “\(text)”",
                                subtitle: "Claude writes a small app for the notch (about a minute)", symbol: "wand.and.stars",
-                               kind: "New app", answer: { [weak self] in
+                               kind: "New app", answer: { [weak self] progress in
             guard let self else { return "" }
+            progress("Claude is writing your app, then NotchMan checks that it runs… (about a minute; Esc stops waiting)")
             return try await self.make(text)
         })
         return NotchCommands(fallbacks: [make])
