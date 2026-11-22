@@ -24,7 +24,7 @@ struct ShelfView: View {
                 LastDropBar(app: app, drop: drop)
             }
         }
-        .onAppear(perform: app.pruneMissing)
+        .onAppear { app.pruneMissing() }
         .onDisappear(perform: app.clearSuggestions)
     }
 
@@ -33,6 +33,16 @@ struct ShelfView: View {
             tabButton("Shelf", count: app.items.count, tab: .shelf)
             tabButton("Downloads", count: app.activeDownloads.count + app.commands.count, tab: .downloads)
             Spacer()
+            if app.tab == .shelf && app.items.count > 4 {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 9))
+                    TextField("Find", text: $app.query)
+                        .textFieldStyle(.plain)
+                        .frame(width: 90)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(.white.opacity(0.08)))
+            }
             if app.tab == .shelf && !app.items.isEmpty {
                 Button("AirDrop All") { app.airDrop(app.items) }
                 Button("Clear") { app.clearShelf() }
@@ -126,7 +136,7 @@ private struct ShelfGrid: View {
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 6)], spacing: 6) {
-                        ForEach(app.items, id: \.self) { url in
+                        ForEach(app.shownItems, id: \.self) { url in
                             ShelfTile(app: app, url: url)
                         }
                     }
@@ -619,10 +629,24 @@ private struct DownloadRow: View {
 // MARK: - Settings
 
 struct ShelfSettingsView: View {
-    let app: ShelfApp
+    @Bindable var app: ShelfApp
 
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $app.expiryDays) {
+                    Text("After a day").tag(1)
+                    Text("After 3 days").tag(3)
+                    Text("After a week").tag(7)
+                    Text("After a month").tag(30)
+                    Text("Never").tag(0)
+                } label: {
+                    Text("Take files off the shelf")
+                    Text("Only the shelf forgets them; the files stay where they are.")
+                }
+            } header: {
+                Text("Shelf")
+            }
             Section {
                 LabeledContent("notchman-run") {
                     if app.runInstalled {

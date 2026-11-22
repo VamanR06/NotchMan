@@ -39,6 +39,25 @@ public final class ShelfApp: NotchApp {
     }
     /// The best folders for the files being dragged in (or the selected shelved file).
     let predictor = DropPredictor()
+    /// Filters the shelf by name.
+    var query = ""
+    /// When each shelved file was added (path → date), for taking old ones off.
+    @ObservationIgnored private var added: [String: Date] = [:]
+    /// Shelved files come off after this many days (0 = never).
+    var expiryDays = 7 {
+        didSet {
+            context?.defaults.set(expiryDays, forKey: "expiryDays")
+            pruneMissing()
+        }
+    }
+
+    /// The shelf as shown: newest first, filtered by `query`.
+    var shownItems: [URL] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        let newestFirst = items.reversed() as ReversedCollection<[URL]>
+        return needle.isEmpty ? Array(newestFirst)
+            : newestFirst.filter { $0.lastPathComponent.localizedCaseInsensitiveContains(needle) }
+    }
     @ObservationIgnored private var dropHistory = DropHistory()
     /// Files are being dragged in from outside (the suggestions are for them).
     @ObservationIgnored private var isDragging = false
@@ -74,7 +93,7 @@ public final class ShelfApp: NotchApp {
     /// The files in the tab you're on, in order (what Quick Look steps through).
     var shownFiles: [URL] {
         switch tab {
-        case .shelf: items
+        case .shelf: shownItems
         case .downloads: downloads.filter { !$0.isInProgress }.map(\.url)
         }
     }
@@ -147,6 +166,8 @@ public final class ShelfApp: NotchApp {
         items = (context.defaults.array(forKey: "shelf") as? [Data] ?? []).compactMap(Self.resolve)
         moveFiles = context.defaults.bool(forKey: "moveFiles")
         dropHistory = DropHistory.load(context.defaults)
+        added = (context.defaults.dictionary(forKey: "shelfAdded") as? [String: Date]) ?? [:]
+        expiryDays = context.defaults.object(forKey: "expiryDays") as? Int ?? 7
         refreshDownloads()
         watcher = DirectoryWatcher(paths: [DownloadsFolder.url.path]) { [weak self] in self?.refreshDownloads() }
         watchProgress()
@@ -171,6 +192,8 @@ public final class ShelfApp: NotchApp {
         let new = urls.filter { !items.contains($0) }
         guard !new.isEmpty else { return }
         items.append(contentsOf: new)
+        let now = Date()
+        new.forEach { added[$0.path] = now }
         save()
         tab = .shelf
     }
@@ -186,12 +209,21 @@ public final class ShelfApp: NotchApp {
     }
 
     /// Files that were moved or deleted since being shelved drop off.
-    func pruneMissing() {
-        let existing = items.filter { FileManager.default.fileExists(atPath: $0.path) }
-        if existing.count != items.count {
-            items = existing
+    /// Takes files off the shelf that were deleted, or that have been there longer than `expiryDays`. (The files
+    /// themselves stay where they are.)
+    func pruneMissing(now: Date = Date()) {
+        // Files shelved before dates were kept count from now.
+        for item in items where added[item.path] == nil { added[item.path] = now }
+        let kept = items.filter { FileManager.default.fileExists(atPath: $0.path) && !isExpired($0, now: now) }
+        if kept.count != items.count {
+            items = kept
             save()
         }
+    }
+
+    func isExpired(_ url: URL, now: Date = Date()) -> Bool {
+        guard expiryDays > 0, let date = added[url.path] else { return false }
+        return now.timeIntervalSince(date) > Double(expiryDays) * 86400
     }
 
     func airDrop(_ urls: [URL]) {
@@ -200,6 +232,8 @@ public final class ShelfApp: NotchApp {
 
     private func save() {
         context?.defaults.set(items.compactMap { try? $0.bookmarkData() }, forKey: "shelf")
+        added = added.filter { path, _ in items.contains { $0.path == path } }
+        context?.defaults.set(added, forKey: "shelfAdded")
     }
 
     private static func resolve(_ data: Data) -> URL? {

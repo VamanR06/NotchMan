@@ -28,12 +28,12 @@ import Testing
             ($0.id, DropRanking.localScore(files: [file], candidate: $0, history: history))
         }))
         #expect(top.count == 3)
-        #expect(top[0].candidate.url == project, "with no history, the most recent folder leads")
-        #expect(top.contains { $0.candidate.url == resumes }, "the name match makes the top three")
+        #expect(top[0].candidate.url == resumes, "a folder named for the file leads")
+        #expect(top[1].candidate.url == project, "then the most recent folder")
 
         history.record([URL(fileURLWithPath: "/tmp/old.pdf"), URL(fileURLWithPath: "/tmp/older.pdf")], into: resumes)
         let score = DropRanking.localScore(files: [file], candidate: candidates()[3], history: history)
-        #expect(score == 0.5 + 0.2, "all past PDFs went there, and the name matches")
+        #expect(abs(score - (0.45 + 0.35)) < 1e-9, "all past PDFs went there, and the name matches")
     }
 
     @Test func wordsMatchAcrossPluralsAndSeparators() {

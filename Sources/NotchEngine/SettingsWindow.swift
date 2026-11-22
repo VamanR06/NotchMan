@@ -7,6 +7,7 @@ import NotchKit
 final class SettingsModel {
     var selection: String = SettingsModel.generalID
     static let generalID = "_general"
+    static let intelligenceID = "_intelligence"
 }
 
 @MainActor
@@ -56,6 +57,7 @@ private struct SettingsView: View {
         NavigationSplitView {
             List(selection: $model.selection) {
                 Label("General", systemImage: "gearshape").tag(SettingsModel.generalID)
+                Label("Intelligence", systemImage: "sparkles").tag(SettingsModel.intelligenceID)
                 Section("Apps") {
                     ForEach(configurableApps, id: \.id) { app in
                         Label(app.name, systemImage: app.iconSystemName).tag(app.id)
@@ -69,6 +71,8 @@ private struct SettingsView: View {
                     if let app = configurableApps.first(where: { $0.id == model.selection }),
                        let view = app.makeSettingsView() {
                         view
+                    } else if model.selection == SettingsModel.intelligenceID {
+                        IntelligenceSettingsView()
                     } else {
                         GeneralSettingsView()
                     }

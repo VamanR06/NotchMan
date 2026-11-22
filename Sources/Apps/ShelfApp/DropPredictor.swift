@@ -82,15 +82,18 @@ enum DropRanking {
         return result
     }
 
-    /// 0…1 from what NotchMan knows itself: where this type went before, how recently the folder was used, and
-    /// whether the file and folder names share a word ("Resume_2026.pdf" → "Resumes").
+    /// 0…1 from what NotchMan knows itself: where this type went before, whether the file and folder names share
+    /// words ("Resume_2026.pdf" → "Resumes"), and how recently the folder was used.
     static func localScore(files: [URL], candidate: DropCandidate, history: DropHistory) -> Double {
         guard !files.isEmpty else { return 0 }
         let historyShare = files.map { history.share(of: $0, in: candidate.url) }.reduce(0, +) / Double(files.count)
         let recency = candidate.recencyRank.map { 1 - Double($0) / Double(RecentFolders.limit) } ?? 0
         let folderWords = words(candidate.url.lastPathComponent)
-        let named = files.contains { !words($0.deletingPathExtension().lastPathComponent).isDisjoint(with: folderWords) }
-        return 0.5 * historyShare + 0.3 * recency + 0.2 * (named ? 1 : 0)
+        // Share of the folder's words the file's name has ("Offer Letter" fits "Offer Letters" better than "Cover Letters").
+        let named = folderWords.isEmpty ? 0 : files.map {
+            Double(words($0.deletingPathExtension().lastPathComponent).intersection(folderWords).count) / Double(folderWords.count)
+        }.max() ?? 0
+        return 0.45 * historyShare + 0.35 * named + 0.2 * recency
     }
 
     /// Lowercased words of 3+ letters, without a plural "s" ("Resumes" and "resume" match).

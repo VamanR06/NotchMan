@@ -354,6 +354,12 @@ Apps opt in with `.askable { "description" }` or `AskMenuItems` inside an existi
 
 Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens on the Shelf.
 
+- **Suggested folders:** as a drag reaches the notch, the three folders it most likely belongs in show as large
+  drop targets above the rest — from where you've put files of that type before, folder names that match the
+  file's, and recent folders, refined by [Jev](#intelligence-jev) when it's set up. Select a shelved file to get
+  suggestions for it too, and click one to put it there.
+- **Find and tidy:** with more than four files, a Find field filters the shelf (newest first). Files come off the
+  shelf after a week (Settings → Shelf: a day to a month, or never); the files themselves stay where they are.
 - **Preview:** shelved files and downloads show thumbnails. Click one and press **Space** (or right-click →
   Quick Look) to see it full size; ←/→ step through them.
 - **Keep on the shelf:** drop them in the big area to hold them for later. You can drag them back out anywhere,
@@ -421,7 +427,26 @@ NotchMan runs entirely on your Mac and has no server of its own.
 - **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
   is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
   changed.
+- **Jev is opt-in and redacted.** Nothing goes to TypeSafe until you add an API key (see below).
 - **Logs** go to the unified log under the `com.notchman` subsystem (filter for it in Console.app).
+
+### Intelligence (Jev)
+
+Settings → Intelligence connects [Jev](https://docs.typesafe.ai), TypeSafe's fast decision model, which picks
+the Shelf's suggested folders. Without a key, NotchMan ranks them with its own rules.
+
+- **What's sent:** the dragged files' names, types and rough sizes (never their contents), the folders on offer
+  as `~/…` paths, the app in front and the time of day.
+- **Redacted (the default):** on your Mac first, your name, email and username become `MY_NAME`, `MY_EMAIL` and
+  `MY_USERNAME`. Other people's names, emails, phone numbers, addresses, card and ID numbers, and keys become
+  placeholders like `PERSON_1`. A last check holds back any request that still has something personal in it.
+  **Off** sends nothing; **Full** sends names as they are.
+- **Your identity** (what counts as "you") defaults to your account's name; add your email or nicknames there,
+  and try any text to see how it would be sent.
+- **What was sent** lists the last 50 requests exactly as they left the Mac, kept only while NotchMan runs.
+- **How well it works:** `JEV_API_KEY=… swift test --filter JevDropEval` runs 30 typical drags against the real
+  service and prints how often the right folder comes first / in the top three, with and without Jev, plus the
+  latency.
 
 ## Development
 
