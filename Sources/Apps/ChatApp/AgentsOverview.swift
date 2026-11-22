@@ -34,7 +34,7 @@ struct AgentsOverview: View {
 }
 
 /// A tool call waiting for permission: what it wants, why it might be risky, and the answer buttons.
-private struct ApprovalCard: View {
+struct ApprovalCard: View {
     let app: ChatApp
     let request: ApprovalRequest
 

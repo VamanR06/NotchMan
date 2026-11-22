@@ -743,6 +743,10 @@ public final class ChatApp: NotchApp {
     }
 
     func resolveApproval(_ id: String, _ decision: ApprovalDecision) {
+        // Claude asks in its own terminal then, so show that session's terminal rather than the native view.
+        if decision == .terminal, let session = approvals.first(where: { $0.id == id })?.sessionID {
+            terminals[session]?.showsSession = false
+        }
         approvals.removeAll { $0.id == id }
         approvalWaiters.removeValue(forKey: id)?.resume(returning: decision)
         publishBoard()

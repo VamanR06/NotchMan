@@ -195,10 +195,16 @@ final class AgentTerminal: Identifiable {
     let id: String
     private(set) var agent: ClaudeAgent
     let claude = TerminalSession()
+    /// The session drawn natively (the default view); Claude's terminal runs attached behind it.
+    let transcript: SessionTranscript
+    /// Showing the native session view rather than a terminal.
+    var showsSession = true
     private(set) var shells: [ShellTab] = []
     var selected: Tab = .claude
     /// Claude on top, a shell below.
-    var split = false
+    var split = false {
+        didSet { if split { showsSession = false } }  // splitting is about the terminals
+    }
     /// Share of the split height given to Claude (the shell gets the rest); adjustable by dragging.
     var splitRatio: CGFloat = 0.6
     /// Called when Claude Code switches to its own agent list (← from the session); the app shows NotchMan's
@@ -217,6 +223,7 @@ final class AgentTerminal: Identifiable {
     init(agent: ClaudeAgent) {
         id = agent.id
         self.agent = agent
+        transcript = SessionTranscript(sessionID: agent.id)
         claude.onKey = { [weak self] event in self?.keyPressed(event) ?? false }
         claude.onNewTab = { [weak self] in self?.addShell().session.focusWhenShown() }
     }
@@ -248,6 +255,20 @@ final class AgentTerminal: Identifiable {
 
     func update(_ agent: ClaudeAgent) {
         self.agent = agent
+    }
+
+    /// Types `text` into Claude's input and submits it, as if typed in its terminal. Several lines go in as one paste
+    /// so the line breaks don't submit early.
+    func sendToClaude(_ text: String) {
+        guard isRunning else { return }
+        claude.view.send(data: Self.input(for: text)[...])
+    }
+
+    static func input(for text: String) -> [UInt8] {
+        let body = Array(text.utf8)
+        let pasted = text.contains("\n") ? [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] + body + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
+                                         : body
+        return pasted + [0x0D]
     }
 
     /// Focuses whichever terminal is selected.
@@ -603,7 +624,9 @@ struct AgentTerminalScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-            if terminal.split, let shell = terminal.splitShell {
+            if terminal.showsSession && !terminal.split {
+                AgentSessionView(app: app, terminal: terminal)
+            } else if terminal.split, let shell = terminal.splitShell {
                 // Explicit heights: letting the stack divide the space squeezed the shell to a sliver.
                 GeometryReader { geo in
                     let heights = SplitLayout.heights(total: geo.size.height, ratio: terminal.splitRatio)
@@ -642,11 +665,16 @@ struct AgentTerminalScreen: View {
             .foregroundStyle(.white.opacity(0.7))
             .help("Back to Overview (terminals keep running)")
 
-            Text(terminal.agent.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .frame(maxWidth: 170, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(terminal.transcript.title ?? terminal.agent.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(terminal.agent.project + " · " + Self.status(terminal.agent))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .lineLimit(1)
+            .frame(maxWidth: 170, alignment: .leading)
 
             TerminalTabs(terminal: terminal)
 
@@ -656,6 +684,7 @@ struct AgentTerminalScreen: View {
                        help: terminal.split ? "Show one terminal" : "Split: Claude above a shell") {
                 if terminal.shells.isEmpty { terminal.addShell() }
                 terminal.split.toggle()
+                terminal.showsSession = false
             }
             iconButton("macwindow", help: "Detach here and attach Claude in a new Terminal window") {
                 app.openInTerminalApp(terminal.agent)
@@ -663,6 +692,15 @@ struct AgentTerminalScreen: View {
             iconButton("xmark", help: "Close these terminals (the agent keeps running)") {
                 app.closeTerminal(terminal.id)
             }
+        }
+    }
+
+    static func status(_ agent: ClaudeAgent) -> String {
+        switch agent.phase {
+        case .needsYou: "Needs you"
+        case .working: "Working"
+        case .done: "Done"
+        case .idle: "Idle"
         }
     }
 
@@ -765,11 +803,15 @@ private struct TerminalTabs: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            tab(.claude, title: "Claude", running: terminal.claude.isRunning, closable: nil)
+            sessionTab
+            tab(.claude, title: "Terminal", running: terminal.claude.isRunning, closable: nil)
             ForEach(terminal.shells) { shell in
                 tab(.shell(shell.id), title: "Shell \(shell.number)", running: true, closable: shell.id)
             }
-            Button { terminal.addShell() } label: {
+            Button {
+                terminal.addShell()
+                terminal.showsSession = false
+            } label: {
                 Image(systemName: "plus").font(.system(size: 10, weight: .bold)).frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
@@ -780,10 +822,29 @@ private struct TerminalTabs: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.08)))
     }
 
-    private func tab(_ id: AgentTerminal.Tab, title: String, running: Bool, closable: UUID?) -> some View {
-        let selected = terminal.selected == id
+    /// The native view of the session.
+    private var sessionTab: some View {
+        let selected = terminal.showsSession && !terminal.split
         return HStack(spacing: 4) {
-            Image(systemName: id == .claude ? "sparkle" : "terminal")
+            Image(systemName: "sparkle").font(.system(size: 9)).foregroundStyle(.orange)
+            Text("Session")
+        }
+        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? .white : .white.opacity(0.65))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(selected ? 0.2 : 0)))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            terminal.split = false
+            terminal.showsSession = true
+        }
+    }
+
+    private func tab(_ id: AgentTerminal.Tab, title: String, running: Bool, closable: UUID?) -> some View {
+        let selected = !terminal.showsSession && terminal.selected == id
+        return HStack(spacing: 4) {
+            Image(systemName: "terminal")
                 .font(.system(size: 9))
                 .foregroundStyle(id == .claude ? .orange : .white.opacity(0.6))
             Text(title)
@@ -802,7 +863,10 @@ private struct TerminalTabs: View {
         .padding(.vertical, 3)
         .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(selected ? 0.2 : 0)))
         .contentShape(Rectangle())
-        .onTapGesture { terminal.selected = id }
+        .onTapGesture {
+            terminal.selected = id
+            terminal.showsSession = false
+        }
     }
 }
 

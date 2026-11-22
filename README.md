@@ -263,8 +263,10 @@ deleted (its sessions go back to their project's folder, made afresh if needed).
 button beside the search — say one for a session that works on two projects — then drag sessions onto a folder or
 right-click a session → Move to Folder (Move All to Folder on a folder). A moved session shows its own project's
 name, and Move Back returns it. The last button switches to grouping by status (Needs you, Working, Done and
-Idle). Click a background agent to open an
-interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
+Idle). Click a background agent to open its **Session** view: your prompts, Claude's replies, each tool call as a
+row (click for the command and its output, an edit as a diff, or the eye to preview the file), this session's
+approvals with Allow/Deny, and a box to message it (Return sends; ← in the empty box goes back). The **Terminal**
+tab next to it is the interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** (or ⌘T) opens shells in the
 agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
