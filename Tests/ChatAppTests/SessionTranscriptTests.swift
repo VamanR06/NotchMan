@@ -79,13 +79,22 @@ import Testing
 
 /// What the message box types into Claude's terminal.
 @MainActor @Suite struct SendToClaudeTests {
-    @Test func oneLineIsTypedThenSubmitted() {
-        #expect(AgentTerminal.input(for: "hi") == Array("hi".utf8) + [0x0D])
+    // Return is sent separately, later — in the same burst Claude Code takes it as a pasted line break.
+    @Test func oneLineIsTypedWithoutReturn() {
+        #expect(AgentTerminal.input(for: "hi") == Array("hi".utf8))
     }
 
     @Test func severalLinesGoInAsOnePaste() {
         let bytes = AgentTerminal.input(for: "a\nb")
         #expect(bytes.starts(with: Array("\u{1B}[200~".utf8)))
-        #expect(bytes.suffix(7) == ArraySlice(Array("\u{1B}[201~".utf8) + [0x0D]))
+        #expect(bytes.suffix(6) == ArraySlice(Array("\u{1B}[201~".utf8)))
+    }
+
+    @Test func readsWhatsLeftInClaudesInputBox() {
+        let screen = ["⏺ Done.", "", "────────────", "❯ fix the build", "────────────", "  ? for shortcuts"]
+        #expect(AgentTerminal.promptText(screen) == "fix the build")
+        #expect(AgentTerminal.promptText(["────", "❯ ", "────"]) == nil)
+        #expect(AgentTerminal.submitProbe(for: "fix the build please and then run the tests") == "fix the build please and")
+        #expect(AgentTerminal.submitProbe(for: "a\nb") == nil)
     }
 }

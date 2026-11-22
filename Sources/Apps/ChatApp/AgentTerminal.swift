@@ -259,9 +259,42 @@ final class AgentTerminal: Identifiable {
 
     /// Types `text` into Claude's input and submits it, as if typed in its terminal. Several lines go in as one paste
     /// so the line breaks don't submit early.
+    ///
+    /// Return goes as its own keystroke a moment later: arriving in the same burst as the text, Claude Code takes it
+    /// as part of a paste and puts a line break in the box instead of submitting. If the text is still sitting in
+    /// the box after that, Return is pressed once more.
     func sendToClaude(_ text: String) {
         guard isRunning else { return }
         claude.view.send(data: Self.input(for: text)[...])
+        let probe = Self.submitProbe(for: text)
+        submitting?.cancel()
+        submitting = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self, !Task.isCancelled, self.isRunning else { return }
+            self.claude.view.send(data: [0x0D][...])
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, self.isRunning, let probe,
+                  Self.promptText(self.claude.screenLines)?.contains(probe) == true else { return }
+            self.claude.view.send(data: [0x0D][...])
+        }
+    }
+
+    @ObservationIgnored private var submitting: Task<Void, Never>?
+
+    /// What Claude's input box holds right now: the text after `❯` on its last prompt line.
+    static func promptText(_ lines: [String]) -> String? {
+        // The marker may sit inside a box (`│ ❯ text │`).
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        guard let line = lines.last(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }) else { return nil }
+        let text = line.trimmingCharacters(in: frame).dropFirst().trimmingCharacters(in: frame)
+        return text.isEmpty ? nil : text
+    }
+
+    /// A bit of the message to look for in the box afterwards (one line only; a paste shows as "[Pasted text…]").
+    static func submitProbe(for text: String) -> String? {
+        guard !text.contains("\n") else { return nil }
+        let probe = String(text.prefix(24)).trimmingCharacters(in: .whitespaces)
+        return probe.count >= 3 ? probe : nil
     }
 
     /// Claude's input box is on screen (its session view, not its agent list or a dialog).
@@ -272,11 +305,11 @@ final class AgentTerminal: Identifiable {
             && lines.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }
     }
 
+    /// The text as typed (several lines as one bracketed paste), without the Return that submits it.
     static func input(for text: String) -> [UInt8] {
         let body = Array(text.utf8)
-        let pasted = text.contains("\n") ? [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] + body + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
-                                         : body
-        return pasted + [0x0D]
+        return text.contains("\n") ? [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] + body + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
+                                   : body
     }
 
     /// Focuses whichever terminal is selected.
@@ -299,6 +332,18 @@ final class AgentTerminal: Identifiable {
         shells.append(shell)
         selected = .shell(shell.id)
         return shell
+    }
+
+    /// Runs `command` in a shell in the project folder and shows it: a shell tab that's sitting at its prompt if
+    /// there is one, else a new tab (zsh reads it once it's up).
+    func runInShell(_ command: String) {
+        shells.forEach { $0.session.refresh() }
+        let shell = shells.last { $0.session.isRunning && !$0.session.isBusy } ?? addShell()
+        shell.session.view.send(data: Self.input(for: command)[...])
+        shell.session.view.send(data: [0x0D][...])
+        selected = .shell(shell.id)
+        showsSession = false
+        shell.session.focusWhenShown()
     }
 
     func closeShell(_ id: UUID) {
@@ -666,6 +711,13 @@ struct AgentTerminalScreen: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            Button { app.backToOverview() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.7))
+            .help("Back to Overview (terminals keep running)")
+
             VStack(alignment: .leading, spacing: 0) {
                 Text(terminal.transcript.title ?? terminal.agent.name)
                     .font(.system(size: 12, weight: .semibold))

@@ -36,6 +36,9 @@ struct AgentSessionView: View {
             }
         }
         .onDisappear { pasteMonitor.stop() }
+        .environment(\.commandRunner, CommandRunner(
+            run: { [terminal] command in terminal.runInShell(command) },
+            runInTerminal: { [terminal] command in ShellCommand.openInTerminal(command, in: terminal.agent.cwd) }))
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             for provider in providers {
                 if provider.canLoadObject(ofClass: URL.self) {
@@ -56,11 +59,18 @@ struct AgentSessionView: View {
 
     // MARK: - Conversation
 
-    @State private var atBottom = true
+    /// Keeps the newest rows in view as they arrive; let go of when you scroll up, taken up again at the end.
+    @State private var follow = true
     @State private var unseenBelow = false
+    /// The prompt whose part of the conversation is on screen (marked in the rail).
+    @State private var visiblePrompt: String?
 
     private var conversation: some View {
-        ScrollViewReader { proxy in
+        let items = SessionItem.items(transcript.entries)
+        let prompts = items.compactMap { item -> PromptMark? in
+            if case .prompt(let id, let text) = item { PromptMark(id: id, text: text) } else { nil }
+        }
+        return ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if transcript.isLoaded && transcript.entries.isEmpty {
@@ -68,7 +78,7 @@ struct AgentSessionView: View {
                     } else if !transcript.isLoaded {
                         note("Reading the session…")
                     }
-                    ForEach(SessionItem.items(transcript.entries)) { item in
+                    ForEach(items) { item in
                         row(item)
                     }
                     ForEach(approvals) { request in
@@ -83,19 +93,35 @@ struct AgentSessionView: View {
                             }
                         }
                     }
-                    // Seen only when scrolled to the end: new rows follow along then, and leave you be otherwise.
                     Color.clear.frame(height: 1).id(Self.bottom)
-                        .onAppear { atBottom = true; unseenBelow = false }
-                        .onDisappear { atBottom = false }
+                        .onAppear { follow = true; unseenBelow = false }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 10)
+                .scrollTargetLayout()
+                .padding(.leading, 12).padding(.trailing, prompts.count > 1 ? 24 : 12).padding(.vertical, 10)
             }
+            .defaultScrollAnchor(.bottom)
+            .modifier(FollowsBottom(follow: $follow, unseenBelow: $unseenBelow) { proxy.scrollTo(Self.bottom, anchor: .bottom) })
+            .modifier(TracksVisiblePrompt { ids in
+                visiblePrompt = PromptMark.current(visible: ids, in: items) ?? visiblePrompt
+            })
             // A terminal's black, with the faint frame the notch's terminals have.
             .background(RoundedRectangle(cornerRadius: 10).fill(.black))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1)))
+            .overlay(alignment: .trailing) {
+                if prompts.count > 1 {
+                    PromptRail(prompts: prompts, current: follow ? prompts.last?.id : visiblePrompt) { id in
+                        follow = false
+                        visiblePrompt = id
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                    }
+                    .padding(.trailing, 4)
+                }
+            }
             .overlay(alignment: .bottom) {
-                if unseenBelow {
+                if unseenBelow && !follow {
                     Button {
+                        follow = true
+                        unseenBelow = false
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
                     } label: {
                         Label("New messages", systemImage: "arrow.down").font(.system(size: 10.5, weight: .medium))
@@ -107,15 +133,17 @@ struct AgentSessionView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
-            .onAppear { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             .onChange(of: transcript.entries.count) { _, _ in
-                if atBottom {
-                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+                if follow {
+                    proxy.scrollTo(Self.bottom, anchor: .bottom)
                 } else {
                     withAnimation(.easeOut(duration: 0.15)) { unseenBelow = true }
                 }
             }
-            .onChange(of: approvals.count) { _, _ in proxy.scrollTo(Self.bottom, anchor: .bottom) }
+            .onChange(of: approvals.count) { _, _ in
+                follow = true
+                proxy.scrollTo(Self.bottom, anchor: .bottom)
+            }
         }
     }
 
@@ -126,7 +154,7 @@ struct AgentSessionView: View {
     /// left-aligned — but replies drawn as Markdown, so tables and lists read properly.
     @ViewBuilder private func row(_ item: SessionItem) -> some View {
         switch item {
-        case .prompt(_, let text):
+        case .prompt(let id, let text):
             Gutter(mark: "❯", color: .white.opacity(0.55)) {
                 Text(text)
                     .font(Self.mono)
@@ -136,7 +164,7 @@ struct AgentSessionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 5)
-            .background(Rectangle().fill(.white.opacity(0.06)).padding(.horizontal, -12))
+            .background(Rectangle().fill(.white.opacity(visiblePrompt == id && !follow ? 0.1 : 0.06)).padding(.leading, -12).padding(.trailing, -24))
             .padding(.top, 6)
         case .reply(_, let text):
             Gutter(mark: "⏺", color: .white.opacity(0.85)) {
@@ -207,6 +235,149 @@ struct AgentSessionView: View {
         terminal.sendToClaude(ImageAttachments.message(text, images: images))
         draft = ""
         images = []
+    }
+}
+
+/// One of your prompts, as a mark in the rail beside the conversation.
+struct PromptMark: Identifiable, Equatable {
+    let id: String
+    let text: String
+
+    /// First line, collapsed whitespace — what the rail lists.
+    var title: String {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        return line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// The prompt whose answer is on screen: the last prompt at or above the topmost visible row.
+    static func current(visible ids: [String], in items: [SessionItem]) -> String? {
+        let visible = Set(ids)
+        guard let top = items.firstIndex(where: { visible.contains($0.id) }) else { return nil }
+        for item in items[...top].reversed() {
+            if case .prompt(let id, _) = item { return id }
+        }
+        return nil
+    }
+}
+
+/// Your prompts down the side of the conversation: a quiet tick each, the one on screen brighter. Hover to read
+/// them; click one to jump there.
+private struct PromptRail: View {
+    let prompts: [PromptMark]
+    let current: String?
+    let jump: (String) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            ticks.opacity(expanded ? 0 : 1)
+            if expanded { list.transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .trailing))) }
+        }
+        .onHover { hovering in withAnimation(.easeOut(duration: 0.12)) { expanded = hovering } }
+    }
+
+    private var ticks: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            ForEach(prompts.suffix(28)) { prompt in
+                Capsule()
+                    .fill(.white.opacity(prompt.id == current ? 0.85 : 0.22))
+                    .frame(width: prompt.id == current ? 12 : 7, height: 2)
+            }
+        }
+        .padding(.vertical, 8).padding(.horizontal, 5)
+        .contentShape(Rectangle())
+    }
+
+    private var list: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(prompts.enumerated()), id: \.element.id) { index, prompt in
+                    PromptRailRow(number: index + 1, prompt: prompt, isCurrent: prompt.id == current) { jump(prompt.id) }
+                }
+            }
+            .padding(4)
+        }
+        .defaultScrollAnchor(.bottom)
+        .frame(width: 240)
+        .frame(height: min(280, CGFloat(prompts.count) * 23 + 8))  // fits its rows, up to a point
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.11)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1)))
+        .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
+    }
+}
+
+private struct PromptRailRow: View {
+    let number: Int
+    let prompt: PromptMark
+    let isCurrent: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text("\(number)").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(.white.opacity(0.3))
+                    .frame(minWidth: 14, alignment: .trailing)
+                Text(prompt.title).font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
+                    .foregroundStyle(.white.opacity(isCurrent ? 1 : 0.75))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(isCurrent ? 0.12 : hovering ? 0.07 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(prompt.text.count > 60 ? String(prompt.text.prefix(400)) : "")
+    }
+}
+
+/// Follows new rows while you're at the end, and stays put once you scroll up (macOS 15's scroll geometry; on 14
+/// the bottom marker coming into view does the same, roughly).
+private struct FollowsBottom: ViewModifier {
+    @Binding var follow: Bool
+    @Binding var unseenBelow: Bool
+    let scrollToBottom: () -> Void
+    @State private var userScrolling = false
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content
+                .onScrollPhaseChange { _, phase in
+                    userScrolling = phase == .interacting || phase == .decelerating || phase == .tracking
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 30
+                } action: { _, atEnd in
+                    if atEnd {
+                        follow = true
+                        unseenBelow = false
+                    } else if userScrolling {
+                        follow = false
+                    }
+                }
+                // Anything that makes the content taller — a new row, a reply growing, a step finishing, rows
+                // being measured as they're laid out — keeps the end in view while following.
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+                    guard new > old + 0.5, follow else { return }
+                    scrollToBottom()
+                }
+        } else {
+            content
+        }
+    }
+}
+
+/// Reports which rows are on screen (macOS 15), for the rail's current prompt.
+private struct TracksVisiblePrompt: ViewModifier {
+    let update: ([String]) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollTargetVisibilityChange(idType: String.self, threshold: 0.2) { ids in update(ids) }
+        } else {
+            content
+        }
     }
 }
 

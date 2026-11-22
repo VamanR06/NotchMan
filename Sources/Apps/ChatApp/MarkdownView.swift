@@ -168,6 +168,8 @@ struct MarkdownDocument: Equatable {
 struct MarkdownView: View {
     let text: String
     var size: CGFloat = 12.5
+    /// Set in a session: commands in the text can be ⌘-clicked to run.
+    @Environment(\.commandRunner) private var runner
 
     var body: some View {
         let document = MarkdownCache.document(for: text)
@@ -178,17 +180,26 @@ struct MarkdownView: View {
         }
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.openURL, OpenURLAction { url in
+            guard let command = ShellCommand.command(from: url) else { return .systemAction }
+            runner?.click(command)
+            return .handled
+        })
+    }
+
+    private func inline(_ text: String) -> AttributedString {
+        Self.inline(text, size: size, commands: runner != nil)
     }
 
     @ViewBuilder private func view(for block: MarkdownDocument.Block) -> some View {
         switch block {
         case .heading(let level, let text):
-            Text(Self.inline(text, size: size))
+            Text(inline(text))
                 .font(.system(size: level == 1 ? size + 3 : level == 2 ? size + 1.5 : size, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.top, level <= 2 ? 4 : 0)
         case .paragraph(let text):
-            Text(Self.inline(text, size: size))
+            Text(inline(text))
                 .font(.system(size: size))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineSpacing(2.5)
@@ -201,7 +212,7 @@ struct MarkdownView: View {
                             .font(.system(size: size, weight: item.marker == "•" ? .bold : .regular).monospacedDigit())
                             .foregroundStyle(item.marker == "☑" ? Color.green : .white.opacity(0.5))
                             .frame(minWidth: 12, alignment: .trailing)
-                        Text(Self.inline(item.text, size: size))
+                        Text(inline(item.text))
                             .font(.system(size: size))
                             .foregroundStyle(.white.opacity(item.marker == "☑" ? 0.55 : 0.9))
                             .lineSpacing(2.5)
@@ -213,7 +224,7 @@ struct MarkdownView: View {
         case .code(let language, let text):
             CodeBlock(language: language, text: text)
         case .quote(let text):
-            Text(Self.inline(text, size: size))
+            Text(inline(text))
                 .font(.system(size: size))
                 .foregroundStyle(.white.opacity(0.65))
                 .padding(.leading, 10)
@@ -226,13 +237,20 @@ struct MarkdownView: View {
     }
 
     /// Bold, italic, links, strikethrough and `code` within a line; code in a monospaced face and a warm tint.
-    static func inline(_ text: String, size: CGFloat) -> AttributedString {
+    /// With `commands`, code that reads as a shell command becomes a `notchman-run:` link (⌘-click runs it).
+    static func inline(_ text: String, size: CGFloat, commands: Bool = false) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         var string = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
         for run in string.runs {
             if run.inlinePresentationIntent?.contains(.code) == true {
                 string[run.range].font = .system(size: size - 0.5, design: .monospaced)
                 string[run.range].foregroundColor = Color(red: 1, green: 0.78, blue: 0.55)
+                if commands, let command = ShellCommand.inline(String(string[run.range].characters)),
+                   let link = ShellCommand.link(for: command) {
+                    string[run.range].link = link
+                    string[run.range].underlineStyle = Text.LineStyle(pattern: .dot, color: Color(red: 1, green: 0.78, blue: 0.55).opacity(0.5))
+                }
+                continue
             }
             if run.link != nil {
                 string[run.range].foregroundColor = .accentColor
@@ -243,17 +261,31 @@ struct MarkdownView: View {
 }
 
 /// A fenced code block: monospaced, scrolls sideways instead of wrapping, with its language and a copy button.
+/// Shell commands in a session also get Run (⌘-click the block does the same; ⌥ runs them in Terminal).
 private struct CodeBlock: View {
     let language: String?
     let text: String
     @State private var copied = false
     @State private var hovering = false
+    @Environment(\.commandRunner) private var runner
+
+    private var command: String? { runner == nil ? nil : ShellCommand.block(text, language: language) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 Text(language ?? "code").font(.system(size: 9.5, weight: .medium)).foregroundStyle(.white.opacity(0.4))
                 Spacer()
+                if let command, let runner {
+                    Button {
+                        if NSEvent.modifierFlags.contains(.option) { runner.runInTerminal(command) } else { runner.run(command) }
+                    } label: {
+                        Label("Run", systemImage: "play.fill").font(.system(size: 9.5))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(hovering ? 0.7 : 0.35))
+                    .help("Run in a shell in the project (⌥-click: in Terminal) — or ⌘-click the block")
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
@@ -279,6 +311,9 @@ private struct CodeBlock: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.06)))
         .onHover { hovering = $0 }
+        .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
+            if let command, let runner { runner.click(command) }
+        })
     }
 }
 
