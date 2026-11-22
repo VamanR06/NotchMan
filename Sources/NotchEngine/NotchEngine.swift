@@ -30,8 +30,6 @@ public final class NotchEngine {
     static let log = Logger(subsystem: "com.notchman", category: "engine")
     /// One command bar, shown on whichever notch opened it.
     let commandBar = CommandBarModel()
-    /// ⌥Space (the hotkey) opens the notch with the command bar ready to type in.
-    static let commandBarOnHotKeyKey = "commandBarOnHotKey"
     private var settings: SettingsWindowController
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
@@ -392,18 +390,38 @@ public final class NotchEngine {
     // MARK: - Keyboard
 
     /// The global hotkey opens the notch on the cursor's screen with the keyboard, or closes it again.
+    /// The hotkey is the command bar's, like Spotlight: it opens the notch with the bar (or adds the bar to a notch
+    /// you hovered open), and pressed again closes the bar — and the notch too, if the hotkey opened it.
     private func toggleFromHotKey() {
         guard let model = attentionTarget, let notch = notches.values.first(where: { $0.model === model }) else { return }
-        if model.state == .expanded && model.keyboardHeld {
-            closeFromKeyboard(notch)
-            return
+        switch Self.hotKeyAction(state: model.state, barShown: model.isCommandBarShown) {
+        case .close:
+            closeCommandBar(on: model)
+        case .addBar:
+            notch.panel.makeKey()
+            openCommandBar(on: model)
+        case .open:
+            model.expand()
+            model.barOpenedNotch = true
+            NotchFocus.activateForTyping()
+            notch.panel.makeKey()
+            notch.panel.makeFirstResponder(notch.panel.contentView)
+            openCommandBar(on: model)
         }
-        model.keyboardHeld = true
-        model.expand()
-        NotchFocus.activateForTyping()
-        notch.panel.makeKey()
-        notch.panel.makeFirstResponder(notch.panel.contentView)
-        if UserDefaults.standard.object(forKey: Self.commandBarOnHotKeyKey) as? Bool ?? true { openCommandBar(on: model) }
+    }
+
+    enum HotKeyAction: Equatable {
+        /// Open the notch with the bar.
+        case open
+        /// The notch is open (hovered): show the bar in it.
+        case addBar
+        /// Close the bar (and the notch, if the hotkey opened it).
+        case close
+    }
+
+    static func hotKeyAction(state: NotchViewModel.State, barShown: Bool) -> HotKeyAction {
+        if state == .collapsed { return .open }
+        return barShown ? .close : .addBar
     }
 
     // MARK: - Opening to what's relevant
@@ -433,11 +451,18 @@ public final class NotchEngine {
     }
 
     /// Esc in an empty bar: back to the app underneath, with the keyboard.
+    /// Esc in an empty bar, or the hotkey again: if the hotkey opened the notch just for the bar, close the notch;
+    /// else go back to the app underneath, with the keyboard.
     func closeCommandBar(on model: NotchViewModel) {
-        withAnimation(.easeOut(duration: 0.12)) { model.isCommandBarShown = false }
-        if let panel = notches.values.first(where: { $0.model === model })?.panel {
-            panel.makeFirstResponder(panel.contentView)
+        guard let notch = notches.values.first(where: { $0.model === model }) else { return }
+        if model.barOpenedNotch {
+            closeFromKeyboard(notch)
+            return
         }
+        withAnimation(.easeOut(duration: 0.12)) { model.isCommandBarShown = false }
+        // Back to an ordinary hover: moving away closes the notch again.
+        model.keyboardHeld = false
+        notch.panel.makeFirstResponder(notch.panel.contentView)
     }
 
     /// Everything the apps offer for `query`, plus each app itself (to switch to it).

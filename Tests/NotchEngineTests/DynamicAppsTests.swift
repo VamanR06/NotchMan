@@ -43,3 +43,22 @@ private final class PlainApp: NotchApp {
         #expect(model.selectedAppID == "today")
     }
 }
+
+/// ⌥Space is the command bar's shortcut, like Spotlight.
+@MainActor @Suite struct HotKeyTests {
+    @Test func theHotKeyOpensAddsOrClosesTheBar() {
+        #expect(NotchEngine.hotKeyAction(state: .collapsed, barShown: false) == .open)
+        #expect(NotchEngine.hotKeyAction(state: .expanded, barShown: false) == .addBar, "hovered open: show the bar")
+        #expect(NotchEngine.hotKeyAction(state: .expanded, barShown: true) == .close)
+    }
+
+    @Test func closingTheNotchForgetsWhoOpenedIt() {
+        let geometry = NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                                     notchSize: CGSize(width: 185, height: 32), centerX: 756, hasNotch: true)
+        let model = NotchViewModel(apps: [PlainApp("today")], geometry: geometry)
+        model.expand()
+        model.barOpenedNotch = true
+        model.collapse()
+        #expect(!model.barOpenedNotch)
+    }
+}

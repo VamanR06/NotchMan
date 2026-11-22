@@ -108,12 +108,13 @@ feature needs them:
 
 ## Keyboard
 
-Press **⌥Space** (change it in Settings → General) from any app to open the notch with the keyboard. Then
-**⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the selection, **⌘Return** runs its second
-action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
-closes the notch. Text fields, terminals and chats keep their keys while you type in them.
+Hover the notch and it opens ready to type. Then **⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the
+selection, **⌘Return** runs its second action (join the meeting, check off the task), **Space** checks off a task,
+and **Esc** closes the notch. Text fields, terminals and chats keep their keys while you type in them.
 
-**Command bar.** ⌥Space opens the notch with a search field ready (or click 🔍 in the top row). Type to find
+**Command bar.** Press **⌥Space** from any app (change it in Settings → General), or click 🔍 in the top row. It
+works like Spotlight: it opens the notch with a search field ready (or adds it to a notch you hovered open), and
+⌥Space again or Esc closes it. Type to find
 shelved files, downloads, folders, Claude Code sessions, approvals, tasks and apps by name; ↑/↓ and Return open one.
 Start with "add", "todo" or "task" to add a task ("add call recruiter fri 3pm"). With [Jev](#intelligence-jev)
 connected you can also say what you want — "move the resume I downloaded to Resumes", "approve the npm test",
@@ -123,7 +124,7 @@ denying a request and checking off a task ask for a second Return. For anything 
 not change anything, and never stops to ask for permission; Esc stops it), **Ask ChatGPT** or **Ask in a Claude
 chat** sends it in that chat's tab, and **Start a Claude Code agent** runs it as a background agent in your latest
 project that asks before every edit and command (approvals come to the notch; asks for a second Return). Esc
-clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
+clears the field, then closes the bar: the notch closes too if ⌥Space opened it, else you're back in the app.
 
 **Opens to what's relevant.** Hovering opens the app that fits the moment instead of the last one: a meeting about
 to start, an approval waiting, the job page your browser is on. With [Jev](#intelligence-jev) connected it weighs

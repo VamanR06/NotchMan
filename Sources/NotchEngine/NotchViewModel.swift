@@ -21,6 +21,8 @@ final class NotchViewModel {
     var isLauncherOpen = false
     /// The command bar is showing over the selected app.
     var isCommandBarShown = false
+    /// The hotkey opened the notch for the bar, so closing the bar closes the notch too.
+    @ObservationIgnored var barOpenedNotch = false
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
@@ -384,6 +386,7 @@ final class NotchViewModel {
         selectionGraceRect = nil
         isLauncherOpen = false
         isCommandBarShown = false
+        barOpenedNotch = false
         openingChoice?.cancel()
         openingChoice = nil
         chosenApp = nil

@@ -89,7 +89,6 @@ private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
     @AppStorage(HotKey.defaultsKey) private var hotKey = HotKey.Preset.optionSpace.rawValue
-    @AppStorage(NotchEngine.commandBarOnHotKeyKey) private var commandBarOnHotKey = true
     @AppStorage(OpeningChooser.enabledKey) private var openToRelevant = true
     @AppStorage(SystemHUDs.volumeKey) private var hudVolume = true
     @AppStorage(SystemHUDs.brightnessKey) private var hudBrightness = true
@@ -120,16 +119,12 @@ private struct GeneralSettingsView: View {
             Picker(selection: $hotKey) {
                 ForEach(HotKey.Preset.allCases) { preset in Text(preset.title).tag(preset.rawValue) }
             } label: {
-                Text("Open the notch with")
-                Text("From any app. Then ⌘1–9 switch apps, ↑/↓ and Return pick in lists, Esc closes.")
+                Text("Command bar")
+                Text("From any app: find files, folders, agents and tasks, or say what to do. Press it again or Esc to close.")
             }
             Toggle(isOn: $openToRelevant) {
                 Text("Open to what's relevant")
                 Text("Hovering opens the app that fits what's going on — a meeting about to start, an approval waiting — instead of the last one. With Jev connected (Settings → Intelligence) it weighs every app's state; without it, only urgent things switch it.")
-            }
-            Toggle(isOn: $commandBarOnHotKey) {
-                Text("Open with the command bar")
-                Text("Type to find files, folders, agents and tasks, or say what to do. Esc goes back to the app.")
             }
             LabeledContent {
                 HStack {
