@@ -60,6 +60,8 @@ public final class ChatApp: NotchApp {
     }
     /// Tool calls waiting for Allow / Deny (from the PermissionRequest hook), oldest first.
     private(set) var approvals: [ApprovalRequest] = []
+    /// Requests whose session was seen waiting on them (so its moving on means they were answered).
+    @ObservationIgnored private var approvalSeenWaiting: Set<String> = []
     /// What each session is doing, from the bridge mod, by session id.
     var sessionActivity: [String: SessionActivity] = [:]
     /// The Claude Code bridge mod is set up (Settings → Agents).
@@ -207,6 +209,7 @@ public final class ChatApp: NotchApp {
         agentMonitor.onEvents = { [weak self] events in self?.handle(events) }
         agentMonitor.onChange = { [weak self] in
             self?.syncFolders()
+            self?.settleAnsweredApprovals()
             self?.publishBoard()
         }
         NotchBoard.shared.insertIntoSession = { [weak self] project, text in
@@ -221,6 +224,8 @@ public final class ChatApp: NotchApp {
         }
         startReceivingSessionSignals()
         bridgeInstalled = ClaudeBridge.isInstalled()
+        // Keep an installed bridge's files current with this version of NotchMan.
+        if bridgeInstalled { try? ClaudeBridge.writeFiles(to: ClaudeBridge.folder) }
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
                let saved = try? JSONDecoder().decode([AskProject].self, from: data) {
@@ -299,9 +304,15 @@ public final class ChatApp: NotchApp {
             if let approval = message.payload["approval"] {
                 switch message.payload["action"] {
                 case "allow": resolveApproval(approval, .allow)
+                case "always": resolveApproval(approval, .always)
                 case "deny": resolveApproval(approval, .deny)
                 default: showingOverview = true
                 }
+                return
+            }
+            if message.payload["action"] == "reply", let id = message.payload["agent"], let text = message.payload["reply"],
+               let agent = agentMonitor.agents.first(where: { $0.id == id }) {
+                reply(to: agent, text)
                 return
             }
             if let opened = message.payload["service"].flatMap(ChatService.init(rawValue:)) {
@@ -425,8 +436,10 @@ public final class ChatApp: NotchApp {
         let title = ChatService.chatTitle(fromPageTitle: pageTitle)
         var payload = ["service": service.rawValue]
         if let url { payload["url"] = url.absoluteString }
-        context?.notify(title: "\(service.name) replied", body: title.isEmpty ? "Your response is ready." : title,
-                        payload: payload)
+        // One per service, replaced by the next and withdrawn once you look at the chat.
+        context?.notify(NotchNotification(id: "reply:" + service.rawValue, title: "\(service.name) replied",
+                                          body: title.isEmpty ? "Your answer is ready." : title, payload: payload,
+                                          thread: service.rawValue))
     }
 
     /// The full conversation link for a page path on `service`, if the path is a conversation.
@@ -682,7 +695,7 @@ public final class ChatApp: NotchApp {
 
     /// Active sessions' folders (for the Shelf's project drop) and agents that need you (for Today).
     func publishBoard() {
-        let active = agentMonitor.agents.filter { $0.phase != .done }
+        let active = (agentMonitor?.agents ?? []).filter { $0.phase != .done }
         var seen = Set<String>()
         // Background agents first, so a folder with both offers typing into the notch terminal.
         let projects = active.sorted { ($0.kind == .background ? 0 : 1) < ($1.kind == .background ? 0 : 1) }
@@ -695,7 +708,7 @@ public final class ChatApp: NotchApp {
                 self?.context?.send(NotchMessage(name: Self.openAgentMessage, payload: ["agent": agent.id]), to: "chat")
             }
         }
-        let agents = agentMonitor.agents
+        let agents = agentMonitor?.agents ?? []
         let needsYou = agents.filter { $0.phase == .needsYou }.map { agent in
             BoardItem(id: "agent:\(agent.id)", kind: .agent, title: agent.name,
                       subtitle: agent.project, tint: .orange, primary: openAction(agent))
@@ -735,12 +748,10 @@ public final class ChatApp: NotchApp {
 
         approvals.append(request)
         publishBoard()
-        let who = agent?.name ?? request.project
-        context?.notify(title: "\(who) wants to use \(request.toolName)",
-                        body: (request.risk.map { "⚠ \($0) · " } ?? "") + request.summary,
-                        payload: ["approval": request.id],
-                        actions: [NotchNotificationAction(id: "allow", title: "Allow"),
-                                  NotchNotificationAction(id: "deny", title: "Deny", isDestructive: true)])
+        // On screen already (the Agents app is open): the card is right there, no need for a notification.
+        if context?.isVisible != true {
+            context?.notify(AgentNotifications.approval(request, agentName: agent?.name))
+        }
         context?.requestAttention(.pulse)
 
         let wait = approvalWait
@@ -756,7 +767,7 @@ public final class ChatApp: NotchApp {
             // Claude Code hung up (interrupted, or its hook timeout passed).
             Task { @MainActor [weak self] in self?.resolveApproval(request.id, .terminal) }
         }
-        return ApprovalHook.output(decision).map(HookServer.Response.json) ?? .empty
+        return ApprovalHook.output(decision, always: request.always).map(HookServer.Response.json) ?? .empty
     }
 
     func resolveApproval(_ id: String, _ decision: ApprovalDecision) {
@@ -765,7 +776,39 @@ public final class ChatApp: NotchApp {
             terminals[session]?.showsSession = false
         }
         approvals.removeAll { $0.id == id }
+        approvalSeenWaiting.remove(id)
         approvalWaiters.removeValue(forKey: id)?.resume(returning: decision)
+        context?.withdrawNotification(id: "approval:" + id)
+        publishBoard()
+    }
+
+    /// Requests answered in the session's own terminal: Claude Code asks there at the same time as here, and its
+    /// answer wins, but nothing tells NotchMan. Once the session has been seen waiting and then moves on (or ends
+    /// its turn), the request was answered: let it go quietly.
+    func settleAnsweredApprovals(now: Date = Date()) {
+        for request in approvals {
+            guard let agent = agentMonitor.agents.first(where: { $0.id == request.sessionID }) else { continue }
+            // The session list refreshes every few seconds, so a fresh request can still see the last turn's "done".
+            let turnEnded = (agent.phase == .done || agent.phase == .idle) && now.timeIntervalSince(request.received) > 5
+            if agent.phase == .needsYou {
+                approvalSeenWaiting.insert(request.id)
+            } else if approvalSeenWaiting.contains(request.id) || turnEnded {
+                settle(request.id)
+            }
+        }
+    }
+
+    /// The bridge saw this session run (or be refused) a tool: a request for it was answered.
+    func settleApprovals(session: String, tool: String) {
+        approvals.filter { $0.sessionID == session && $0.toolName == tool }.forEach { settle($0.id) }
+    }
+
+    /// Takes a request off the notch without answering it (it was answered in the terminal).
+    private func settle(_ id: String) {
+        approvals.removeAll { $0.id == id }
+        approvalSeenWaiting.remove(id)
+        approvalWaiters.removeValue(forKey: id)?.resume(returning: .terminal)
+        context?.withdrawNotification(id: "approval:" + id)
         publishBoard()
     }
 
@@ -813,11 +856,13 @@ public final class ChatApp: NotchApp {
             unseenAgents.insert(event.agent.id)
             guard notifyWhenDone else { continue }
             let agent = event.agent
+            // Claude's last words, so the notification says something; else just the project.
+            let said = SessionTranscript.lastReply(sessionID: agent.id).map(AgentNotifications.firstLine) ?? agent.project
             switch event {
             case .needsYou:
-                context?.notify(title: "\(agent.name) needs you", body: "Claude Code · \(agent.project)", payload: ["agent": agent.id])
+                context?.notify(AgentNotifications.needsYou(agent, said: said))
             case .finished:
-                context?.notify(title: "\(agent.name) finished", body: "Claude Code · \(agent.project)", payload: ["agent": agent.id])
+                context?.notify(AgentNotifications.finished(agent, said: said))
             }
         }
         context?.requestAttention(.pulse)
@@ -834,13 +879,22 @@ public final class ChatApp: NotchApp {
     }
 
     func markOverviewSeen() {
+        unseenAgents.forEach { context?.withdrawNotification(id: "agent:" + $0) }
         unseenAgents.removeAll()
+        publishBoard()
+    }
+
+    /// You looked at this session: it's no longer "ready" or "needs you" on the chip, and its notification goes.
+    func markSeen(_ agent: ClaudeAgent) {
+        unseenAgents.remove(agent.id)
+        context?.withdrawNotification(id: "agent:" + agent.id)
         publishBoard()
     }
 
     /// Background agents open attached in a terminal (in the notch or Terminal, per settings); interactive
     /// ones open their folder in the editor.
     func open(_ agent: ClaudeAgent) {
+        markSeen(agent)
         guard agent.kind == .background else {
             editor.open(agent.cwd)
             return
@@ -858,6 +912,15 @@ public final class ChatApp: NotchApp {
     }
 
     func openInNotch(_ agent: ClaudeAgent) {
+        let terminal = workspace(for: agent)
+        showingOverview = true
+        showingShells = false
+        shownTerminalID = agent.id
+        if !terminal.isRunning { reattach(terminal) }
+    }
+
+    /// The session's workspace in the notch, made if needed (not shown).
+    private func workspace(for agent: ClaudeAgent) -> AgentTerminal {
         let terminal = terminals[agent.id] ?? AgentTerminal(agent: agent)
         terminals[agent.id] = terminal
         // ← out of the session goes to NotchMan's Overview, not Claude Code's own agent list. The terminal stays
@@ -865,10 +928,26 @@ public final class ChatApp: NotchApp {
         terminal.onAgentList = { [weak self] in self?.backToOverview() }
         terminal.onClick = { [weak self] in self?.terminalClicked() }
         terminal.update(agent)
-        showingOverview = true
-        showingShells = false
-        shownTerminalID = agent.id
+        return terminal
+    }
+
+    /// Replies to a session from its notification: attaches in the background if needed, waits for Claude's prompt,
+    /// and types the reply in.
+    func reply(to agent: ClaudeAgent, _ text: String) {
+        let terminal = workspace(for: agent)
         if !terminal.isRunning { reattach(terminal) }
+        Task {
+            for _ in 0..<50 where !terminal.isAtPrompt { try? await Task.sleep(for: .milliseconds(150)) }
+            guard terminal.isAtPrompt else {
+                context?.showTransient(NotchTransient(id: "reply", systemImage: "exclamationmark.triangle.fill",
+                                                      text: "Couldn't reply", tint: .orange, duration: 2.5))
+                return
+            }
+            terminal.sendToClaude(text)
+            markSeen(agent)
+            context?.showTransient(NotchTransient(id: "reply", systemImage: "arrowshape.turn.up.left.fill", text: "Sent",
+                                                  tint: .green, duration: 2))
+        }
     }
 
     func reattach(_ terminal: AgentTerminal) {
@@ -1088,6 +1167,7 @@ public final class ChatApp: NotchApp {
 
     /// Called by the view when a service is on screen.
     func markSeen(_ service: ChatService) {
+        if unread.contains(service) { context?.withdrawNotification(id: "reply:" + service.rawValue) }
         unread.remove(service)
         if let id = pageURLs[service].flatMap({ service.conversation(at: $0)?.id }) {
             unreadChats.remove("\(service.rawValue):\(id)")
@@ -1141,9 +1221,9 @@ public final class ChatApp: NotchApp {
     /// Collapsed-notch chip for all AI activity; outranks music so it isn't hidden while something plays.
     public var activity: NotchActivity? {
         if let first = approvals.first {
-            let label = approvals.count == 1 ? "Allow \(first.toolName)?" : "\(approvals.count) to allow"
+            let label = approvals.count == 1 ? first.action : "\(approvals.count) waiting"
             return NotchActivity(priority: 25) {
-                NotchChip(label, systemImage: "hand.raised.fill", tint: first.risk == nil ? .orange : .red)
+                NotchChip(label, systemImage: "hand.raised.fill", tint: approvals.contains { $0.risk != nil } ? .red : .orange)
             }
         }
         guard let summary = currentSummary else { return nil }

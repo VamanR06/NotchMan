@@ -88,6 +88,7 @@ extension ChatApp {
     }
 
     func receive(_ signal: SessionSignal) {
+        if signal.event == "tool.done", let tool = signal.tool { settleApprovals(session: signal.session, tool: tool) }
         sessionActivity[signal.session] = signal.apply(to: sessionActivity[signal.session])
         // Files sessions just changed, for the Shelf and the command bar.
         let changed = sessionActivity.values.filter { $0.isFresh() }.sorted { $0.updated > $1.updated }

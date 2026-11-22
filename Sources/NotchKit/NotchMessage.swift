@@ -17,11 +17,49 @@ public struct NotchNotificationAction: Sendable, Hashable {
     public let id: String
     public let title: String
     public let isDestructive: Bool
+    /// Makes it a reply field with this placeholder; the typed text arrives under `"reply"` in the payload.
+    public let textInput: String?
 
-    public init(id: String, title: String, isDestructive: Bool = false) {
+    public init(id: String, title: String, isDestructive: Bool = false, textInput: String? = nil) {
         self.id = id
         self.title = title
         self.isDestructive = isDestructive
+        self.textInput = textInput
+    }
+}
+
+/// A macOS notification from a notch app: short, replaceable, and withdrawn once it's been dealt with.
+public struct NotchNotification: Sendable {
+    public enum Urgency: Sendable {
+        /// Delivered silently (something finished).
+        case quiet
+        /// With a sound.
+        case normal
+        /// With a sound, and through Focus where allowed (someone is waiting on you).
+        case urgent
+    }
+
+    /// A later notification with the same id replaces this one, and `withdrawNotification(id:)` removes it.
+    public var id: String?
+    public var title: String
+    public var subtitle: String?
+    public var body: String
+    public var payload: [String: String]
+    public var actions: [NotchNotificationAction]
+    public var urgency: Urgency
+    /// Groups notifications in Notification Center (e.g. one thread per session).
+    public var thread: String?
+
+    public init(id: String? = nil, title: String, subtitle: String? = nil, body: String = "", payload: [String: String] = [:],
+                actions: [NotchNotificationAction] = [], urgency: Urgency = .normal, thread: String? = nil) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.body = body
+        self.payload = payload
+        self.actions = actions
+        self.urgency = urgency
+        self.thread = thread
     }
 }
 

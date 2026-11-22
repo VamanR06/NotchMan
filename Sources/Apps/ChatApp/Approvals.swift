@@ -12,8 +12,32 @@ struct ApprovalRequest: Identifiable, Equatable {
     /// Why it deserves a second look, when an explicit rule matches (never a reason to act on its own).
     let risk: String?
     let received: Date
+    /// "Don't ask again" for this kind of call, as the terminal offers it, when there's one.
+    var always: AlwaysAllow?
 
     var project: String { (cwd as NSString).lastPathComponent }
+
+    /// What it wants to do, in a couple of words: "Run command", "Edit file".
+    var action: String { Self.action(for: toolName) }
+
+    static func action(for tool: String) -> String {
+        switch tool {
+        case "Bash": return "Run command"
+        case "Edit", "MultiEdit", "NotebookEdit": return "Edit file"
+        case "Write": return "Write file"
+        case "Read": return "Read file"
+        case "WebFetch": return "Fetch page"
+        case "WebSearch": return "Search the web"
+        case "Agent", "Task": return "Start subagent"
+        default:
+            // mcp__github__create_issue → "Create issue"
+            guard tool.hasPrefix("mcp__"), let name = tool.split(separator: "_", omittingEmptySubsequences: true).last else {
+                return tool
+            }
+            let words = tool.components(separatedBy: "__").last?.replacingOccurrences(of: "_", with: " ") ?? String(name)
+            return words.prefix(1).uppercased() + words.dropFirst()
+        }
+    }
 
     /// Decodes the hook's JSON input (session_id, cwd, tool_name, tool_input, tool_use_id).
     static func decode(_ data: Data, now: Date = Date()) -> ApprovalRequest? {
@@ -24,7 +48,9 @@ struct ApprovalRequest: Identifiable, Equatable {
         let cwd = json["cwd"] as? String ?? NSHomeDirectory()
         return ApprovalRequest(id: json["tool_use_id"] as? String ?? UUID().uuidString, sessionID: session, cwd: cwd,
                                toolName: tool, summary: summarize(tool: tool, input: input, cwd: cwd),
-                               risk: risk(tool: tool, input: input, cwd: cwd), received: now)
+                               risk: risk(tool: tool, input: input, cwd: cwd), received: now,
+                               always: AlwaysAllow.from(suggestions: json["permission_suggestions"] as? [[String: Any]] ?? [],
+                                                        tool: tool))
     }
 
     static func summarize(tool: String, input: [String: Any], cwd: String) -> String {
@@ -73,8 +99,48 @@ struct ApprovalRequest: Identifiable, Equatable {
     }
 }
 
+/// Allowing a call and the ones like it from now on: one of Claude Code's own suggestions for the request (an allow
+/// rule such as `Bash(npm test)`), sent back as the hook's `updatedPermissions`. File edits usually come without one;
+/// for those it's "accept edits for the rest of this session", as the terminal offers.
+struct AlwaysAllow: Equatable {
+    /// "Always allow “npm test”", "Accept edits this session".
+    let label: String
+    /// The permission update entry, as JSON.
+    let update: String
+
+    var entry: [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: Data(update.utf8))) as? [String: Any]
+    }
+
+    static let editTools: Set<String> = ["Edit", "MultiEdit", "Write", "NotebookEdit"]
+
+    static func from(suggestions: [[String: Any]], tool: String) -> AlwaysAllow? {
+        if let rule = suggestions.first(where: { $0["type"] as? String == "addRules" && $0["behavior"] as? String == "allow" }),
+           let rules = rule["rules"] as? [[String: Any]], let first = rules.first {
+            let content = first["ruleContent"] as? String
+            let label = content.map { "Always allow “\($0.count > 40 ? String($0.prefix(40)) + "…" : $0)”" }
+                ?? "Always allow \(ApprovalRequest.action(for: first["toolName"] as? String ?? tool).lowercased())"
+            return make(label, rule)
+        }
+        if let mode = suggestions.first(where: { $0["type"] as? String == "setMode" }), let name = mode["mode"] as? String {
+            return make(name == "acceptEdits" ? "Accept edits this session" : "Switch to \(name) mode", mode)
+        }
+        if editTools.contains(tool) {
+            return make("Accept edits this session", ["type": "setMode", "mode": "acceptEdits", "destination": "session"])
+        }
+        return nil
+    }
+
+    private static func make(_ label: String, _ entry: [String: Any]) -> AlwaysAllow? {
+        guard let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) else { return nil }
+        return AlwaysAllow(label: label, update: String(decoding: data, as: UTF8.self))
+    }
+}
+
 enum ApprovalDecision: Equatable {
     case allow, deny
+    /// Allow, and don't ask again for calls like it (`AlwaysAllow`).
+    case always
     /// No decision: Claude Code asks in its terminal as usual.
     case terminal
 }
@@ -85,15 +151,16 @@ enum ApprovalHook {
     static var settingsFile: URL { URL(fileURLWithPath: NSHomeDirectory()).appending(path: ".claude/settings.json") }
 
     /// The hook's JSON answer, or nil for no decision.
-    static func output(_ decision: ApprovalDecision) -> [String: Any]? {
+    static func output(_ decision: ApprovalDecision, always: AlwaysAllow? = nil) -> [String: Any]? {
         let behavior: String
         switch decision {
-        case .allow: behavior = "allow"
+        case .allow, .always: behavior = "allow"
         case .deny: behavior = "deny"
         case .terminal: return nil
         }
         var body: [String: Any] = ["behavior": behavior]
         if decision == .deny { body["message"] = "Denied from NotchMan" }
+        if decision == .always, let entry = always?.entry { body["updatedPermissions"] = [entry] }
         return ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": body]]
     }
 

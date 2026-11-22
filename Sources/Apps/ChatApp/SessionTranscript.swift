@@ -217,6 +217,22 @@ final class SessionTranscript {
         isLoaded = true
     }
 
+    /// Claude's last reply in a session (read from the end of its transcript), for notifications.
+    static func lastReply(sessionID: String, directory: URL = UsageScanner.projectsDirectory) -> String? {
+        guard let file = find(sessionID: sessionID, in: directory), let handle = try? FileHandle(forReadingFrom: file) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 300_000 ? size - 300_000 : 0)
+        var parser = TranscriptParser()
+        parser.feed((try? handle.readToEnd()) ?? Data())  // a cut-off first line just doesn't parse
+        for entry in parser.entries.reversed() {
+            if case .reply(let text) = entry.kind { return text }
+        }
+        return nil
+    }
+
     /// `<projects>/<any project>/<session id>.jsonl`.
     static func find(sessionID: String, in directory: URL) -> URL? {
         let name = sessionID + ".jsonl"

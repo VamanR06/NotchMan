@@ -110,9 +110,8 @@ public final class NotchEngine {
             isVisible: { [weak self] in
                 self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
             },
-            notify: { [weak self] title, body, payload, actions in
-                self?.notifications?.post(appID: appID, title: title, body: body, payload: payload, actions: actions)
-            },
+            notify: { [weak self] notification in self?.notifications?.post(appID: appID, notification) },
+            withdrawNotification: { [weak self] id in self?.notifications?.withdraw(appID: appID, id: id) },
             holdOpen: { [weak self] hold in
                 self?.notches.values.forEach { notch in
                     if hold { notch.model.heldApps.insert(appID) } else { notch.model.heldApps.remove(appID) }

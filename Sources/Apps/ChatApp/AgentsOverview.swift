@@ -61,6 +61,10 @@ struct ApprovalCard: View {
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {
                     Button("Deny") { app.resolveApproval(request.id, .deny) }
+                    if let always = request.always {
+                        Button("Always") { app.resolveApproval(request.id, .always) }
+                            .help(always.label)
+                    }
                     Button("Allow") { app.resolveApproval(request.id, .allow) }
                         .keyboardShortcut(.defaultAction)
                 }

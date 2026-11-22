@@ -313,17 +313,27 @@ into the new folder. The terminals keep running when you go back to the Overview
 Right-click a project's folder or a session → **New Agent Here…** to open it with that project already picked.
 Pick its mode first: **Plan** (the default; it plans and changes nothing until you approve), **Ask first**,
 **Accept edits** or **Auto**. The last mode you used is remembered. Return starts it, ⌥Return adds a line. You're notified when an agent needs you or
-finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
+finishes, and one notch chip summarizes everything (needs you > working > ready). Opening a session clears its
+"ready" or "needs you". Settings → Agents.
+
+**Notifications** are short: who, and what Claude last said ("fix-build finished — All 42 tests pass."). There's one
+per session: a later one replaces it, and it's withdrawn once you've opened the session. Finished agents arrive
+quietly, and **Reply** answers right from the notification (it attaches in the background and types your reply in).
+Chat replies are one per service and go away once you look at the chat.
 
 **Approvals in the notch:** in Settings → Agents → Approvals, click **Install Approval Hook**. When a background
 agent wants permission for a tool (a command, an edit, a fetch), you can answer from:
-- the chip, which shows "Allow Bash?"
-- the card at the top of the Overview, with the command or file and **Allow**, **Deny** or **Ask in terminal**
+- the chip, which says what it wants in plain words ("Run command", "Edit file", "3 waiting")
+- the card at the top of the Overview, with the command or file and **Allow**, **Always**, **Deny** or **Ask in
+  terminal**
 - the Today app
-- the notification's Allow/Deny buttons
+- the notification's **Allow**, **Always** and **Deny** buttons
 
-Claude Code waits for NotchMan before showing its own prompt. If you don't answer within the wait (1 minute by
-default), or NotchMan isn't running, the terminal asks as usual. Interactive sessions skip the notch unless you
+**Always** is the terminal's "don't ask again": it allows the call and saves the rule Claude Code suggests for it
+(such as `Bash(npm test)`), or for file edits accepts edits for the rest of the session. Claude Code asks in its
+terminal at the same time; if you answer there, NotchMan notices (the session moves on, or with the bridge the tool
+runs) and the chip and notification go away. If you don't answer within the wait (1 minute by default), or NotchMan
+isn't running, the terminal's question is the only one. Interactive sessions skip the notch unless you
 turn that on. Commands matching risky patterns (`rm -rf`, `sudo`, force-push, `curl … | sh`, writes outside the
 project) are marked red, and nothing is ever allowed automatically.
 

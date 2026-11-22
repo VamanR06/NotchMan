@@ -79,7 +79,11 @@ enum ClaudeBridge {
               command: clip(e.command, 200),
               description: clip(e.description, 200),
             })
-            return next(e)
+            // Waits for the permission check and the tool; then NotchMan knows any request for it was answered
+            // (e.g. in the terminal). The result goes back to Claude unchanged.
+            const result = await next(e)
+            send($, { event: 'tool.done', tool: e.tool })
+            return result
           })
 
           on('turn.complete', async ($, e, next) => {

@@ -264,6 +264,14 @@ final class AgentTerminal: Identifiable {
         claude.view.send(data: Self.input(for: text)[...])
     }
 
+    /// Claude's input box is on screen (its session view, not its agent list or a dialog).
+    var isAtPrompt: Bool {
+        guard isRunning else { return false }
+        let lines = claude.screenLines
+        return !Self.isClaudeAgentList(lines.joined(separator: "\n"))
+            && lines.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }
+    }
+
     static func input(for text: String) -> [UInt8] {
         let body = Array(text.utf8)
         let pasted = text.contains("\n") ? [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] + body + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]

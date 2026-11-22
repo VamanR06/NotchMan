@@ -15,7 +15,8 @@ public final class NotchContext {
     private let openSettingsHandler: () -> Void
     private let sendHandler: (NotchMessage, String, Bool) -> Void
     private let visibleHandler: () -> Bool
-    private let notifyHandler: (String, String, [String: String], [NotchNotificationAction]) -> Void
+    private let notifyHandler: (NotchNotification) -> Void
+    private let withdrawHandler: (String) -> Void
     private let holdHandler: (Bool) -> Void
     private let transientHandler: (NotchTransient) -> Void
 
@@ -25,7 +26,8 @@ public final class NotchContext {
         openSettings: @escaping () -> Void,
         send: @escaping (NotchMessage, String, Bool) -> Void = { _, _, _ in },
         isVisible: @escaping () -> Bool = { false },
-        notify: @escaping (String, String, [String: String], [NotchNotificationAction]) -> Void = { _, _, _, _ in },
+        notify: @escaping (NotchNotification) -> Void = { _ in },
+        withdrawNotification: @escaping (String) -> Void = { _ in },
         holdOpen: @escaping (Bool) -> Void = { _ in },
         transient: @escaping (NotchTransient) -> Void = { _ in }
     ) {
@@ -38,6 +40,7 @@ public final class NotchContext {
         self.sendHandler = send
         self.visibleHandler = isVisible
         self.notifyHandler = notify
+        self.withdrawHandler = withdrawNotification
         self.holdHandler = holdOpen
         self.transientHandler = transient
     }
@@ -55,7 +58,17 @@ public final class NotchContext {
     /// the notch and calls `receive(_:)` with `NotchMessage.notificationOpened` carrying `payload`. Choosing one of
     /// `actions` instead delivers the same message in the background with the action's id under `"action"`.
     public func notify(title: String, body: String, payload: [String: String] = [:], actions: [NotchNotificationAction] = []) {
-        notifyHandler(title, body, payload, actions)
+        notifyHandler(NotchNotification(title: title, body: body, payload: payload, actions: actions))
+    }
+
+    /// Posts `notification`, replacing an earlier one with the same id.
+    public func notify(_ notification: NotchNotification) {
+        notifyHandler(notification)
+    }
+
+    /// Removes this app's notification with `id` from Notification Center (it was dealt with elsewhere).
+    public func withdrawNotification(id: String) {
+        withdrawHandler(id)
     }
 
     /// Delivers `message` to the app with id `appID`. With `reveal` (the default) that app is brought up in the

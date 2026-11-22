@@ -516,8 +516,10 @@ public final class ShelfApp: NotchApp {
             context?.requestAttention(.pulse)
             // Long ones also notify, since you've probably looked away.
             if took > 10 {
-                context?.notify(title: ok ? "✓ \(title)" : "✗ \(title)",
-                                body: ok ? "Finished in \(Int(took))s" : "Exited with status \(exitCode ?? 1)")
+                // A success arrives quietly; a failure makes a sound.
+                context?.notify(NotchNotification(id: "command:\(id)", title: ok ? "✓ \(title)" : "✗ \(title)",
+                                                  body: ok ? "Finished in \(Int(took))s" : "Failed (exit \(exitCode ?? 1))",
+                                                  urgency: ok ? .quiet : .normal))
             }
         default:
             break
