@@ -23,9 +23,9 @@ struct AgentSessionView: View {
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
-    /// Working, by Claude's own spinner in its attached terminal when that's been seen (it's there only while a turn
-    /// runs, and is current to the moment); else by what `claude agents` last said, which can lag by seconds.
-    private var isWorking: Bool { screenBusy ?? agentBusy }
+    /// Working, by the session file (a turn is open until Claude's last message of it lands), else by Claude's
+    /// spinner in its attached terminal, else by what `claude agents` last said — which can stay "busy" after a turn.
+    private var isWorking: Bool { transcript.turnOpen ?? screenBusy ?? agentBusy }
     private var agentBusy: Bool { terminal.agent.status == "busy" || terminal.agent.phase == .working }
 
     var body: some View {

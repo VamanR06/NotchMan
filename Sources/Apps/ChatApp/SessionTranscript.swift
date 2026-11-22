@@ -53,6 +53,9 @@ struct TranscriptParser {
     private(set) var entries: [TranscriptEntry] = []
     /// Claude Code's own title for the session, when it has made one.
     private(set) var title: String?
+    /// Whether Claude is mid-turn, as the file says: a prompt opens a turn, and Claude's last message of it
+    /// (`stop_reason: end_turn`, then a `turn_duration` line) closes it. Nil until the file shows either.
+    private(set) var turnOpen: Bool?
     private var partial = Data()
     private var toolIndex: [String: Int] = [:]
     private var seen = Set<String>()
@@ -74,13 +77,26 @@ struct TranscriptParser {
             title = aiTitle
             return
         }
+        if type == "system", line["subtype"] as? String == "turn_duration" {
+            turnOpen = false
+            return
+        }
         // Subagents' own conversations and Claude Code's bookkeeping messages aren't part of the session as you see it.
         guard type == "user" || type == "assistant", line["isSidechain"] as? Bool != true, line["isMeta"] as? Bool != true,
               let message = line["message"] as? [String: Any] else { return }
         let uuid = line["uuid"] as? String ?? UUID().uuidString
         let time = (line["timestamp"] as? String).flatMap(UsageScanner.parseDate)
+        if type == "assistant", let stop = message["stop_reason"] as? String {
+            turnOpen = stop == "tool_use"  // end_turn, stop_sequence, max_tokens… end it
+        }
         if let text = message["content"] as? String {
-            if type == "user", let prompt = Self.prompt(text) { append(id: uuid, time: time, .prompt(prompt)) }
+            if type == "user" {
+                if text.hasPrefix("[Request interrupted") { turnOpen = false }
+                if let prompt = Self.prompt(text) {
+                    append(id: uuid, time: time, .prompt(prompt))
+                    turnOpen = true
+                }
+            }
             return
         }
         guard let blocks = message["content"] as? [[String: Any]] else { return }
@@ -92,8 +108,11 @@ struct TranscriptParser {
                 if type == "assistant" {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { append(id: id, time: time, .reply(trimmed)) }
+                } else if text.hasPrefix("[Request interrupted") {
+                    turnOpen = false
                 } else if let prompt = Self.prompt(text) {
                     append(id: id, time: time, .prompt(prompt))
+                    turnOpen = true
                 }
             case "tool_use":
                 guard let toolID = block["id"] as? String, let name = block["name"] as? String else { continue }
@@ -178,6 +197,8 @@ struct TranscriptParser {
 final class SessionTranscript {
     private(set) var entries: [TranscriptEntry] = []
     private(set) var title: String?
+    /// Claude is mid-turn, per the file (nil until it says); see `TranscriptParser.turnOpen`.
+    private(set) var turnOpen: Bool?
     /// False until the transcript file is found.
     private(set) var isLoaded = false
 
@@ -214,6 +235,7 @@ final class SessionTranscript {
         parser.feed(data)
         if parser.entries != entries { entries = parser.entries }
         if parser.title != title { title = parser.title }
+        if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
         isLoaded = true
     }
 

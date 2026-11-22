@@ -24,6 +24,25 @@ import Testing
         return parser
     }
 
+    /// A turn is open from your prompt until Claude's last message of it (end_turn, then turn_duration).
+    @Test func knowsWhetherATurnIsRunning() {
+        var parser = TranscriptParser()
+        #expect(parser.turnOpen == nil)
+        parser.feed(Data((#"{"type":"user","uuid":"u1","message":{"role":"user","content":"fix it"}}"# + "\n").utf8))
+        #expect(parser.turnOpen == true)
+        parser.feed(Data((#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"# + "\n").utf8))
+        parser.feed(Data((#"{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"# + "\n").utf8))
+        #expect(parser.turnOpen == true)
+        parser.feed(Data((#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"# + "\n").utf8))
+        #expect(parser.turnOpen == false)
+        parser.feed(Data((#"{"type":"system","subtype":"turn_duration","durationMs":1200}"# + "\n").utf8))
+        #expect(parser.turnOpen == false)
+        // Pressing Esc mid-turn ends it too.
+        parser.feed(Data((#"{"type":"user","uuid":"u2","message":{"role":"user","content":"again"}}"# + "\n").utf8))
+        parser.feed(Data((#"{"type":"user","uuid":"u3","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"# + "\n").utf8))
+        #expect(parser.turnOpen == false)
+    }
+
     @Test func turnsLinesIntoPromptsRepliesAndToolCalls() {
         let parser = parsed(lines.joined(separator: "\n") + "\n")
         #expect(parser.title == "Fix the build")
