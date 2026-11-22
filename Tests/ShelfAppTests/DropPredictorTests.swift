@@ -41,6 +41,20 @@ import Testing
         #expect(DropRanking.words("IMG_0042").isDisjoint(with: DropRanking.words("Resumes")))
     }
 
+    @Test func yourHistoryLeadsAndJevOnlyNudges() {
+        // Where you've filed this type before beats Jev's opinion.
+        #expect(DropRanking.combined(local: 0.8, jev: 0.1) > DropRanking.combined(local: 0.3, jev: 1.0))
+        #expect(DropRanking.combined(local: 0.5, jev: nil) == 0.5)
+    }
+
+    @Test func jevIsAskedOnlyForFileTypesYouHaventFiled() {
+        let pdf = URL(fileURLWithPath: "/tmp/statement.pdf")
+        #expect(DropRanking.needsJev(files: [pdf], candidates: candidates(), history: DropHistory()))
+        var history = DropHistory()
+        history.record([URL(fileURLWithPath: "/tmp/old.pdf")], into: taxes)
+        #expect(!DropRanking.needsJev(files: [pdf], candidates: candidates(), history: history))
+    }
+
     @Test func theRequestToJevIsRedacted() {
         let redactor = Redactor(identity: ["Jane Doe"])
         let file = URL(fileURLWithPath: "/tmp/Jane_Doe_Resume.pdf")
@@ -55,6 +69,7 @@ import Testing
         #expect(request.keys["c4"]?.url == resumes)
     }
 
+    /// A file type you've never filed: the rules can't tell these folders apart, so Jev's read decides between them.
     @Test func jevsAnswerReordersTheSuggestions() async throws {
         // c4 (Resumes) very likely, c3 (Downloads) possible, the rest wrong.
         let reply = Data("""
@@ -74,7 +89,8 @@ import Testing
         #expect(predictor.suggestions.first?.candidate.url == project, "local ranking shows at once")
         for _ in 0..<50 where !predictor.usedJev { try await Task.sleep(for: .milliseconds(20)) }
         #expect(predictor.usedJev)
-        #expect(predictor.suggestions.map(\.candidate.url) == [resumes, downloads, project])
+        #expect(predictor.suggestions.first?.candidate.url == resumes, "Jev's clear pick rises over a near-tie")
+        #expect(predictor.suggestions.contains { $0.candidate.url == project }, "the recent folder keeps its place")
     }
 
     @Test func withoutJevItStaysLocal() {

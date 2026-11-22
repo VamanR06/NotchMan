@@ -9,9 +9,12 @@ extension ChatApp {
             return NotchRelevance("Claude Code is waiting for permission to use \(first.toolName)\(more)", urgent: true)
         }
         let agents = agentMonitor?.agents ?? []
+        if let (id, notice) = stuck.first, let agent = agents.first(where: { $0.id == id }) {
+            return NotchRelevance("\(agent.name) looks stuck: \(notice.line)", urgent: true)
+        }
         let needYou = agents.filter { $0.phase == .needsYou }.count
         let working = agents.filter { $0.phase == .working }.count
-        if needYou > 0 { return NotchRelevance("\(needYou) Claude Code session(s) need your reply") }
+        if needYou > 0 { return NotchRelevance("\(needYou) Claude Code session(s) need your reply", urgent: true) }
         if working > 0 {
             let doing = agents.filter { $0.phase == .working }
                 .compactMap { agent in sessionActivity[agent.id].flatMap { $0.isFresh() ? "\($0.lastAction) in \(agent.project)" : nil } }

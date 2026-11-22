@@ -44,6 +44,9 @@ struct AgentsOverview: View {
 struct ApprovalCard: View {
     let app: ChatApp
     let request: ApprovalRequest
+    /// Haiku's plain-words read of the call, on request ("Explain").
+    @State private var explanation: String?
+    @State private var explaining = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -63,6 +66,35 @@ struct ApprovalCard: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
                     .textSelection(.enabled)
+                if let explanation {
+                    Text(explanation)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .transition(.opacity)
+                } else {
+                    Button {
+                        explaining = true
+                        Task {
+                            let text = await app.explain(request)
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                explanation = text ?? "Couldn't get an explanation just now."
+                                explaining = false
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if explaining { NotchSpinner(size: 8, lineWidth: 1.2) } else { Image(systemName: "questionmark.circle") }
+                            Text(explaining ? "Reading it…" : "What does this do?")
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(explaining)
+                    .help("A quick plain-words read from Claude Haiku: what it does, why it wants it, what denying does")
+                }
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 4) {
@@ -101,7 +133,8 @@ private struct UsagePill: View {
             HStack(spacing: 5) {
                 Image(systemName: "chart.bar.fill").font(.system(size: 10)).foregroundStyle(.orange)
                 if let fullest {
-                    Text("\(fullest.label) \(fullest.percent)%")
+                    // "Week 45%", not "Current week 45%": it shares a row with the chats and Terminal.
+                    Text("\(fullest.shortLabel) \(fullest.percent)%")
                         .foregroundStyle(fullest.isAtLimit ? .red : fullest.isNearLimit ? .orange : .white.opacity(0.85))
                 } else if app.usageMonitor.hasLoaded {
                     Text(UsageSummary.format(app.usageMonitor.summary.today.work) + " today").foregroundStyle(.white.opacity(0.85))
@@ -116,7 +149,8 @@ private struct UsagePill: View {
             .fixedSize()
         }
         .buttonStyle(.plain)
-        .help("Claude Code usage and plan limits")
+        .help(fullest.map { "\($0.label): \($0.percent)% used — Claude Code usage and plan limits" }
+              ?? "Claude Code usage and plan limits")
         .task {
             // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
             while !Task.isCancelled {
@@ -157,8 +191,9 @@ private struct ChatStrip: View {
                 Button { app.show(service) } label: {
                     HStack(spacing: 6) {
                         statusMark(service)
-                        Text(service.name).font(.system(size: 12, weight: .semibold))
+                        Text(service.name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
                         Text(statusText(service)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1).truncationMode(.tail)
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 9)
@@ -184,9 +219,16 @@ private struct ChatStrip: View {
                 } else {
                     Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
                 }
-                Text("Terminal").font(.system(size: 12, weight: .semibold))
-                Text(busy ? "running…" : tabs.isEmpty ? "⌘T" : "\(tabs.count) open")
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                // Never wraps under the name: when the row is tight, the "2 open" goes rather than squeezing.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        Text("Terminal").font(.system(size: 12, weight: .semibold))
+                        Text(busy ? "running…" : tabs.isEmpty ? "⌘T" : "\(tabs.count) open")
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    }
+                    .fixedSize()
+                    Text("Terminal").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                }
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 9)
@@ -772,8 +814,9 @@ private struct AgentRow: View {
         return isWorktree ? agent.project : URL(fileURLWithPath: ownProject).lastPathComponent
     }
 
-    /// What's happening, in a few words: from the bridge when it's fresh, else the phase.
+    /// What's happening, in a few words: why it looks stuck, else from the bridge when it's fresh, else the phase.
     private var status: String {
+        if let notice = app.stuck[agent.id] { return "Stuck: " + notice.line }
         if let activity = app.sessionActivity[agent.id], activity.isFresh(), agent.phase == .working || activity.isTurnRunning {
             return activity.lastAction
         }
@@ -786,7 +829,8 @@ private struct AgentRow: View {
     }
 
     private var statusTint: Color {
-        switch agent.phase {
+        if app.stuck[agent.id] != nil { return .orange }
+        return switch agent.phase {
         case .needsYou: .orange
         case .working: .white.opacity(0.75)
         case .done, .idle: .white.opacity(0.5)

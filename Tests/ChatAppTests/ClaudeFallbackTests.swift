@@ -33,10 +33,10 @@ import Testing
         let app = ChatApp()
         #expect(app.claudeFallbacks(for: "  ").isEmpty)
         let rows = app.claudeFallbacks(for: "rename my screenshots by date")
-        #expect(rows.map(\.id) == ["claude.ask", "chat.chatgpt", "chat.claude", "claude.agent"])
-        #expect(rows[0].answer != nil, "answered in the bar")
-        #expect(!rows[1].needsConfirm && !rows[2].needsConfirm, "asking a chat just sends it")
-        #expect(rows[3].needsConfirm, "starting an agent asks first")
+        #expect(rows.map(\.id) == ["claude.ask", "chatgpt.ask", "chat.chatgpt", "chat.claude", "claude.agent"])
+        #expect(rows[0].answer != nil && rows[1].answer != nil, "Claude and ChatGPT answer in the bar")
+        #expect(!rows[2].needsConfirm && !rows[3].needsConfirm, "asking in a chat tab just sends it")
+        #expect(rows[4].needsConfirm, "starting an agent asks first")
     }
 
     @Test func theStreamIsReadAsItComes() {

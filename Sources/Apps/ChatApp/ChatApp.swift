@@ -64,6 +64,9 @@ public final class ChatApp: NotchApp {
     @ObservationIgnored private var approvalSeenWaiting: Set<String> = []
     /// What each session is doing, from the bridge mod, by session id.
     var sessionActivity: [String: SessionActivity] = [:]
+    /// Working agents that look stuck (see `StuckRules`), by session id.
+    var stuck: [String: StuckNotice] = [:]
+    @ObservationIgnored var supervisor: Task<Void, Never>?
     /// The Claude Code bridge mod is set up (Settings → Agents).
     var bridgeInstalled = false
     var bridgeError: String?
@@ -218,6 +221,7 @@ public final class ChatApp: NotchApp {
             self?.insert(text, intoSessionAt: project.cwd) ?? false
         }
         agentMonitor.start()
+        startSupervising()
         approvalWait = context.defaults.object(forKey: "approvalWait") as? Double ?? 60
         approvalsForAllSessions = context.defaults.bool(forKey: "approvalsForAllSessions")
         approvalHookInstalled = ApprovalHook.isInstalled(in: ApprovalHook.readSettings())

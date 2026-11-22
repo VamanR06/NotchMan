@@ -430,14 +430,7 @@ public final class NotchEngine {
     func chooseOpening(current: String) async -> String? {
         guard UserDefaults.standard.object(forKey: OpeningChooser.enabledKey) as? Bool ?? true else { return nil }
         let states = apps.map { OpeningChooser.AppState(id: $0.id, name: $0.name, relevance: $0.relevance) }
-        guard JevSettings.isAvailable else { return OpeningChooser.localPick(apps: states, current: current) }
-        let request = OpeningChooser.request(apps: states, current: current, context: .current(), redactor: Jev.redactor())
-        do {
-            let answers = try await Jev.ask(state: request.state, questions: request.questions, timeout: 1.2)
-            return OpeningChooser.pick(answers, current: current, apps: states)
-        } catch {
-            return OpeningChooser.localPick(apps: states, current: current)
-        }
+        return OpeningChooser.pick(apps: states, current: current)
     }
 
     // MARK: - Command bar

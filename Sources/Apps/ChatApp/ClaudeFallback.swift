@@ -17,7 +17,7 @@ enum ClaudeFallback {
     }
 
     /// Reads `claude -p --output-format stream-json` output line by line: the text so far, and the final answer.
-    struct StreamReader {
+    struct StreamReader: AnswerStream {
         private(set) var text = ""
         private(set) var result: String?
         private var partial = ""
@@ -84,8 +84,13 @@ extension ChatApp {
                 guard let self else { return "" }
                 return try await self.askClaude(text, progress: progress)
             }),
-            CommandItem(id: "chat.chatgpt", title: "Ask ChatGPT: “\(text)”", subtitle: "Sends it in the ChatGPT tab",
-                        symbol: "bubble.left.and.text.bubble.right", kind: "Chat", revealsApp: id) {
+            CommandItem(id: "chatgpt.ask", title: "Ask ChatGPT: “\(text)”", subtitle: "Answered here · through Codex, read-only",
+                        symbol: "bubble.left.and.text.bubble.right", kind: "ChatGPT", answer: { [weak self] progress in
+                guard let self else { return "" }
+                return try await self.askChatGPT(text, progress: progress)
+            }),
+            CommandItem(id: "chat.chatgpt", title: "Ask in a ChatGPT chat: “\(text)”", subtitle: "Sends it in the ChatGPT tab",
+                        symbol: "bubble.left", kind: "Chat", revealsApp: id) {
                 AskAI.shared.send(text, service: ChatService.chatgpt.rawValue, submit: true)
             },
             CommandItem(id: "chat.claude", title: "Ask in a Claude chat: “\(text)”", subtitle: "Sends it in the Claude tab",
@@ -112,6 +117,23 @@ extension ChatApp {
         return trimmed.isEmpty ? "Claude didn't answer." : trimmed
     }
 
+    /// Asks ChatGPT through the Codex CLI (`codex exec`, signed in with your ChatGPT account), read-only and without
+    /// keeping a session, in a scratch folder so it has nothing of yours to look at. Codex hands back whole messages,
+    /// not a word at a time, so the answer arrives in one go.
+    func askChatGPT(_ question: String, progress: @escaping @MainActor (String) -> Void) async throws -> String {
+        guard let path = await CodexCLI.path() else {
+            throw Shell.ShellError.failed("ChatGPT answers here need the Codex CLI: npm i -g @openai/codex, then codex login.")
+        }
+        let front = IntentContext.current().frontmostApp
+        let answer = try await ClaudeProcess.stream(path, CodexCLI.askArguments(question: question, frontmostApp: front),
+                                                    timeout: 180, in: CodexCLI.scratchFolder,
+                                                    reader: CodexCLI.StreamReader.self) { text in
+            Task { @MainActor in progress(text) }
+        }
+        let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "ChatGPT didn't answer." : trimmed
+    }
+
     func startAgent(_ prompt: String, in folder: String) {
         showingOverview = true
         backToOverview()
@@ -129,18 +151,29 @@ extension ChatApp {
 
 
 /// Runs `claude -p` with streamed JSON output, reporting the text so far; cancelling the task stops the process.
+/// Streamed output of a CLI that answers a question: the text so far, and the final answer once it's done.
+protocol AnswerStream: Sendable {
+    init()
+    /// Feeds output; returns true when the text so far changed.
+    mutating func feed(_ chunk: String) -> Bool
+    var text: String { get }
+    var result: String? { get }
+}
+
 enum ClaudeProcess {
-    static func stream(_ executable: String, _ arguments: [String], timeout: TimeInterval,
-                       onText: @escaping @Sendable (String) -> Void) async throws -> String {
+    static func stream<Reader: AnswerStream>(_ executable: String, _ arguments: [String], timeout: TimeInterval,
+                                             in folder: String = NSHomeDirectory(),
+                                             reader readerType: Reader.Type = ClaudeFallback.StreamReader.self,
+                                             onText: @escaping @Sendable (String) -> Void) async throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        process.currentDirectoryURL = URL(fileURLWithPath: folder)
         process.standardInput = FileHandle.nullDevice
         let output = Pipe(), errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
-        let reader = Locked(ClaudeFallback.StreamReader())
+        let reader = Locked(readerType.init())
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 output.fileHandleForReading.readabilityHandler = { handle in
@@ -161,7 +194,7 @@ enum ClaudeProcess {
                     } else {
                         let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                             .trimmingCharacters(in: .whitespacesAndNewlines)
-                        continuation.resume(throwing: Shell.ShellError.failed(message.isEmpty ? "Claude stopped without answering." : message))
+                        continuation.resume(throwing: Shell.ShellError.failed(message.isEmpty ? "It stopped without answering." : String(message.suffix(300))))
                     }
                 }
                 do {
@@ -187,6 +220,72 @@ enum ClaudeProcess {
             lock.lock()
             defer { lock.unlock() }
             return body(&value)
+        }
+    }
+}
+
+/// The Codex CLI (`codex`), OpenAI's terminal agent, used to ask ChatGPT from the command bar with your ChatGPT sign-in.
+enum CodexCLI {
+    @MainActor private static var resolved: String?
+
+    @MainActor
+    static func path() async -> String? {
+        if let resolved { return resolved }
+        let home = NSHomeDirectory()
+        let candidates = ["\(home)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.npm-global/bin/codex"]
+        if let found = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) {
+            resolved = found
+            return found
+        }
+        let fromShell = try? await Shell.run("/bin/zsh", ["-lc", "command -v codex"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fromShell, !fromShell.isEmpty, FileManager.default.isExecutableFile(atPath: fromShell) { resolved = fromShell }
+        return resolved
+    }
+
+    /// An empty folder to run in, so a read-only Codex has nothing of yours to read.
+    static var scratchFolder: String {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NotchMan/chatgpt", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.path
+    }
+
+    static func askArguments(question: String, frontmostApp: String?) -> [String] {
+        ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never",
+         ClaudeFallback.prompt(question: question, frontmostApp: frontmostApp)]
+    }
+
+    /// Reads `codex exec --json`: each finished `agent_message` item adds to the answer; a failed turn is the error.
+    struct StreamReader: AnswerStream {
+        private(set) var text = ""
+        private(set) var result: String?
+        private var partial = ""
+
+        init() {}
+
+        mutating func feed(_ chunk: String) -> Bool {
+            partial += chunk
+            var changed = false
+            while let newline = partial.firstIndex(of: "\n") {
+                let line = String(partial[..<newline])
+                partial = String(partial[partial.index(after: newline)...])
+                guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+                switch object["type"] as? String {
+                case "item.completed":
+                    guard let item = object["item"] as? [String: Any], item["type"] as? String == "agent_message",
+                          let message = item["text"] as? String, !message.isEmpty else { continue }
+                    text += (text.isEmpty ? "" : "\n\n") + message
+                    changed = true
+                case "turn.completed":
+                    result = text
+                case "turn.failed", "error":
+                    let error = (object["error"] as? [String: Any])?["message"] as? String ?? object["message"] as? String
+                    result = text.isEmpty ? "ChatGPT couldn't answer" + (error.map { ": \($0)" } ?? ".") : text
+                default:
+                    continue
+                }
+            }
+            return changed
         }
     }
 }

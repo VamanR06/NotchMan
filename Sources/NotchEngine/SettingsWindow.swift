@@ -123,8 +123,8 @@ private struct GeneralSettingsView: View {
                 Text("From any app: find files, folders, agents and tasks, or say what to do. Press it again or Esc to close.")
             }
             Toggle(isOn: $openToRelevant) {
-                Text("Open to what's relevant")
-                Text("Hovering opens the app that fits what's going on — a meeting about to start, an approval waiting — instead of the last one. With Jev connected (Settings → Intelligence) it weighs every app's state; without it, only urgent things switch it.")
+                Text("Open to what needs you")
+                Text("Hovering opens the app with something waiting on you — an approval, a meeting about to start, a stuck agent — instead of the last one. Otherwise it stays where you left it.")
             }
             LabeledContent {
                 HStack {

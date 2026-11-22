@@ -102,10 +102,18 @@ enum DropRanking {
         return Set(parts.map { $0.count > 3 && $0.hasSuffix("s") ? String($0.dropLast()) : $0 })
     }
 
-    /// Jev's say counts most once there is one; the local score breaks ties and carries your history.
+    /// Your own signals lead; Jev only nudges, mostly breaking ties between folders the rules can't tell apart.
     static func combined(local: Double, jev: Double?) -> Double {
         guard let jev else { return local }
-        return 0.75 * jev + 0.25 * local
+        return 0.7 * local + 0.3 * jev
+    }
+
+    /// Jev is asked only for files of a type you've never filed (where your history has nothing to say), and only
+    /// about the few folders the rules rank highest — not every folder on every drag.
+    static let jevCandidates = 8
+
+    static func needsJev(files: [URL], candidates: [DropCandidate], history: DropHistory) -> Bool {
+        !candidates.contains { candidate in files.contains { history.share(of: $0, in: candidate.url) > 0 } }
     }
 
     static let levels = [
@@ -147,8 +155,9 @@ enum DropRanking {
     }
 }
 
-/// The top three folders for the files being dragged (or the shelved file you selected): local ranking at once,
-/// refined by Jev a moment later when it's set up.
+/// The top three folders for the files being dragged (or the shelved file you selected), ranked by where you've put
+/// files like these, matching names and recency. For a file type you've never filed, Jev may nudge the order a moment
+/// later when it's set up.
 @MainActor @Observable
 final class DropPredictor {
     struct Suggestion: Identifiable, Equatable {
@@ -179,8 +188,12 @@ final class DropPredictor {
         })
         suggestions = Self.top(candidates, scores: local)
         usedJev = false
-        guard JevSettings.isAvailable else { return }
-        let request = DropRanking.request(files: files, candidates: candidates, history: history, context: context,
+        guard JevSettings.isAvailable, DropRanking.needsJev(files: files, candidates: candidates, history: history)
+        else { return }
+        let shortlist = Array(candidates.enumerated()
+            .sorted { (local[$0.element.id] ?? 0, -$0.offset) > (local[$1.element.id] ?? 0, -$1.offset) }
+            .prefix(DropRanking.jevCandidates).map(\.element))
+        let request = DropRanking.request(files: files, candidates: shortlist, history: history, context: context,
                                           redactor: Jev.redactor())
         isRefining = true
         task = Task { [weak self] in

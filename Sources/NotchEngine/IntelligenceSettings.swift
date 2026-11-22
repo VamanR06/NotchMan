@@ -56,7 +56,7 @@ struct IntelligenceSettingsView: View {
             } header: {
                 Text("Jev")
             } footer: {
-                Text("Jev (TypeSafe's fast decision model) picks the folders the Shelf suggests when you drag files. Without it, NotchMan ranks them with its own rules from where you've put files before.")
+                Text("Jev (TypeSafe's fast decision model) turns what you type in the command bar into an app's action, and helps the Shelf with file types you've never filed before. Where you've put files before always counts most.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
