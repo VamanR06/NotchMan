@@ -50,10 +50,12 @@ struct AgentSessionView: View {
                         ApprovalCard(app: app, request: request)
                     }
                     if isWorking && approvals.isEmpty {
-                        HStack(spacing: 6) {
-                            NotchSpinner(size: 10, lineWidth: 1.5)
-                            Text(app.sessionActivity[terminal.agent.id].flatMap { $0.isFresh() ? $0.lastAction : nil } ?? "Working…")
-                                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        Gutter(mark: "✻", color: .orange) {
+                            HStack(spacing: 6) {
+                                Text((app.sessionActivity[terminal.agent.id].flatMap { $0.isFresh() ? $0.lastAction : nil } ?? "Working") + "…")
+                                    .font(Self.mono).foregroundStyle(.orange.opacity(0.9))
+                                NotchSpinner(size: 9, color: .orange.opacity(0.7), lineWidth: 1.4)
+                            }
                         }
                     }
                     // Seen only when scrolled to the end: new rows follow along then, and leave you be otherwise.
@@ -61,9 +63,11 @@ struct AgentSessionView: View {
                         .onAppear { atBottom = true; unseenBelow = false }
                         .onDisappear { atBottom = false }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 12)
+                .padding(.horizontal, 12).padding(.vertical, 10)
             }
-            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.035)))
+            // A terminal's black, with the faint frame the notch's terminals have.
+            .background(RoundedRectangle(cornerRadius: 10).fill(.black))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1)))
             .overlay(alignment: .bottom) {
                 if unseenBelow {
                     Button {
@@ -91,25 +95,32 @@ struct AgentSessionView: View {
     }
 
     private static let bottom = "bottom"
+    static let mono = Font.system(size: 11.5, design: .monospaced)
 
+    /// Laid out like Claude Code's own terminal: a marker in the gutter (❯ you, ⏺ Claude, ⎿ its steps), everything
+    /// left-aligned — but replies drawn as Markdown, so tables and lists read properly.
     @ViewBuilder private func row(_ item: SessionItem) -> some View {
         switch item {
         case .prompt(_, let text):
-            HStack {
-                Spacer(minLength: 80)
+            Gutter(mark: "❯", color: .white.opacity(0.55)) {
                 Text(text)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.white)
+                    .font(Self.mono)
+                    .foregroundStyle(.white.opacity(0.95))
                     .lineSpacing(2)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 11).padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.32)))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.top, 4)
+            .padding(.vertical, 5)
+            .background(Rectangle().fill(.white.opacity(0.06)).padding(.horizontal, -12))
+            .padding(.top, 6)
         case .reply(_, let text):
-            MarkdownView(text: text)
+            Gutter(mark: "⏺", color: .white.opacity(0.85)) {
+                MarkdownView(text: text)
+            }
         case .steps(_, let calls):
-            ToolStepsRow(calls: calls, preview: previewFile)
+            Gutter(mark: "⎿", color: .white.opacity(0.3)) {
+                ToolStepsRow(calls: calls, preview: previewFile)
+            }
         }
     }
 
@@ -125,11 +136,12 @@ struct AgentSessionView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("❯").font(Self.mono).foregroundStyle(.white.opacity(composerFocused ? 0.9 : 0.5))
             TextField(terminal.isRunning ? "Message \(terminal.agent.name)…" : "Detached — reattach to send",
                       text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(Self.mono)
                 .lineLimit(1...4)
                 .focused($composerFocused)
                 .disabled(!terminal.isRunning)
@@ -141,19 +153,16 @@ struct AgentSessionView: View {
                     return .handled
                 }
             if terminal.isRunning {
-                Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 18))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(draft.isEmpty ? .white.opacity(0.3) : Color.accentColor)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("Send (Return)")
+                Text(draft.isEmpty ? "" : "↩ send")
+                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
             } else {
                 Button("Reattach") { app.reattach(terminal) }.controlSize(.small)
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.08)))
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        // Claude Code's input box: a rule above and below.
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture { composerFocused = true }
     }
@@ -163,6 +172,23 @@ struct AgentSessionView: View {
         guard !text.isEmpty, terminal.isRunning else { return }
         terminal.sendToClaude(text)
         draft = ""
+    }
+}
+
+/// A row with a terminal-style marker in a narrow gutter and its content beside it.
+private struct Gutter<Content: View>: View {
+    let mark: String
+    let color: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(mark)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(color)
+                .frame(width: 12, alignment: .center)
+            content
+        }
     }
 }
 
@@ -218,11 +244,12 @@ private struct ToolStepsRow: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(.white.opacity(0.4))
                         .frame(width: 10)
-                    Text("\(calls.count) steps").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                    Text("\(calls.count) steps").font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
                     if let last = calls.last {
                         Text("·").foregroundStyle(.white.opacity(0.3))
                         Text(ToolCallRow.describe(last))
-                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.45))
                             .lineLimit(1).truncationMode(.middle)
                     }
                     Spacer(minLength: 4)
@@ -267,8 +294,8 @@ private struct ToolCallRow: View {
                     .frame(width: 14)
                     .foregroundStyle(.white.opacity(0.45))
                 Text(Self.describe(call))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
@@ -284,8 +311,8 @@ private struct ToolCallRow: View {
             .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
             if expanded { detail.padding(.leading, 21) }
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(expanded ? 0.06 : hovering ? 0.04 : 0)))
+        .padding(.horizontal, 4).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(expanded ? 0.06 : hovering ? 0.04 : 0)))
         .onHover { hovering = $0 }
     }
 
