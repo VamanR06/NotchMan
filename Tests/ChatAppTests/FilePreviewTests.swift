@@ -72,22 +72,54 @@ import Testing
     }
 }
 
-@Suite struct FilePreviewLayoutTests {
-    private let container = CGSize(width: 700, height: 400)
-    private let card = CGSize(width: 480, height: 290)
-
-    @Test func goesBelowTheClickedRowWhenItFits() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 100, y: 30, width: 1, height: 15), in: container)
-        #expect(origin == CGPoint(x: 8, y: 49))
+/// Plain click previews, ⌘-click opens in the file's app; drags select and double-clicks pick words as before.
+@MainActor @Suite struct PathClickTests {
+    private func click(command: Bool = false, other: Bool = false, count: Int = 1, dragged: Bool = false,
+                       mouse: Bool = false) -> NotchTerminalView.PathClick {
+        NotchTerminalView.pathClick(command: command, otherModifiers: other, clickCount: count, dragged: dragged,
+                                    programUsesMouse: mouse)
     }
 
-    @Test func goesAboveNearTheBottom() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 650, y: 360, width: 1, height: 15), in: container)
-        #expect(origin == CGPoint(x: 212, y: 66))
+    @Test func plainClickPreviews() { #expect(click() == .preview) }
+    @Test func commandClickOpensInItsApp() { #expect(click(command: true) == .openInApp) }
+
+    @Test func selectingAndWordPickingAreLeftAlone() {
+        #expect(click(dragged: true) == .none)
+        #expect(click(count: 2) == .none)
+        #expect(click(other: true) == .none)
     }
 
-    @Test func centersWhenNeitherFits() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 350, y: 150, width: 0, height: 15), in: container)
-        #expect(origin == CGPoint(x: 110, y: 55))
+    @Test func whenTheProgramUsesTheMouseCommandClickPreviews() {
+        #expect(click(mouse: true) == .none)
+        #expect(click(command: true, mouse: true) == .preview)
+    }
+}
+
+/// What kind of preview each file gets.
+@Suite struct PreviewContentTests {
+    private func file(_ name: String, _ data: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + name)
+        try data.write(to: url)
+        return url
+    }
+
+    @Test func sourceIsShownAsText() throws {
+        let url = try file("a.swift", Data("let x = 1\nprint(x)".utf8))
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(FilePreview.load(url) == .text(["let x = 1", "print(x)"], truncated: false))
+    }
+
+    @Test func picturesAndDocumentsGoToQuickLook() throws {
+        let png = try file("a.png", Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0]))
+        let pdf = try file("a.pdf", Data("%PDF-1.4\n".utf8))
+        defer { [png, pdf].forEach { try? FileManager.default.removeItem(at: $0) } }
+        #expect(FilePreview.load(png) == .quickLook)
+        #expect(FilePreview.load(pdf) == .quickLook)
+    }
+
+    @Test func otherBinaryFilesGoToQuickLook() throws {
+        let url = try file("data.bin", Data([0, 1, 2, 3]))
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(FilePreview.load(url) == .quickLook)
     }
 }

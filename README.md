@@ -268,9 +268,12 @@ interactive terminal attached to it right in the notch (it keeps running when th
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** (or ⌘T) opens shells in the
 agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
-a shell. **⌘-click** a file or folder named in a terminal (a plan Claude Code saved, a file it edited, `path:12`)
-to preview it in a popup — Markdown is formatted, code shows line numbers — with Open, Show in Finder and Copy
-Path; Esc or a click outside closes it. Interactive sessions open their folder in VS Code/Cursor.
+a shell. **Click** a file or folder named in a terminal (a plan Claude Code saved, a file it edited, `path:12`)
+to preview it over the whole terminal — Markdown is formatted, code shows line numbers and jumps to the line, and
+PDFs, images, video and documents show in Quick Look — with Open, Quick Look (full size), Show in Finder and Copy
+Path; Esc, ✕ or a click outside closes it. **⌘-click** opens the file in its app instead. (While a program in the
+terminal uses the mouse itself, ⌘-click previews.) ← from an empty prompt goes back to the Overview at once and
+keeps the session attached. Interactive sessions open their folder in VS Code/Cursor.
 
 **Terminal:** the Terminal pill on the Overview (or **⌘T** in the Agents app) opens a terminal of your own in
 the notch, in the last folder you used; right-click the pill, a folder or a session for **Open Terminal Here**.
@@ -349,6 +352,8 @@ Apps opt in with `.askable { "description" }` or `AskMenuItems` inside an existi
 
 Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens on the Shelf.
 
+- **Preview:** shelved files and downloads show thumbnails. Click one and press **Space** (or right-click →
+  Quick Look) to see it full size; ←/→ step through them.
 - **Keep on the shelf:** drop them in the big area to hold them for later. You can drag them back out anywhere,
   double-click to open, or right-click to AirDrop, reveal or remove. The chip shows how many are waiting.
 - **Drop into any folder:** the right side lists where files can go:

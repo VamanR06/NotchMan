@@ -11,7 +11,7 @@ final class TerminalSession: Identifiable {
     private(set) var isRunning = false
     /// Title the program sets (OSC 0/2).
     private(set) var title = ""
-    /// A file ⌘-clicked in the output, shown in a popup over the terminal.
+    /// A file clicked in the output, previewed in a pane over the terminal.
     var preview: FilePreview?
     /// The folder the process is in, as of the last `refresh()` (a shell's follows `cd`).
     private(set) var currentDirectory: String?
@@ -54,8 +54,8 @@ final class TerminalSession: Identifiable {
         view.onKey = { [weak self] event in self?.onKey?(event) ?? false }
         view.workingDirectory = { [weak self] in self?.workingDirectory }
         view.onOutput = { [weak self] bytes in self?.output(bytes) }
-        view.onOpenFile = { [weak self] mention, anchor in
-            withAnimation(.easeOut(duration: 0.12)) { self?.preview = FilePreview(mention: mention, anchor: anchor) }
+        view.onPreviewFile = { [weak self] mention in
+            withAnimation(.easeOut(duration: 0.15)) { self?.preview = FilePreview(mention: mention) }
         }
         view.dismissPopup = { [weak self] in
             guard let self, self.preview != nil else { return false }
@@ -358,8 +358,8 @@ final class NotchTerminalView: LocalProcessTerminalView, NotchTypingView {
 
     /// The user clicked into this terminal (to type).
     var onClick: (() -> Void)?
-    /// ⌘-click on a file path: show it. The rect is the clicked row, origin top left.
-    var onOpenFile: ((FileMention, CGRect) -> Void)?
+    /// A click on a file path: preview it.
+    var onPreviewFile: ((FileMention) -> Void)?
     /// Relative paths in the output are relative to this.
     var workingDirectory: (() -> String?)?
     /// Esc closes a popup over the terminal, if one is showing, instead of reaching the program.
@@ -368,47 +368,76 @@ final class NotchTerminalView: LocalProcessTerminalView, NotchTypingView {
     var onNewTab: (() -> Void)?
     /// The process's output, as it arrives (before it's drawn).
     var onOutput: ((ArraySlice<UInt8>) -> Void)?
-    private var lastCommandClick: CGRect?
+    private var commandClicked = false
     private var suppressLinkOpen = false
+    private var mouseDownPoint: CGPoint?
 
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
         window?.makeFirstResponder(self)
         onClick?()
+        mouseDownPoint = event.locationInWindow
         super.mouseDown(with: event)
     }
 
-    /// ⌘-click on a path shows the file in a popup. SwiftTerm's own link detection only knows paths with a `/`
-    /// and opens them relative to NotchMan rather than the terminal, so look up the word under the cursor first.
+    /// What a click on a file path in the output does.
+    enum PathClick: Equatable {
+        case preview
+        case openInApp
+        case none
+    }
+
+    /// A plain click (not a drag to select, not a double-click) previews the file; ⌘-click opens it in its app.
+    /// While the program uses the mouse itself, plain clicks are its own, so ⌘-click previews instead.
+    static func pathClick(command: Bool, otherModifiers: Bool, clickCount: Int, dragged: Bool,
+                          programUsesMouse: Bool) -> PathClick {
+        guard !otherModifiers, !dragged, clickCount == 1 else { return .none }
+        if programUsesMouse { return command ? .preview : .none }
+        return command ? .openInApp : .preview
+    }
+
+    /// SwiftTerm's own link detection only knows paths with a `/` and opens them relative to NotchMan rather than the
+    /// terminal, so look up the word under the cursor first.
     override func mouseUp(with event: NSEvent) {
-        lastCommandClick = nil
-        guard event.modifierFlags.contains(.command), let hit = cell(at: event) else {
+        commandClicked = false
+        let modifiers = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        let dragged = mouseDownPoint.map { hypot($0.x - event.locationInWindow.x, $0.y - event.locationInWindow.y) > 3 }
+            ?? false
+        let action = Self.pathClick(command: modifiers.contains(.command), otherModifiers: !modifiers.subtracting(.command).isEmpty,
+                                    clickCount: event.clickCount, dragged: dragged,
+                                    programUsesMouse: getTerminal().mouseMode != .off)
+        guard action != .none, let hit = cell(at: event) else {
             super.mouseUp(with: event)
             return
         }
-        lastCommandClick = hit.rect
+        commandClicked = action == .openInApp
         guard let mention = fileMention(row: hit.screenRow, column: hit.column) else {
-            super.mouseUp(with: event)  // URLs: SwiftTerm opens them (through requestOpenLink below)
+            super.mouseUp(with: event)  // URLs: SwiftTerm opens them on ⌘-click (through requestOpenLink below)
             return
         }
         // Still let SwiftTerm finish the click (mouse reporting, selection state), without opening anything.
         suppressLinkOpen = true
         super.mouseUp(with: event)
         suppressLinkOpen = false
-        onOpenFile?(mention, hit.rect)
+        commandClicked = false
+        switch action {
+        case .preview: onPreviewFile?(mention)
+        case .openInApp: NSWorkspace.shared.open(mention.url)
+        case .none: break
+        }
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         guard !suppressLinkOpen else { return }
-        if let anchor = lastCommandClick, let mention = FileMentions.resolve(link, in: workingDirectory?()) {
-            onOpenFile?(mention, anchor)
+        if commandClicked, let mention = FileMentions.resolve(link, in: workingDirectory?()) {
+            NSWorkspace.shared.open(mention.url)
             return
         }
         super.requestOpenLink(source: source, link: link, params: params)
     }
 
-    /// The visible cell under the mouse, and its row's rect (origin top left).
-    private func cell(at event: NSEvent) -> (screenRow: Int, column: Int, rect: CGRect)? {
+    /// The visible cell under the mouse.
+    private func cell(at event: NSEvent) -> (screenRow: Int, column: Int)? {
         let terminal = getTerminal()
         guard terminal.rows > 0, terminal.cols > 0 else { return nil }
         // Matches SwiftTerm's cell size: rows from its frame size, columns from the font's advance snapped to
@@ -420,8 +449,7 @@ final class NotchTerminalView: LocalProcessTerminalView, NotchTypingView {
         let point = convert(event.locationInWindow, from: nil)
         let screenRow = min(max(Int((frame.height - point.y) / cellHeight), 0), terminal.rows - 1)
         let column = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
-        let rect = CGRect(x: point.x, y: CGFloat(screenRow) * cellHeight, width: 1, height: cellHeight)
-        return (screenRow, column, rect)
+        return (screenRow, column)
     }
 
     /// The existing file named at a visible cell, following a path the terminal wrapped across rows.

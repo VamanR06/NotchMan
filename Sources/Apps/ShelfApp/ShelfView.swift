@@ -145,10 +145,9 @@ private struct ShelfTile: View {
     @State private var hovering = false
 
     var body: some View {
+        let isSelected = app.selected == url
         VStack(spacing: 3) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 36, height: 36)
+            FileThumbnail(url: url, size: 40)
             Text(url.lastPathComponent)
                 .font(.system(size: 10))
                 .lineLimit(2)
@@ -156,7 +155,8 @@ private struct ShelfTile: View {
                 .truncationMode(.middle)
         }
         .frame(width: 74, height: 72)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(hovering ? 0.1 : 0.04)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor.opacity(0.35)
+                                                           : .white.opacity(hovering ? 0.1 : 0.04)))
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button { app.remove(url) } label: {
@@ -168,9 +168,11 @@ private struct ShelfTile: View {
         }
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(url) }
+        .onTapGesture { app.selected = url }
         .draggableFile(url)
-        .help(url.path)
+        .help(url.path + "\nSpace to preview")
         .contextMenu {
+            Button("Quick Look") { app.quickLook(url) }
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Button("AirDrop") { app.airDrop([url]) }
@@ -517,9 +519,7 @@ private struct DownloadRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
-                .resizable()
-                .frame(width: 20, height: 20)
+            FileThumbnail(url: item.url, size: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 if item.isInProgress {
@@ -538,12 +538,15 @@ private struct DownloadRow: View {
                 .foregroundStyle(.white.opacity(0.5))
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: 7).fill(app.selected == item.url ? Color.accentColor.opacity(0.35)
+                                                           : .white.opacity(hovering ? 0.08 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { if !item.isInProgress { NSWorkspace.shared.open(item.url) } }
+        .onTapGesture { if !item.isInProgress { app.selected = item.url } }
         .draggableFile(item.url)
         .contextMenu {
+            Button("Quick Look") { app.quickLook(item.url) }.disabled(item.isInProgress)
             Button("Open") { NSWorkspace.shared.open(item.url) }.disabled(item.isInProgress)
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Button("Keep on Shelf") { app.addToShelf([item.url]) }.disabled(item.isInProgress)

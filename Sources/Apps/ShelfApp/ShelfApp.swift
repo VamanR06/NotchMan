@@ -30,6 +30,8 @@ public final class ShelfApp: NotchApp {
     }
     /// Bumped when the open folder's contents change, so the browser re-lists it.
     private(set) var folderRevision = 0
+    /// The shelved file or download last clicked: Space previews it.
+    var selected: URL?
 
     /// The folder open in the drop browser. Browsing starts somewhere (a project, a place, a recent folder) and
     /// can go anywhere from there.
@@ -58,6 +60,42 @@ public final class ShelfApp: NotchApp {
     @ObservationIgnored private var poll: Task<Void, Never>?
 
     public init() {}
+
+    /// The files in the tab you're on, in order (what Quick Look steps through).
+    var shownFiles: [URL] {
+        switch tab {
+        case .shelf: items
+        case .downloads: downloads.filter { !$0.isInProgress }.map(\.url)
+        }
+    }
+
+    /// Full-size Quick Look of `url` (or the selected file); ←/→ in it step through the tab's other files.
+    func quickLook(_ url: URL? = nil) {
+        guard let target = url ?? selected else { return }
+        let files = shownFiles
+        selected = target
+        QuickLookPanel.show(files.contains(target) ? files : [target], at: files.firstIndex(of: target) ?? 0)
+    }
+
+    /// Space previews the selected file, as in Finder; ←/→ move the selection.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .shift, .control]).isEmpty else { return false }
+        let files = shownFiles
+        switch event.keyCode {
+        case 49:  // Space
+            guard let selected, files.contains(selected) else { return false }
+            quickLook(selected)
+            return true
+        case 123, 124:  // ← →
+            guard !files.isEmpty else { return false }
+            let step = event.keyCode == 123 ? -1 : 1
+            let current = selected.flatMap { files.firstIndex(of: $0) } ?? (step > 0 ? -1 : files.count)
+            selected = files[min(max(current + step, 0), files.count - 1)]
+            return true
+        default:
+            return false
+        }
+    }
 
     public func activate(context: NotchContext) {
         self.context = context
