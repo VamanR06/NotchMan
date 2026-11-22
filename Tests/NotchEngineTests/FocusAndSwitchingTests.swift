@@ -69,31 +69,59 @@ private final class ClaimingApp: NotchApp {
         #expect(model.state == .collapsed)
     }
 
-    @Test func hoveringOpenLeavesTheKeyboardWithTheAppYouAreIn() async throws {
-        let model = model()
-        var gaveBack = 0
-        model.onCollapse = { gaveBack += 1 }
+    /// Opens by hovering, with the engine's part simulated: asking for the keyboard makes the panel key.
+    private func hoverOpen(_ model: NotchViewModel, asked: @escaping () -> Void = {}) async throws -> CGPoint {
+        model.onWantsKeyboard = { [weak model] in
+            asked()
+            model?.keyboardTaken()
+        }
         let center = CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5)
         model.mouseMoved(to: center)
         try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
-        #expect(model.state == .expanded)
-        model.mouseMoved(to: center)  // resting inside doesn't take it either
-        #expect(!model.tookKeyboard)
-        model.collapse()
-        #expect(gaveBack == 0)
+        return center
     }
 
-    @Test func aClickInsideTakesTheKeyboardAndClosingGivesItBack() async throws {
+    private func waitForCollapse(_ model: NotchViewModel) async throws {
+        for _ in 0..<20 where model.state != .collapsed { try await Task.sleep(for: .milliseconds(100)) }
+    }
+
+    @Test func hoveringOpenTakesTheKeyboardOnce() async throws {
+        let model = model()
+        var asked = 0
+        let center = try await hoverOpen(model) { asked += 1 }
+        #expect(model.state == .expanded && model.tookKeyboard)
+        model.mouseMoved(to: center)
+        #expect(asked == 1, "once per opening")
+    }
+
+    @Test func leavingWithoutTypingClosesAndGivesTheKeyboardBack() async throws {
         let model = model()
         var gaveBack = 0
         model.onCollapse = { gaveBack += 1 }
-        model.mouseMoved(to: CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5))
-        try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
-        model.keyboardTaken()  // the panel became key: a click inside, or the hotkey
-        #expect(model.tookKeyboard)
-        model.collapse()
-        #expect(gaveBack == 1)
-        #expect(!model.tookKeyboard)  // the next opening starts without it
+        let center = try await hoverOpen(model)
+        model.mouseMoved(to: CGPoint(x: center.x, y: center.y - 400))
+        try await waitForCollapse(model)
+        #expect(model.state == .collapsed && gaveBack == 1)
+        #expect(!model.tookKeyboard, "the next opening starts without it")
+    }
+
+    @Test func typingKeepsItOpenWhenTheMouseLeaves() async throws {
+        let model = model()
+        var gaveBack = 0
+        model.onCollapse = { gaveBack += 1 }
+        let center = try await hoverOpen(model)
+        model.userTyped()
+        model.mouseMoved(to: CGPoint(x: center.x, y: center.y - 400))
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(model.state == .expanded, "held while you're typing in it")
+        model.clickedOutside(at: CGPoint(x: center.x, y: center.y - 400))
+        #expect(model.state == .collapsed && gaveBack == 1, "a click outside closes it and gives the keyboard back")
+    }
+
+    @Test func typingOnAClosedNotchHoldsNothing() {
+        let model = model()
+        model.userTyped()
+        #expect(!model.keyboardHeld)
     }
 
     @Test func aClosedNotchNeverTakesTheKeyboard() {

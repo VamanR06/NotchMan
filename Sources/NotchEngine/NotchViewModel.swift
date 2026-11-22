@@ -32,10 +32,13 @@ final class NotchViewModel {
 
     private var isHeld: Bool { keyboardHeld || dragHeld || heldApps.contains(selectedAppID) }
 
+    /// The user is pointing at the notch, so it takes the keyboard (to type in it, ⌘1–9, arrows, Esc) while the app
+    /// they were in stays active. Never for openings they didn't ask for (a meeting heads-up).
+    @ObservationIgnored var onWantsKeyboard: (() -> Void)?
     /// The notch closed after it had the keyboard; give it back.
     @ObservationIgnored var onCollapse: (() -> Void)?
-    /// The notch has the keyboard this opening. Hovering never takes it (typing stays in the app you're in); a click
-    /// inside the notch or the hotkey does, and the engine reports that through `keyboardTaken()`.
+    /// The notch has the keyboard this opening (hovering, a click inside or the hotkey); the engine reports it through
+    /// `keyboardTaken()` when the window becomes key.
     @ObservationIgnored private(set) var tookKeyboard = false
     /// After switching apps the shape can shrink out from under the cursor. While the cursor is still where
     /// the previous (larger) shape was, that doesn't count as leaving.
@@ -251,6 +254,7 @@ final class NotchViewModel {
                     guard !Task.isCancelled else { return }
                     self?.pendingExpand = nil
                     self?.expand()
+                    self?.takeKeyboard()
                     self?.offerOpening()
                 }
             } else {
@@ -264,6 +268,7 @@ final class NotchViewModel {
                 selectionGraceRect = nil
                 pendingCollapse?.cancel()
                 pendingCollapse = nil
+                takeKeyboard()
             } else if let grace = selectionGraceRect, Self.contains(grace, point, slack: 4) {
                 // Still inside where the notch was before switching apps.
                 pendingCollapse?.cancel()
@@ -297,10 +302,24 @@ final class NotchViewModel {
         if let app = apps.first(where: \.claimsNotchOnOpen), app.id != selectedAppID { select(app.id) }
     }
 
-    /// The notch's window became key (a click inside, or the hotkey), so closing must hand the keyboard back.
+    private func takeKeyboard() {
+        guard state == .expanded, !tookKeyboard else { return }
+        onWantsKeyboard?()
+    }
+
+    /// The notch's window became key (hovering, a click inside, or the hotkey), so closing must hand the keyboard back.
     func keyboardTaken() {
         guard state == .expanded else { return }
         tookKeyboard = true
+    }
+
+    /// A key was typed in the notch: you're using it, so moving the mouse away no longer closes it (Esc, the hotkey
+    /// or a click outside does), as with the hotkey.
+    func userTyped() {
+        guard state == .expanded else { return }
+        keyboardHeld = true
+        pendingCollapse?.cancel()
+        pendingCollapse = nil
     }
 
     func expand() {

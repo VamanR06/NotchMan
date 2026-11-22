@@ -121,8 +121,9 @@ connected you can also say what you want — "move the resume I downloaded to Re
 denying a request and checking off a task ask for a second Return. Anything else can go to a new Claude chat. Esc
 clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
 
-Hovering opens the notch without taking the keyboard, so typing stays in the app you're in. Click inside the notch
-(or use the hotkey) to type there; when it closes, the keyboard goes back to where you were.
+Hovering opens the notch ready to type in, while the app you were in stays active. Once you type something in the
+notch it stays open until Esc, the hotkey or a click outside; if you move away without typing, it closes and the
+keyboard goes back to the app you were in.
 
 ## System HUDs
 

@@ -186,8 +186,13 @@ public final class NotchEngine {
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
         // A nonactivating panel can take typing without making NotchMan the active app, so the app you were
-        // in stays active and gets the keyboard back as soon as the notch closes. Hovering doesn't make it key; a
-        // click inside does (AppKit) and so does the hotkey, and either way the model hears about it here.
+        // in stays active and gets the keyboard back as soon as the notch closes. Hovering makes it key, as do a
+        // click inside (AppKit) and the hotkey; either way the model hears about it here.
+        model.onWantsKeyboard = { [weak panel] in
+            guard let panel, !panel.isKeyWindow else { return }
+            panel.makeKey()
+            panel.makeFirstResponder(panel.contentView)
+        }
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak model] _ in
             MainActor.assumeIsolated {
@@ -286,7 +291,13 @@ public final class NotchEngine {
         // own keys (⌘1–9, Esc, list navigation).
         if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             nonisolated(unsafe) let event = event
-            let handled = MainActor.assumeIsolated { TextShortcuts.handle(event) || self?.handleKey(event) == true }
+            let handled = MainActor.assumeIsolated {
+                // Typing in the notch (a field, a list, a terminal) holds it open until Esc or a click outside.
+                if let panel = event.window as? NotchPanel {
+                    self?.notches.values.first { $0.panel === panel }?.model.userTyped()
+                }
+                return TextShortcuts.handle(event) || self?.handleKey(event) == true
+            }
             return handled ? nil : event
         }) {
             monitors.append(keys)
