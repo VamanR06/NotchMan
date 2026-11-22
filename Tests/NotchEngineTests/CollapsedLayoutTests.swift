@@ -118,7 +118,8 @@ private final class FakeApp: NotchApp {
 
     /// Writes a PNG of the collapsed notch for eyeballing (into the package's build/dev).
     private func render(_ model: NotchViewModel, to name: String) throws {
-        let view = NotchRootView(model: model, openSettings: {})
+        let view = NotchRootView(model: model, commandBar: CommandBarModel(), openSettings: {}, openCommandBar: {},
+                                 closeCommandBar: {})
             .frame(width: 700, height: 60)
             .background(Color(white: 0.85))
         // First pass measures the chips (they size to their content); the second draws with those widths.

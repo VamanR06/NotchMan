@@ -89,6 +89,7 @@ private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
     @AppStorage(HotKey.defaultsKey) private var hotKey = HotKey.Preset.optionSpace.rawValue
+    @AppStorage(NotchEngine.commandBarOnHotKeyKey) private var commandBarOnHotKey = true
     @AppStorage(SystemHUDs.volumeKey) private var hudVolume = true
     @AppStorage(SystemHUDs.brightnessKey) private var hudBrightness = true
     @AppStorage(SystemHUDs.batteryKey) private var hudBattery = true
@@ -120,6 +121,10 @@ private struct GeneralSettingsView: View {
             } label: {
                 Text("Open the notch with")
                 Text("From any app. Then ⌘1–9 switch apps, ↑/↓ and Return pick in lists, Esc closes.")
+            }
+            Toggle(isOn: $commandBarOnHotKey) {
+                Text("Open with the command bar")
+                Text("Type to find files, folders, agents and tasks, or say what to do. Esc goes back to the app.")
             }
             LabeledContent {
                 HStack {

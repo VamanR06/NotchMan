@@ -113,6 +113,14 @@ Press **⌥Space** (change it in Settings → General) from any app to open the 
 action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
 closes the notch. Text fields, terminals and chats keep their keys while you type in them.
 
+**Command bar.** ⌥Space opens the notch with a search field ready (or click 🔍 in the top row). Type to find
+shelved files, downloads, folders, Claude Code sessions, approvals, tasks and apps by name; ↑/↓ and Return open one.
+Start with "add", "todo" or "task" to add a task ("add call recruiter fri 3pm"). With [Jev](#intelligence-jev)
+connected you can also say what you want — "move the resume I downloaded to Resumes", "approve the npm test",
+"I called the recruiter" — and the action it understood shows on top with how sure it is; moving files, allowing or
+denying a request and checking off a task ask for a second Return. Anything else can go to a new Claude chat. Esc
+clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
+
 Hovering opens the notch without taking the keyboard, so typing stays in the app you're in. Click inside the notch
 (or use the hotkey) to type there; when it closes, the keyboard goes back to where you were.
 
@@ -444,9 +452,11 @@ the Shelf's suggested folders. Without a key, NotchMan ranks them with its own r
 - **Your identity** (what counts as "you") defaults to your account's name; add your email or nicknames there,
   and try any text to see how it would be sent.
 - **What was sent** lists the last 50 requests exactly as they left the Mac, kept only while NotchMan runs.
+- **The command bar** sends what you typed (redacted) and the things it could mean — shelved files and downloads,
+  folders, sessions, approvals and tasks, listed by opaque keys with redacted names — and Jev picks among them.
 - **How well it works:** `JEV_API_KEY=… swift test --filter JevDropEval` runs 30 typical drags against the real
   service and prints how often the right folder comes first / in the top three, with and without Jev, plus the
-  latency.
+  latency; `--filter JevCommandEval` does the same for 16 typed requests.
 
 ## Development
 
@@ -481,6 +491,8 @@ Open `Package.swift` in Xcode to edit and debug. The only dependency is
 2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
+4. Optionally implement `commands(for:)` so the command bar can find your app's things (`CommandItem`s) and do
+   things described in words (`CommandAction`s, whose parameters list the choices Jev picks from).
 
 Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`
 so icon and label stay together), optionally with a split `leading`/`trailing` layout for media. Up to three

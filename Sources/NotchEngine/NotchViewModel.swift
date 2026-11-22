@@ -14,6 +14,8 @@ final class NotchViewModel {
 
     /// The All Apps grid is showing over the selected app.
     var isLauncherOpen = false
+    /// The command bar is showing over the selected app.
+    var isCommandBarShown = false
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
@@ -315,6 +317,7 @@ final class NotchViewModel {
         dragHeld = false
         selectionGraceRect = nil
         isLauncherOpen = false
+        isCommandBarShown = false
         let hadKeyboard = tookKeyboard
         tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
@@ -339,6 +342,7 @@ final class NotchViewModel {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
             selectedAppID = appID
             isLauncherOpen = false
+            isCommandBarShown = false
         }
     }
 

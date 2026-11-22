@@ -3,7 +3,10 @@ import NotchKit
 
 struct NotchRootView: View {
     let model: NotchViewModel
+    let commandBar: CommandBarModel
     let openSettings: () -> Void
+    let openCommandBar: () -> Void
+    let closeCommandBar: () -> Void
 
     var body: some View {
         let shape = NotchShape(topRadius: model.topCornerRadius, bottomRadius: model.bottomCornerRadius)
@@ -116,6 +119,11 @@ struct NotchRootView: View {
                     Text(model.selectedApp?.name ?? "")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.7))
+                    Button(action: openCommandBar) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Find anything, or say what to do (⌥Space)")
                     PinButton(model: model)
                     EngineMenu(openSettings: openSettings)
                 }
@@ -136,6 +144,9 @@ struct NotchRootView: View {
                             AppLauncher(model: model)
                                 .padding(.top, 6)
                                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+                        } else if model.isCommandBarShown {
+                            CommandBarView(bar: commandBar, close: closeCommandBar)
+                                .transition(.opacity)
                         }
                     }
             }

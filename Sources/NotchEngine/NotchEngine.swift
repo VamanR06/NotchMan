@@ -23,6 +23,10 @@ public final class NotchEngine {
     }
 
     private var notches: [CGDirectDisplayID: ScreenNotch] = [:]
+    /// One command bar, shown on whichever notch opened it.
+    let commandBar = CommandBarModel()
+    /// ⌥Space (the hotkey) opens the notch with the command bar ready to type in.
+    static let commandBarOnHotKeyKey = "commandBarOnHotKey"
     private var settings: SettingsWindowController
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
@@ -40,6 +44,8 @@ public final class NotchEngine {
     }
 
     public func start() {
+        commandBar.commands = { [weak self] query in self?.commands(for: query) ?? .none }
+        commandBar.onRun = { [weak self] appID in self?.commandRan(revealing: appID) }
         notifications = NotificationRouter { [weak self] appID, payload in
             // An action button (Allow, Deny) is handled in the background; a click brings the app up.
             self?.deliver(NotchMessage(name: NotchMessage.notificationOpenedName, payload: payload), to: appID,
@@ -166,7 +172,16 @@ public final class NotchEngine {
     private func makeNotch(geometry: NotchGeometry) -> ScreenNotch {
         let model = NotchViewModel(apps: apps, geometry: geometry)
         let panel = NotchPanel(contentRect: .zero)
-        let root = NotchRootView(model: model, openSettings: { [weak self] in self?.showSettings() })
+        let root = NotchRootView(model: model, commandBar: commandBar,
+                                 openSettings: { [weak self] in self?.showSettings() },
+                                 openCommandBar: { [weak self, weak model] in
+                                     guard let self, let model else { return }
+                                     self.openCommandBar(on: model)
+                                 },
+                                 closeCommandBar: { [weak self, weak model] in
+                                     guard let self, let model else { return }
+                                     self.closeCommandBar(on: model)
+                                 })
         panel.contentView = FirstMouseHostingView(rootView: root)
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
@@ -333,6 +348,49 @@ public final class NotchEngine {
         NotchFocus.activateForTyping()
         notch.panel.makeKey()
         notch.panel.makeFirstResponder(notch.panel.contentView)
+        if UserDefaults.standard.object(forKey: Self.commandBarOnHotKeyKey) as? Bool ?? true { openCommandBar(on: model) }
+    }
+
+    // MARK: - Command bar
+
+    func openCommandBar(on model: NotchViewModel) {
+        commandBar.reset()
+        // Typing in it keeps the notch open until Esc or a click outside, wherever the mouse goes.
+        model.keyboardHeld = true
+        model.isLauncherOpen = false
+        withAnimation(.easeOut(duration: 0.12)) { model.isCommandBarShown = true }
+    }
+
+    /// Esc in an empty bar: back to the app underneath, with the keyboard.
+    func closeCommandBar(on model: NotchViewModel) {
+        withAnimation(.easeOut(duration: 0.12)) { model.isCommandBarShown = false }
+        if let panel = notches.values.first(where: { $0.model === model })?.panel {
+            panel.makeFirstResponder(panel.contentView)
+        }
+    }
+
+    /// Everything the apps offer for `query`, plus each app itself (to switch to it).
+    func commands(for query: String) -> NotchCommands {
+        var all = NotchCommands()
+        for app in apps {
+            let offered = app.commands(for: query)
+            all.items += offered.items
+            all.actions += offered.actions
+            all.items.append(CommandItem(id: "app." + app.id, title: app.name, symbol: app.iconSystemName, kind: "App",
+                                         revealsApp: app.id, run: {}))
+        }
+        return all
+    }
+
+    /// A command ran: show the app it belongs to, or close the notch (it opened something elsewhere).
+    private func commandRan(revealing appID: String?) {
+        guard let notch = notches.values.first(where: { $0.model.isCommandBarShown }) else { return }
+        if let appID {
+            notch.model.select(appID)
+            notch.panel.makeFirstResponder(notch.panel.contentView)
+        } else {
+            closeFromKeyboard(notch)
+        }
     }
 
     private func closeFromKeyboard(_ notch: ScreenNotch) {
