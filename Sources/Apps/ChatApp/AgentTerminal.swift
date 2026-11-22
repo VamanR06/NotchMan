@@ -23,8 +23,8 @@ final class TerminalSession: Identifiable {
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
     @ObservationIgnored private var cloneDetector = CloneDetector()
-    /// Every key pressed in this terminal (after shortcut translation).
-    @ObservationIgnored var onKey: ((NSEvent) -> Void)?
+    /// Every key pressed in this terminal (after shortcut translation). Return true to keep it from the program.
+    @ObservationIgnored var onKey: ((NSEvent) -> Bool)?
     /// The process exited.
     @ObservationIgnored var onExit: (() -> Void)?
     /// The user clicked into this terminal.
@@ -50,7 +50,7 @@ final class TerminalSession: Identifiable {
             self?.onExit?()
         }
         events.onTitle = { [weak self] title in self?.title = title }
-        view.onKey = { [weak self] event in self?.onKey?(event) }
+        view.onKey = { [weak self] event in self?.onKey?(event) ?? false }
         view.workingDirectory = { [weak self] in self?.workingDirectory }
         view.onOutput = { [weak self] bytes in self?.output(bytes) }
         view.onOpenFile = { [weak self] mention, anchor in
@@ -145,9 +145,19 @@ final class TerminalSession: Identifiable {
 
     /// The visible text (for tests and diagnostics).
     var screenText: String {
+        screenLines.joined(separator: "\n")
+    }
+
+    /// The visible rows, top to bottom.
+    var screenLines: [String] {
         let terminal = view.getTerminal()
         return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
-            .joined(separator: "\n")
+    }
+
+    /// Where the cursor is on screen: zero-based row and column.
+    var cursor: (row: Int, column: Int) {
+        let location = view.getTerminal().getCursorLocation()
+        return (location.y, location.x)
     }
 }
 
@@ -192,7 +202,7 @@ final class AgentTerminal: Identifiable {
     init(agent: ClaudeAgent) {
         id = agent.id
         self.agent = agent
-        claude.onKey = { [weak self] event in self?.keyPressed(event) }
+        claude.onKey = { [weak self] event in self?.keyPressed(event) ?? false }
         claude.onNewTab = { [weak self] in self?.addShell().session.focusWhenShown() }
     }
 
@@ -276,23 +286,45 @@ final class AgentTerminal: Identifiable {
 
     // MARK: - ← out of the session
 
-    /// ← either moves the cursor (while editing) or makes Claude Code open its agent list; only the program
-    /// knows which. So let it through, and if the agent list appears, hand over to NotchMan's Overview.
-    private func keyPressed(_ event: NSEvent) {
+    /// ← either moves the cursor (while editing) or makes Claude Code open its agent list. With the caret at the
+    /// start of Claude's input box there's nowhere left to move, so go straight to NotchMan's Overview and keep the
+    /// key from Claude (no flash of its list, and the session stays attached). Otherwise let it through, and if
+    /// Claude's agent list appears anyway, hand over then. Returns true when the key was taken.
+    private func keyPressed(_ event: NSEvent) -> Bool {
         let plainLeftArrow = event.keyCode == TerminalKeyMap.KeyCode.left
             && event.modifierFlags.intersection([.command, .option, .shift, .control]).isEmpty
-        guard plainLeftArrow, isRunning else { return }
+        guard plainLeftArrow, isRunning else { return false }
         watch?.cancel()
+        let cursor = claude.cursor
+        if Self.caretAtPromptStart(lines: claude.screenLines, cursorRow: cursor.row, cursorColumn: cursor.column) {
+            onAgentList?()
+            return true
+        }
         watch = Task { [weak self] in
-            for _ in 0..<15 {
-                try? await Task.sleep(for: .milliseconds(100))
+            for _ in 0..<40 {
+                try? await Task.sleep(for: .milliseconds(25))
                 guard let self, !Task.isCancelled else { return }
                 if Self.isClaudeAgentList(self.screenText) {
+                    // Enter returns Claude to the session, so reopening shows it rather than Claude's list.
+                    self.claude.view.send(data: [0x0D][...])
                     self.onAgentList?()
                     return
                 }
             }
         }
+        return false
+    }
+
+    /// Claude Code's input line starts with `❯` under a rule (`────`). True when the cursor sits on that line at or
+    /// before the first character after `❯ `, i.e. ← can't move it any further left.
+    static func caretAtPromptStart(lines: [String], cursorRow: Int, cursorColumn: Int) -> Bool {
+        guard lines.indices.contains(cursorRow), cursorRow > 0 else { return false }
+        let line = Array(lines[cursorRow])
+        guard let marker = line.firstIndex(of: "❯"),
+              line[..<marker].allSatisfy({ $0 == " " || $0 == "│" }) else { return false }
+        let ruleAbove = lines[cursorRow - 1].trimmingCharacters(in: .whitespaces)
+        guard ruleAbove.hasPrefix("─") else { return false }
+        return cursorColumn <= marker + 2
     }
 
     /// Claude Code's agent list (what `claude attach` shows after ←), recognized by its prompt and footer.
@@ -304,8 +336,8 @@ final class AgentTerminal: Identifiable {
 /// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel, and
 /// translates macOS editing shortcuts into what terminal programs expect (see `TerminalKeyMap`).
 final class NotchTerminalView: LocalProcessTerminalView {
-    /// Sees every key pressed in this terminal (after our shortcut translation).
-    var onKey: ((NSEvent) -> Void)?
+    /// Sees every key pressed in this terminal (after our shortcut translation); true keeps it from the program.
+    var onKey: ((NSEvent) -> Bool)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -428,9 +460,8 @@ final class NotchTerminalView: LocalProcessTerminalView {
                     newTab()
                     return true
                 }
-                let handled = terminal.handle(event)
-                if !handled { terminal.onKey?(event) }
-                return handled
+                if terminal.handle(event) { return true }
+                return terminal.onKey?(event) ?? false
             }
             return handled ? nil : event
         }

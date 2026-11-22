@@ -839,8 +839,9 @@ public final class ChatApp: NotchApp {
     func openInNotch(_ agent: ClaudeAgent) {
         let terminal = terminals[agent.id] ?? AgentTerminal(agent: agent)
         terminals[agent.id] = terminal
-        // ← out of the session goes to NotchMan's Overview, not Claude Code's own agent list.
-        terminal.onAgentList = { [weak self] in self?.closeTerminal(agent.id) }
+        // ← out of the session goes to NotchMan's Overview, not Claude Code's own agent list. The terminal stays
+        // attached, so opening the session again is instant.
+        terminal.onAgentList = { [weak self] in self?.backToOverview() }
         terminal.onClick = { [weak self] in self?.terminalClicked() }
         terminal.update(agent)
         showingOverview = true
