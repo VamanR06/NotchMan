@@ -112,6 +112,17 @@ import Testing
             == "The build works again. The cause was a missing\nimport in ShelfView.swift.\n\n- added the import")
     }
 
+    @Test func spinnerAboveTheInputBoxMeansWorking() {
+        let working = ["⏺ Writing…", "", "✻ Pondering… (12s · esc to interrupt)", "", "────", "❯ ", "────"]
+        #expect(AgentTerminal.showsSpinner(working))
+        // Finished: the spinner turns into a past-tense summary without the ellipsis.
+        let done = ["⏺ All set.", "", "✻ Worked for 1m 4s", "", "────", "❯ ", "────", "  ? for shortcuts"]
+        #expect(!AgentTerminal.showsSpinner(done))
+        // A reply's own "…" further up isn't the spinner.
+        let quoted = ["* step one…", "", "", "", "", "", "", "⏺ Done.", "", "────", "❯ ", "────"]
+        #expect(!AgentTerminal.showsSpinner(quoted))
+    }
+
     @Test func noLiveReplyWhileAToolRuns() {
         let screen = ["⏺ Done thinking.", "", "⏺ Bash(swift test)", "  ⎿  Running…", "", "────", "❯ ", "────"]
         #expect(AgentTerminal.liveReply(screen) == nil)

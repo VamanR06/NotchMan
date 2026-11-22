@@ -320,6 +320,18 @@ final class AgentTerminal: Identifiable {
         line.range(of: #"^[A-Za-z_][\w.:-]*( \(MCP\))?\("#, options: .regularExpression) != nil || line.contains("(ctrl+o")
     }
 
+    /// Claude's spinner is up — a turn is running. It sits just above the input box (a reply's own lines further up
+    /// don't count, even with a `…` in them).
+    static func showsSpinner(_ lines: [String]) -> Bool {
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        var end = lines.count
+        if let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }), prompt > 0,
+           lines[prompt - 1].trimmingCharacters(in: .whitespaces).hasPrefix("─") {
+            end = prompt - 1
+        }
+        return lines[max(0, end - 6)..<end].contains { isStatusLine($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
     /// Claude's spinner line under the reply (`✻ Thinking… (esc to interrupt)`).
     static func isStatusLine(_ line: String) -> Bool {
         if line.contains("esc to interrupt") { return true }

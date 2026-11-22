@@ -17,10 +17,16 @@ struct AgentSessionView: View {
     @State private var addingQuickCommand = false
     /// The reply Claude is writing, read off its terminal until the finished one reaches the session file.
     @State private var liveReply: String?
+    /// Whether Claude's terminal shows its spinner; nil until it has been seen once in this terminal (so a screen
+    /// that looks different never hides a turn that's really running).
+    @State private var screenBusy: Bool?
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
-    private var isWorking: Bool { terminal.agent.status == "busy" || terminal.agent.phase == .working }
+    /// Working, by Claude's own spinner in its attached terminal when that's been seen (it's there only while a turn
+    /// runs, and is current to the moment); else by what `claude agents` last said, which can lag by seconds.
+    private var isWorking: Bool { screenBusy ?? agentBusy }
+    private var agentBusy: Bool { terminal.agent.status == "busy" || terminal.agent.phase == .working }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -39,7 +45,7 @@ struct AgentSessionView: View {
             composer
         }
         .task(id: terminal.id) { await transcript.follow() }
-        .task(id: "\(terminal.id)-\(isWorking)") { await watchLiveReply() }
+        .task(id: terminal.id) { await watchTerminal() }
         .onAppear {
             pasteMonitor.start(isActive: { composerFocused && terminal.isRunning }) { image in
                 if let file = ImageAttachments.save(image) { images.append(file) }
@@ -243,29 +249,35 @@ struct AgentSessionView: View {
         }
     }
 
-    /// While Claude works, reads the reply it's writing off its terminal a few times a second; drops it once the
-    /// session file has it (or Claude stops).
-    private func watchLiveReply() async {
-        guard isWorking else {
-            // Done: hold the text a moment until the finished reply reaches the session file, so it doesn't blink.
-            for _ in 0..<12 where liveReply != nil {
-                let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
-                    if case .reply(let text) = entry.kind { text } else { nil }
-                }
-                if let live = liveReply, AgentTerminal.reply(live, isIn: recent) { break }
-                try? await Task.sleep(for: .milliseconds(250))
-                if Task.isCancelled { return }
-            }
-            liveReply = nil
-            return
-        }
+    /// A few times a second, reads Claude's attached terminal: whether its spinner is up (working or not), and the
+    /// reply it's writing, until the session file has that reply. When the spinner and `claude agents` disagree,
+    /// asks `claude agents` again so the overview catches up too.
+    private func watchTerminal() async {
+        screenBusy = nil
+        liveReply = nil
+        var sawSpinner = false
+        var idleSince: Date?
         while !Task.isCancelled {
+            let lines = terminal.isRunning ? terminal.claude.screenLines : []
+            let spinner = AgentTerminal.showsSpinner(lines)
+            if spinner { sawSpinner = true }
+            let busy: Bool? = terminal.isRunning && sawSpinner ? spinner : nil
+            if busy != screenBusy {
+                screenBusy = busy
+                if let busy, busy != agentBusy { Task { await app.agentMonitor?.refresh() } }
+            }
+
+            let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
+                if case .reply(let text) = entry.kind { text } else { nil }
+            }
             var next: String?
-            if terminal.isRunning, let live = AgentTerminal.liveReply(terminal.claude.recentLines()) {
-                let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
-                    if case .reply(let text) = entry.kind { text } else { nil }
-                }
+            if isWorking, terminal.isRunning, let live = AgentTerminal.liveReply(terminal.claude.recentLines()) {
                 next = AgentTerminal.reply(live, isIn: recent) ? nil : live
+                idleSince = nil
+            } else if let current = liveReply, !AgentTerminal.reply(current, isIn: recent) {
+                // Finished: hold the text a moment until the reply reaches the session file, so it doesn't blink.
+                idleSince = idleSince ?? Date()
+                next = Date().timeIntervalSince(idleSince!) < 3 ? current : nil
             }
             if next != liveReply { liveReply = next }
             try? await Task.sleep(for: .milliseconds(250))
