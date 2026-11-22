@@ -64,21 +64,43 @@ struct AgentSessionView: View {
     @State private var unseenBelow = false
     /// The prompt whose part of the conversation is on screen (marked in the rail).
     @State private var visiblePrompt: String?
+    /// How many of the latest rows are drawn. A plain stack (not a lazy one) keeps every height exact — a lazy
+    /// stack's guesses made the view jump, or show black and stop scrolling — so long sessions show their latest
+    /// part and grow on request.
+    @State private var shownCount = Self.page
+    private static let page = 60
 
     private var conversation: some View {
         let items = SessionItem.items(transcript.entries)
         let prompts = items.compactMap { item -> PromptMark? in
             if case .prompt(let id, let text) = item { PromptMark(id: id, text: text) } else { nil }
         }
+        let shown = items.suffix(shownCount)
+        let hidden = items.count - shown.count
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
                     if transcript.isLoaded && transcript.entries.isEmpty {
                         note("Nothing in this session yet.")
                     } else if !transcript.isLoaded {
                         note("Reading the session…")
                     }
-                    ForEach(items) { item in
+                    if hidden > 0 {
+                        Button {
+                            let first = shown.first?.id
+                            shownCount += Self.page
+                            // Keep your place: the row that was first stays where it was.
+                            if let first { Task { @MainActor in proxy.scrollTo(first, anchor: .top) } }
+                        } label: {
+                            Text("Show \(min(hidden, Self.page)) earlier")
+                                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Capsule().fill(.white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                    }
+                    ForEach(shown) { item in
                         row(item)
                     }
                     ForEach(approvals) { request in
@@ -94,12 +116,12 @@ struct AgentSessionView: View {
                         }
                     }
                     Color.clear.frame(height: 1).id(Self.bottom)
-                        .onAppear { follow = true; unseenBelow = false }
                 }
                 .scrollTargetLayout()
-                .padding(.leading, 12).padding(.trailing, prompts.count > 1 ? 24 : 12).padding(.vertical, 10)
+                .padding(.leading, 12).padding(.trailing, prompts.count > 1 ? Self.railInset + 14 : 12).padding(.vertical, 10)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollContentBackground(.hidden)
             .modifier(FollowsBottom(follow: $follow, unseenBelow: $unseenBelow) { proxy.scrollTo(Self.bottom, anchor: .bottom) })
             .modifier(TracksVisiblePrompt { ids in
                 visiblePrompt = PromptMark.current(visible: ids, in: items) ?? visiblePrompt
@@ -111,10 +133,18 @@ struct AgentSessionView: View {
                 if prompts.count > 1 {
                     PromptRail(prompts: prompts, current: follow ? prompts.last?.id : visiblePrompt) { id in
                         follow = false
+                        unseenBelow = false
                         visiblePrompt = id
-                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                        // An older prompt than what's drawn: draw back to it first, then go there.
+                        if let index = items.firstIndex(where: { $0.id == id }), items.count - index > shownCount {
+                            shownCount = items.count - index
+                        }
+                        Task { @MainActor in
+                            withAnimation(.smooth(duration: 0.3)) { proxy.scrollTo(id, anchor: .top) }
+                        }
                     }
-                    .padding(.trailing, 4)
+                    // Clear of the scroller, which shows along the very edge while scrolling.
+                    .padding(.trailing, Self.railInset)
                 }
             }
             .overlay(alignment: .bottom) {
@@ -135,19 +165,38 @@ struct AgentSessionView: View {
             }
             .onChange(of: transcript.entries.count) { _, _ in
                 if follow {
-                    proxy.scrollTo(Self.bottom, anchor: .bottom)
+                    toEnd(proxy)
                 } else {
                     withAnimation(.easeOut(duration: 0.15)) { unseenBelow = true }
                 }
             }
+            .onChange(of: terminal.id) { _, _ in
+                shownCount = Self.page
+                follow = true
+                unseenBelow = false
+                visiblePrompt = nil
+            }
             .onChange(of: approvals.count) { _, _ in
                 follow = true
+                toEnd(proxy)
+            }
+        }
+    }
+
+    /// To the end now, and again once the new rows are laid out (their heights are only known then).
+    private func toEnd(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(Self.bottom, anchor: .bottom)
+        Task { @MainActor in
+            for delay in [0, 60, 200] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard follow else { return }
                 proxy.scrollTo(Self.bottom, anchor: .bottom)
             }
         }
     }
 
     private static let bottom = "bottom"
+    private static let railInset: CGFloat = 13
     static let mono = Font.system(size: 11.5, design: .monospaced)
 
     /// Laid out like Claude Code's own terminal: a marker in the gutter (❯ you, ⏺ Claude, ⎿ its steps), everything
@@ -164,7 +213,7 @@ struct AgentSessionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 5)
-            .background(Rectangle().fill(.white.opacity(visiblePrompt == id && !follow ? 0.1 : 0.06)).padding(.leading, -12).padding(.trailing, -24))
+            .background(Rectangle().fill(.white.opacity(visiblePrompt == id && !follow ? 0.1 : 0.06)).padding(.leading, -12).padding(.trailing, -40))
             .padding(.top, 6)
         case .reply(_, let text):
             Gutter(mark: "⏺", color: .white.opacity(0.85)) {
@@ -278,13 +327,13 @@ private struct PromptRail: View {
 
     private var ticks: some View {
         VStack(alignment: .trailing, spacing: 5) {
-            ForEach(prompts.suffix(28)) { prompt in
+            ForEach(prompts.suffix(18)) { prompt in
                 Capsule()
                     .fill(.white.opacity(prompt.id == current ? 0.85 : 0.22))
                     .frame(width: prompt.id == current ? 12 : 7, height: 2)
             }
         }
-        .padding(.vertical, 8).padding(.horizontal, 5)
+        .padding(.vertical, 8).padding(.horizontal, 4)
         .contentShape(Rectangle())
     }
 
@@ -332,13 +381,20 @@ private struct PromptRailRow: View {
     }
 }
 
-/// Follows new rows while you're at the end, and stays put once you scroll up (macOS 15's scroll geometry; on 14
-/// the bottom marker coming into view does the same, roughly).
+/// Follows new rows while you're at the end and leaves you be once you scroll up (macOS 15's scroll geometry).
+/// Never moves the view while you're scrolling it, and jumps at most once per update, so it can't fight you.
 private struct FollowsBottom: ViewModifier {
     @Binding var follow: Bool
     @Binding var unseenBelow: Bool
     let scrollToBottom: () -> Void
     @State private var userScrolling = false
+    @State private var pending = false
+
+    struct Position: Equatable {
+        var offset: CGFloat
+        var height: CGFloat
+        var atEnd: Bool
+    }
 
     func body(content: Content) -> some View {
         if #available(macOS 15, *) {
@@ -346,24 +402,32 @@ private struct FollowsBottom: ViewModifier {
                 .onScrollPhaseChange { _, phase in
                     userScrolling = phase == .interacting || phase == .decelerating || phase == .tracking
                 }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 30
-                } action: { _, atEnd in
-                    if atEnd {
-                        follow = true
-                        unseenBelow = false
-                    } else if userScrolling {
-                        follow = false
+                .onScrollGeometryChange(for: Position.self) { geometry in
+                    let bottom = geometry.contentOffset.y + geometry.containerSize.height
+                    return Position(offset: geometry.contentOffset.y, height: geometry.contentSize.height,
+                                    atEnd: bottom >= geometry.contentSize.height - 30)
+                } action: { old, new in
+                    if new.atEnd {
+                        if !follow { follow = true }
+                        if unseenBelow { unseenBelow = false }
+                    } else if userScrolling, new.offset < old.offset - 0.5 {
+                        follow = false  // you scrolled up
                     }
-                }
-                // Anything that makes the content taller — a new row, a reply growing, a step finishing, rows
-                // being measured as they're laid out — keeps the end in view while following.
-                .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-                    guard new > old + 0.5, follow else { return }
-                    scrollToBottom()
+                    // Taller content (a new row, a reply growing, a step finishing) keeps the end in view.
+                    if follow, !userScrolling, !new.atEnd, new.height > old.height + 0.5 { schedule() }
                 }
         } else {
             content
+        }
+    }
+
+    /// One jump to the end after this update settles, however many changes arrive in it.
+    private func schedule() {
+        guard !pending else { return }
+        pending = true
+        Task { @MainActor in
+            pending = false
+            if follow && !userScrolling { scrollToBottom() }
         }
     }
 }
