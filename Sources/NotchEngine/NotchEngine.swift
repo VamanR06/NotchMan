@@ -185,6 +185,7 @@ public final class NotchEngine {
         panel.contentView = FirstMouseHostingView(rootView: root)
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
+        model.chooseOpening = { [weak self] current in await self?.chooseOpening(current: current) }
         // A nonactivating panel can take typing without making NotchMan the active app, so the app you were
         // in stays active and gets the keyboard back as soon as the notch closes. Hovering makes it key, as do a
         // click inside (AppKit) and the hotkey; either way the model hears about it here.
@@ -360,6 +361,22 @@ public final class NotchEngine {
         notch.panel.makeKey()
         notch.panel.makeFirstResponder(notch.panel.contentView)
         if UserDefaults.standard.object(forKey: Self.commandBarOnHotKeyKey) as? Bool ?? true { openCommandBar(on: model) }
+    }
+
+    // MARK: - Opening to what's relevant
+
+    /// The app a hover opening should show instead of `current`, if any (see `OpeningChooser`).
+    func chooseOpening(current: String) async -> String? {
+        guard UserDefaults.standard.object(forKey: OpeningChooser.enabledKey) as? Bool ?? true else { return nil }
+        let states = apps.map { OpeningChooser.AppState(id: $0.id, name: $0.name, relevance: $0.relevance) }
+        guard JevSettings.isAvailable else { return OpeningChooser.localPick(apps: states, current: current) }
+        let request = OpeningChooser.request(apps: states, current: current, context: .current(), redactor: Jev.redactor())
+        do {
+            let answers = try await Jev.ask(state: request.state, questions: request.questions, timeout: 1.2)
+            return OpeningChooser.pick(answers, current: current, apps: states)
+        } catch {
+            return OpeningChooser.localPick(apps: states, current: current)
+        }
     }
 
     // MARK: - Command bar

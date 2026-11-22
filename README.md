@@ -121,6 +121,11 @@ connected you can also say what you want — "move the resume I downloaded to Re
 denying a request and checking off a task ask for a second Return. Anything else can go to a new Claude chat. Esc
 clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
 
+**Opens to what's relevant.** Hovering opens the app that fits the moment instead of the last one: a meeting about
+to start, an approval waiting, the job page your browser is on. With [Jev](#intelligence-jev) connected it weighs
+every app's state with the app you're in and the time of day; without it, only urgent things switch it. Once you've
+picked an app yourself it stays put (Settings → General → Open to what's relevant).
+
 Hovering opens the notch ready to type in, while the app you were in stays active. Once you type something in the
 notch it stays open until Esc, the hotkey or a click outside; if you move away without typing, it closes and the
 keyboard goes back to the app you were in.
@@ -453,11 +458,14 @@ the Shelf's suggested folders. Without a key, NotchMan ranks them with its own r
 - **Your identity** (what counts as "you") defaults to your account's name; add your email or nicknames there,
   and try any text to see how it would be sent.
 - **What was sent** lists the last 50 requests exactly as they left the Mac, kept only while NotchMan runs.
+- **Opening the notch** sends each app's one-line state ("Meeting “…” starts in 3 min", "2 overdue tasks", redacted),
+  the app in front and the time of day, so Jev can pick which app to show.
 - **The command bar** sends what you typed (redacted) and the things it could mean — shelved files and downloads,
   folders, sessions, approvals and tasks, listed by opaque keys with redacted names — and Jev picks among them.
 - **How well it works:** `JEV_API_KEY=… swift test --filter JevDropEval` runs 30 typical drags against the real
   service and prints how often the right folder comes first / in the top three, with and without Jev, plus the
-  latency; `--filter JevCommandEval` does the same for 16 typed requests.
+  latency; `--filter JevCommandEval` does the same for 16 typed requests and `--filter JevOpeningEval` for 10
+  moments the notch is opened.
 
 ## Development
 
@@ -492,7 +500,8 @@ Open `Package.swift` in Xcode to edit and debug. The only dependency is
 2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
-4. Optionally implement `commands(for:)` so the command bar can find your app's things (`CommandItem`s) and do
+4. Optionally report `relevance` (a one-line state, urgent or not) so the notch can open to your app when it matters,
+   and implement `commands(for:)` so the command bar can find your app's things (`CommandItem`s) and do
    things described in words (`CommandAction`s, whose parameters list the choices Jev picks from).
 
 Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`

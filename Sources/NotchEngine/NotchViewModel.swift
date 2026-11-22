@@ -64,6 +64,16 @@ final class NotchViewModel {
 
     @ObservationIgnored private var pendingCollapse: Task<Void, Never>?
     @ObservationIgnored private var pendingExpand: Task<Void, Never>?
+    /// Picks the app a hover opening should show (given the one shown last), or nil to stay. Set by the engine.
+    @ObservationIgnored var chooseOpening: ((String) async -> String?)?
+    @ObservationIgnored private var openingChoice: Task<Void, Never>?
+    /// The chosen app, waiting for the notch to finish opening.
+    @ObservationIgnored private var chosenApp: String?
+    /// When this opening started showing, and what it showed: a late or overruled choice is dropped.
+    @ObservationIgnored private var openedAt: Date?
+    @ObservationIgnored private var shownAtOpening: String?
+    /// How long after opening a choice may still switch the app (later it would pull the rug).
+    static let choiceWindow: TimeInterval = 1.5
     /// Set while an app-requested expansion is showing; cleared once the user hovers.
     @ObservationIgnored private var attentionExpansion = false
 
@@ -249,6 +259,7 @@ final class NotchViewModel {
             if contains(point, slack: 4) {
                 guard pendingExpand == nil else { return }
                 apps.forEach { $0.notchWillOpen() }
+                startChoosingOpening()
                 pendingExpand = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(Self.hoverDelay))
                     guard !Task.isCancelled else { return }
@@ -260,6 +271,8 @@ final class NotchViewModel {
             } else {
                 pendingExpand?.cancel()
                 pendingExpand = nil
+                openingChoice?.cancel()
+                openingChoice = nil
             }
         case .expanded:
             // Same slack as the collapsed hover target, so the two states can't fight over the edge.
@@ -289,17 +302,46 @@ final class NotchViewModel {
     /// Shows the app that claims this opening, now and once a moment later (its check may still be running),
     /// unless the user has picked an app themselves by then.
     private func offerOpening() {
+        openedAt = Date()
+        shownAtOpening = selectedAppID
         claimOpening()
-        let shown = selectedAppID
+        applyChosenApp()
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
-            guard let self, self.state == .expanded, self.selectedAppID == shown else { return }
+            // Still showing what the opening showed (or what was chosen for it): you haven't picked an app yourself.
+            guard let self, self.state == .expanded, self.selectedAppID == self.shownAtOpening else { return }
             self.claimOpening()
         }
     }
 
     private func claimOpening() {
         if let app = apps.first(where: \.claimsNotchOnOpen), app.id != selectedAppID { select(app.id) }
+    }
+
+    /// Asks which app fits as the hover starts, so the answer is usually back by the time the notch is open.
+    private func startChoosingOpening() {
+        openingChoice?.cancel()
+        chosenApp = nil
+        guard let chooseOpening else { return }
+        let shown = selectedAppID
+        openingChoice = Task { [weak self] in
+            let choice = await chooseOpening(shown)
+            guard let self, !Task.isCancelled else { return }
+            self.chosenApp = choice
+            self.applyChosenApp()
+        }
+    }
+
+    /// Shows the chosen app once the notch is open — unless an app claimed the opening, you've switched apps
+    /// yourself, or it's been open too long for a switch to feel like part of opening.
+    private func applyChosenApp(now: Date = Date()) {
+        guard let choice = chosenApp, state == .expanded, let openedAt,
+              now.timeIntervalSince(openedAt) <= Self.choiceWindow, selectedAppID == shownAtOpening,
+              !apps.contains(where: \.claimsNotchOnOpen), choice != selectedAppID,
+              apps.contains(where: { $0.id == choice }) else { return }
+        chosenApp = nil
+        select(choice)
+        shownAtOpening = choice
     }
 
     private func takeKeyboard() {
@@ -337,6 +379,10 @@ final class NotchViewModel {
         selectionGraceRect = nil
         isLauncherOpen = false
         isCommandBarShown = false
+        openingChoice?.cancel()
+        openingChoice = nil
+        chosenApp = nil
+        openedAt = nil
         let hadKeyboard = tookKeyboard
         tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }

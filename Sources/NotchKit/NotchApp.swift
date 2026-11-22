@@ -50,6 +50,9 @@ public protocol NotchApp: AnyObject {
     /// What the command bar can find and do in this app, given what's typed so far.
     func commands(for query: String) -> NotchCommands
 
+    /// What this app has going on, in a line ("Standup starts in 3 min"), for choosing which app the notch opens to.
+    var relevance: NotchRelevance? { get }
+
     /// Handles a message sent by another app via `NotchContext.send(_:to:)`.
     func receive(_ message: NotchMessage)
 
@@ -66,10 +69,24 @@ public extension NotchApp {
     var acceptsFileDrags: Bool { false }
     func fileDragEntered(_ urls: [URL]) {}
     func commands(for query: String) -> NotchCommands { .none }
+    var relevance: NotchRelevance? { nil }
     func notchWillOpen() {}
     var claimsNotchOnOpen: Bool { false }
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}
     func handleKey(_ event: NSEvent) -> Bool { false }
+}
+
+/// An app's current state for choosing what the notch opens to.
+public struct NotchRelevance: Equatable, Sendable {
+    /// One line, e.g. "1 permission request waiting (Bash)". Sent to Jev redacted.
+    public var summary: String
+    /// Worth opening to even without Jev: a meeting about to start, an approval waiting.
+    public var isUrgent: Bool
+
+    public init(_ summary: String, urgent: Bool = false) {
+        self.summary = summary
+        isUrgent = urgent
+    }
 }
