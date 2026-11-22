@@ -666,13 +666,6 @@ struct AgentTerminalScreen: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Button { app.backToOverview() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.7))
-            .help("Back to Overview (terminals keep running)")
-
             VStack(alignment: .leading, spacing: 0) {
                 Text(terminal.transcript.title ?? terminal.agent.name)
                     .font(.system(size: 12, weight: .semibold))

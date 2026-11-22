@@ -10,7 +10,12 @@ struct AgentsOverview: View {
         if app.showingShells {
             ShellScreen(app: app, shells: app.shells)
         } else if let terminal = app.shownTerminal {
-            AgentTerminalScreen(app: app, terminal: terminal)
+            // The open session beside a slim list of the others, so switching is one click.
+            HStack(alignment: .top, spacing: 8) {
+                SessionSidebar(app: app, selected: terminal.id)
+                    .frame(width: 150)
+                AgentTerminalScreen(app: app, terminal: terminal)
+            }
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 // One slim row: the chats, your terminals, and plan usage at a glance (click it for the details).
@@ -512,6 +517,65 @@ private struct GroupingToggle: View {
 }
 
 /// Needs you / working / done / idle, as a small mark.
+/// The sessions as a slim list beside the open one, most urgent first (needs you, working, then the rest by recency).
+private struct SessionSidebar: View {
+    let app: ChatApp
+    let selected: String
+
+    var body: some View {
+        let agents = (app.agentMonitor?.agents ?? []).filter { $0.phase != .done || app.unseenAgents.contains($0.id) || $0.id == selected
+            || ($0.startedAt.map { Date().timeIntervalSince($0) < 86_400 } ?? false) }
+            .sorted { ($0.phase, -($0.startedAt?.timeIntervalSince1970 ?? 0)) < ($1.phase, -($1.startedAt?.timeIntervalSince1970 ?? 0)) }
+        VStack(alignment: .leading, spacing: 2) {
+            Button(action: app.backToOverview) {
+                Label("All sessions", systemImage: "chevron.left")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6).padding(.vertical, 5)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(agents) { agent in
+                        SidebarRow(app: app, agent: agent, isSelected: agent.id == selected)
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct SidebarRow: View {
+    let app: ChatApp
+    let agent: ClaudeAgent
+    let isSelected: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            PhaseMark(phase: agent.phase).frame(width: 12).scaleEffect(0.85)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(agent.name).font(.system(size: 11.5, weight: isSelected ? .semibold : .regular)).lineLimit(1)
+                    .foregroundStyle(.white.opacity(isSelected ? 1 : 0.8))
+                Text(agent.project).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if app.unseenAgents.contains(agent.id) {
+                Circle().fill(agent.phase == .needsYou ? .orange : .green).frame(width: 5, height: 5)
+            }
+        }
+        .padding(.horizontal, 6).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(isSelected ? 0.12 : hovering ? 0.06 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { if !isSelected { app.open(agent) } }
+        .help(agent.kind == .background ? agent.name : "\(agent.name) — opens in your editor")
+    }
+}
+
 private struct PhaseMark: View {
     let phase: ClaudeAgent.Phase
 

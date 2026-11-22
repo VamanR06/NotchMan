@@ -6,10 +6,12 @@ struct JobsView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Pipeline(app: app)
-                .frame(width: 120, alignment: .leading)
-
-            Rectangle().fill(.white.opacity(0.1)).frame(width: 1)
+            // The pipeline only means something once signed in.
+            if app.isSignedIn {
+                Pipeline(app: app)
+                    .frame(width: 120, alignment: .leading)
+                Rectangle().fill(.white.opacity(0.08)).frame(width: 1)
+            }
 
             if !app.isSignedIn {
                 placeholder("Sign in to JobManager to see your applications.", settings: true)
@@ -387,14 +389,11 @@ private struct Pipeline: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.6))
             Spacer(minLength: 4)
-            HStack(spacing: 8) {
-                stat(.applied, counts)
-                stat(.oa, counts)
-                stat(.interview, counts)
-            }
-            HStack(spacing: 8) {
-                stat(.accepted, counts)
-                stat(.rejected, counts)
+            let stages = [JobStatus.applied, .oa, .interview, .accepted, .rejected].filter { (counts[$0] ?? 0) > 0 }
+            ForEach(Array(stride(from: 0, to: stages.count, by: 3)), id: \.self) { start in
+                HStack(spacing: 8) {
+                    ForEach(stages[start..<min(start + 3, stages.count)], id: \.self) { stat($0, counts) }
+                }
             }
             HStack(spacing: 8) {
                 Button { Task { await app.refresh() } } label: { Image(systemName: "arrow.clockwise") }

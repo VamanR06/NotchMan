@@ -274,9 +274,9 @@ private struct DestinationColumn: View {
             } else {
                 HStack {
                     Text("Drop into a folder")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .textCase(.uppercase)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.leading, 8)
                     Spacer()
                     CopyMoveSwitch(app: app)
                 }
@@ -305,7 +305,7 @@ private struct DestinationColumn: View {
                                 }
                             }
                         }
-                        group("Places") {
+                        group(recents.isEmpty && app.projects.isEmpty && app.predictor.suggestions.isEmpty ? nil : "Places") {
                             ForEach(ShelfApp.places, id: \.url) { place in
                                 DestinationRow(app: app, folder: place.url, symbol: place.symbol, title: place.name, subtitle: nil)
                             }
@@ -326,12 +326,14 @@ private struct DestinationColumn: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
-                .textCase(.uppercase)
+    private func group<Content: View>(_ title: String?, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.leading, 8).padding(.bottom, 2)
+            }
             content()
         }
     }
@@ -344,7 +346,8 @@ private struct DestinationRow: View {
     let symbol: String
     let title: String
     let subtitle: String?
-    var tint: Color = .white.opacity(0.7)
+    var tint: Color = .white.opacity(0.6)
+    @State private var hovering = false
 
     var body: some View {
         Button { app.browse(folder) } label: {
@@ -357,13 +360,14 @@ private struct DestinationRow: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(0.35))
+                Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(hovering ? 0.5 : 0))
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.06)))
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .fileDropTarget(folder.lastPathComponent, cornerRadius: 7, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
         .help("Drop to put files in \(folder.path); hold a drag here to open it. ⌥ does the other of Copy/Move.")
     }
