@@ -10,6 +10,9 @@ struct AgentSessionView: View {
     @State private var draft = ""
     @State private var preview: FilePreview?
     @FocusState private var composerFocused: Bool
+    /// Images going with the next message (pasted with ⌘V or dropped on the session).
+    @State private var images: [URL] = []
+    @State private var pasteMonitor = ImagePasteMonitor()
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
@@ -27,6 +30,28 @@ struct AgentSessionView: View {
             composer
         }
         .task(id: terminal.id) { await transcript.follow() }
+        .onAppear {
+            pasteMonitor.start(isActive: { composerFocused && terminal.isRunning }) { image in
+                if let file = ImageAttachments.save(image) { images.append(file) }
+            }
+        }
+        .onDisappear { pasteMonitor.stop() }
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            for provider in providers {
+                if provider.canLoadObject(ofClass: URL.self) {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url, ImageAttachments.isImage(url) else { return }
+                        Task { @MainActor in images.append(url) }
+                    }
+                } else if provider.canLoadObject(ofClass: NSImage.self) {
+                    _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                        guard let image = image as? NSImage else { return }
+                        Task { @MainActor in if let file = ImageAttachments.save(image) { images.append(file) } }
+                    }
+                }
+            }
+            return true
+        }
     }
 
     // MARK: - Conversation
@@ -136,6 +161,18 @@ struct AgentSessionView: View {
     // MARK: - Composer
 
     private var composer: some View {
+        VStack(spacing: 0) {
+            if !images.isEmpty {
+                AttachmentStrip(images: images) { url in images.removeAll { $0 == url } }
+            }
+            composerLine
+        }
+        // Claude Code's input box: a rule above and below.
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
+    }
+
+    private var composerLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("❯").font(Self.mono).foregroundStyle(.white.opacity(composerFocused ? 0.9 : 0.5))
             TextField(terminal.isRunning ? "Message \(terminal.agent.name)…" : "Detached — reattach to send",
@@ -153,25 +190,23 @@ struct AgentSessionView: View {
                     return .handled
                 }
             if terminal.isRunning {
-                Text(draft.isEmpty ? "" : "↩ send")
+                Text(draft.isEmpty && images.isEmpty ? "⌘V image" : "↩ send")
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
             } else {
                 Button("Reattach") { app.reattach(terminal) }.controlSize(.small)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        // Claude Code's input box: a rule above and below.
-        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture { composerFocused = true }
     }
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, terminal.isRunning else { return }
-        terminal.sendToClaude(text)
+        guard !text.isEmpty || !images.isEmpty, terminal.isRunning else { return }
+        terminal.sendToClaude(ImageAttachments.message(text, images: images))
         draft = ""
+        images = []
     }
 }
 
