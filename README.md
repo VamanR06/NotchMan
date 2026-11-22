@@ -118,7 +118,10 @@ shelved files, downloads, folders, Claude Code sessions, approvals, tasks and ap
 Start with "add", "todo" or "task" to add a task ("add call recruiter fri 3pm"). With [Jev](#intelligence-jev)
 connected you can also say what you want — "move the resume I downloaded to Resumes", "approve the npm test",
 "I called the recruiter" — and the action it understood shows on top with how sure it is; moving files, allowing or
-denying a request and checking off a task ask for a second Return. Anything else can go to a new Claude chat. Esc
+denying a request and checking off a task ask for a second Return. For anything else, the last rows hand it to
+Claude: **Ask Claude** answers right in the bar (Claude Code with read-only tools — it can look things up but not
+change anything), **Start a Claude Code agent** runs it as a background agent in your latest project that asks
+before every edit and command (approvals come to the notch; asks for a second Return), or open a Claude chat. Esc
 clears the field, then goes back to the app (turn the bar off for ⌥Space in Settings → General).
 
 **Opens to what's relevant.** Hovering opens the app that fits the moment instead of the last one: a meeting about
@@ -290,6 +293,12 @@ PDFs, images, video and documents show in Quick Look — with Open, Quick Look (
 Path; Esc, ✕ or a click outside closes it. **⌘-click** opens the file in its app instead. (While a program in the
 terminal uses the mouse itself, ⌘-click previews.) ← from an empty prompt goes back to the Overview at once and
 keeps the session attached. Interactive sessions open their folder in VS Code/Cursor.
+
+**What sessions are doing (bridge).** Settings → Agents → Install Bridge adds a small Claude Code mod (needs Claude
+Code 2.1.287 or later) that tells NotchMan what each session is doing. Then the Overview shows it under each session
+("Editing ShelfView.swift", "Run the tests"), the notch can open to the Agents app when it matters, and the Shelf and
+command bar offer the files Claude just changed. The mod only posts to NotchMan on this Mac (with its secret token),
+never blocks or changes anything Claude does, and loads in sessions started after installing; Remove undoes it.
 
 **Terminal:** the Terminal pill on the Overview (or **⌘T** in the Agents app) opens a terminal of your own in
 the notch, in the last folder you used; right-click the pill, a folder or a session for **Open Terminal Here**.

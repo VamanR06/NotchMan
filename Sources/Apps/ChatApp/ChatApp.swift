@@ -60,6 +60,21 @@ public final class ChatApp: NotchApp {
     }
     /// Tool calls waiting for Allow / Deny (from the PermissionRequest hook), oldest first.
     private(set) var approvals: [ApprovalRequest] = []
+    /// What each session is doing, from the bridge mod, by session id.
+    var sessionActivity: [String: SessionActivity] = [:]
+    /// The Claude Code bridge mod is set up (Settings → Agents).
+    var bridgeInstalled = false
+    var bridgeError: String?
+
+    func setBridgeInstalled(_ install: Bool) {
+        do {
+            if install { try ClaudeBridge.install() } else { try ClaudeBridge.uninstall() }
+            bridgeError = nil
+        } catch {
+            bridgeError = error.localizedDescription
+        }
+        bridgeInstalled = ClaudeBridge.isInstalled()
+    }
     @ObservationIgnored private var approvalWaiters: [String: CheckedContinuation<ApprovalDecision, Never>] = [:]
     /// How long a request waits in the notch before Claude Code asks in its terminal instead.
     var approvalWait: Double = 60 {
@@ -154,7 +169,7 @@ public final class ChatApp: NotchApp {
     /// Replies quicker than this don't notify.
     private static let notableReplyDuration: TimeInterval = 3
 
-    @ObservationIgnored private var context: NotchContext?
+    @ObservationIgnored private(set) var context: NotchContext?
     @ObservationIgnored private var webViews: [ChatService: WKWebView] = [:]
     @ObservationIgnored private let coordinator = ChatWebCoordinator()
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
@@ -204,6 +219,8 @@ public final class ChatApp: NotchApp {
         HookServer.shared.route("/permission") { [weak self] request in
             await self?.handlePermissionRequest(request.body) ?? .empty
         }
+        startReceivingSessionSignals()
+        bridgeInstalled = ClaudeBridge.isInstalled()
         for service in ChatService.allCases {
             if let data = context.defaults.data(forKey: "projects.\(service.rawValue)"),
                let saved = try? JSONDecoder().decode([AskProject].self, from: data) {

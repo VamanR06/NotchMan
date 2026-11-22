@@ -47,11 +47,14 @@ extension ShelfApp {
         return NotchCommands(items: items, actions: actions)
     }
 
-    /// Shelved files, then finished downloads (newest first).
+    /// Shelved files, files Claude Code just changed, then finished downloads (newest first).
     private var commandFiles: [(url: URL, kind: String, where: String)] {
         let shelved = shownItems.map { ($0, "File", "On the shelf") }
+        let fromClaude = NotchBoard.shared.agentFiles.filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map { ($0, "Claude changed", ProjectDrop.displayPath($0.deletingLastPathComponent(), project: nil)) }
         let downloaded = downloads.filter { !$0.isInProgress }.prefix(20)
             .map { ($0.url, "Download", "Downloaded " + $0.date.formatted(.relative(presentation: .named))) }
-        return shelved + downloaded.filter { item in !shelved.contains { $0.0 == item.0 } }
+        var seen = Set<URL>()
+        return (shelved + fromClaude + downloaded).filter { seen.insert($0.0).inserted }
     }
 }

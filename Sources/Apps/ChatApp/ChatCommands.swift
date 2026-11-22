@@ -48,6 +48,6 @@ extension ChatApp {
                               perform: { [weak self] in if let id = $0["request"]?.id { self?.resolveApproval(id, .deny) } }),
             ]
         }
-        return NotchCommands(items: items, actions: actions)
+        return NotchCommands(items: items, actions: actions, fallbacks: claudeFallbacks(for: query))
     }
 }

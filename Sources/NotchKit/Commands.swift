@@ -13,10 +13,14 @@ public struct CommandItem: Identifiable {
     public var keywords: [String]
     /// The app to show while it opens (an agent's session opens in the notch); nil closes the notch.
     public var revealsApp: String?
+    /// Asks for a second Return before running (it starts something that acts on your Mac).
+    public var needsConfirm: Bool
     public var run: @MainActor () -> Void
+    /// Instead of running and closing, produce text the bar shows in place (Claude's answer to a question).
+    public var answer: (@MainActor () async throws -> String)?
 
     public init(id: String, title: String, subtitle: String? = nil, symbol: String, kind: String, keywords: [String] = [],
-                revealsApp: String? = nil, run: @escaping @MainActor () -> Void) {
+                revealsApp: String? = nil, needsConfirm: Bool = false, run: @escaping @MainActor () -> Void) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
@@ -24,7 +28,15 @@ public struct CommandItem: Identifiable {
         self.kind = kind
         self.keywords = keywords
         self.revealsApp = revealsApp
+        self.needsConfirm = needsConfirm
         self.run = run
+    }
+
+    /// An item whose result is text shown in the bar.
+    public init(id: String, title: String, subtitle: String? = nil, symbol: String, kind: String,
+                answer: @escaping @MainActor () async throws -> String) {
+        self.init(id: id, title: title, subtitle: subtitle, symbol: symbol, kind: kind, run: {})
+        self.answer = answer
     }
 }
 
@@ -100,10 +112,13 @@ public struct CommandAction: Identifiable {
 public struct NotchCommands {
     public var items: [CommandItem]
     public var actions: [CommandAction]
+    /// Shown after the matches for anything typed, whether or not it matches ("Ask Claude: …").
+    public var fallbacks: [CommandItem]
 
-    public init(items: [CommandItem] = [], actions: [CommandAction] = []) {
+    public init(items: [CommandItem] = [], actions: [CommandAction] = [], fallbacks: [CommandItem] = []) {
         self.items = items
         self.actions = actions
+        self.fallbacks = fallbacks
     }
 
     public static var none: NotchCommands { NotchCommands() }

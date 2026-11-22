@@ -12,7 +12,11 @@ extension ChatApp {
         let needYou = agents.filter { $0.phase == .needsYou }.count
         let working = agents.filter { $0.phase == .working }.count
         if needYou > 0 { return NotchRelevance("\(needYou) Claude Code session(s) need your reply") }
-        if working > 0 { return NotchRelevance("\(working) Claude Code session(s) working") }
+        if working > 0 {
+            let doing = agents.filter { $0.phase == .working }
+                .compactMap { agent in sessionActivity[agent.id].flatMap { $0.isFresh() ? "\($0.lastAction) in \(agent.project)" : nil } }
+            return NotchRelevance("\(working) Claude Code session(s) working" + (doing.isEmpty ? "" : ": " + doing.prefix(2).joined(separator: "; ")))
+        }
         return nil
     }
 }

@@ -73,6 +73,27 @@ struct ChatSettingsView: View {
             }
 
             Section {
+                LabeledContent("Claude Code bridge") {
+                    HStack {
+                        if app.bridgeInstalled {
+                            Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                            Button("Remove") { app.setBridgeInstalled(false) }
+                        } else {
+                            Button("Install Bridge") { app.setBridgeInstalled(true) }
+                        }
+                    }
+                }
+                if let error = app.bridgeError {
+                    Text(error).foregroundStyle(.red).font(.caption)
+                }
+            } header: {
+                Text("What sessions are doing")
+            } footer: {
+                Text("A small Claude Code mod that tells NotchMan what each session is doing — what you asked, each tool it uses and the file it touches — so the Overview shows it (“Editing ShelfView.swift”), the notch can open to it, and the Shelf and command bar offer the files Claude just changed. It only talks to NotchMan on this Mac, never changes what Claude does, and takes effect in sessions started after installing (mods need Claude Code 2.1.287 or later; check with claude --version). Installing writes it to ~/Library/Application Support/NotchMan/claude-bridge and adds that folder to CLAUDE_CODE_PLUGIN_DIRS in ~/.claude/settings.json (backed up as settings.json.notchman-backup).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
                 TextEditor(text: $template)
                     .font(.system(size: 12))
                     .frame(minHeight: 60)

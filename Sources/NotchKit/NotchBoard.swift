@@ -75,6 +75,8 @@ public final class NotchBoard {
 
     private var itemsByApp: [String: [BoardItem]] = [:]
     public private(set) var projects: [BoardProject] = []
+    /// Files Claude Code sessions just changed, newest first (from the bridge mod, via the Agents app).
+    public var agentFiles: [URL] = []
 
     /// Set by the Agents app: types `text` into that project's open notch terminal, without Return. Returns
     /// false when no terminal is open for it.

@@ -404,6 +404,7 @@ public final class NotchEngine {
             let offered = app.commands(for: query)
             all.items += offered.items
             all.actions += offered.actions
+            all.fallbacks += offered.fallbacks
             all.items.append(CommandItem(id: "app." + app.id, title: app.name, symbol: app.iconSystemName, kind: "App",
                                          revealsApp: app.id, run: {}))
         }

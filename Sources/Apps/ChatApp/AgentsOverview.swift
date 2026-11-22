@@ -733,7 +733,12 @@ private struct AgentRow: View {
                         Text(folderLabel)
                         Text("·")
                     }
-                    Text(agent.kind == .background ? "Background" : "Interactive")
+                    if let activity = app.sessionActivity[agent.id], activity.isFresh() {
+                        // What it's doing now, from the bridge mod.
+                        Text(activity.lastAction).foregroundStyle(.white.opacity(activity.isTurnRunning ? 0.75 : 0.5))
+                    } else {
+                        Text(agent.kind == .background ? "Background" : "Interactive")
+                    }
                     if let started = agent.startedAt {
                         Text("·")
                         Text(started, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))

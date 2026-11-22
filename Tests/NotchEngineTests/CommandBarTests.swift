@@ -125,4 +125,51 @@ import NotchKit
         bar.runSelected()
         #expect(ran.actions.isEmpty, "asks again")
     }
+
+    @Test func fallbacksFollowTheMatchesAndReplaceAskClaude() {
+        let ran = Ran()
+        let bar = bar(ran)
+        let commands = bar.commands
+        bar.commands = { query in
+            var offered = commands(query)
+            offered.fallbacks = [CommandItem(id: "claude.ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { "42" })]
+            return offered
+        }
+        bar.query = "resum"
+        #expect(bar.rows.map(\.id) == ["item:folder", "item:resume", "item:claude.ask"])
+    }
+
+    @Test func anAnswerShowsInTheBarUntilEscOrTyping() async throws {
+        let ran = Ran()
+        let bar = bar(ran)
+        bar.commands = { _ in
+            NotchCommands(fallbacks: [CommandItem(id: "ask", title: "Ask Claude", symbol: "sparkle", kind: "Claude", answer: { "It's 42." })])
+        }
+        bar.query = "meaning of life"
+        bar.runSelected()
+        #expect(bar.answer?.title == "Ask Claude")
+        for _ in 0..<50 where bar.answer?.text == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(bar.answer?.text == "It's 42." && ran.revealed.isEmpty, "the bar stays open with the answer")
+        bar.runSelected()
+        #expect(bar.answer != nil, "Return doesn't run it again")
+        bar.closeAnswer()
+        #expect(bar.answer == nil && bar.query == "meaning of life", "Esc goes back to the results")
+        bar.runSelected()
+        bar.query = "meaning of lif"
+        #expect(bar.answer == nil, "typing goes back too")
+    }
+
+    @Test func anItemThatActsAsksFirst() {
+        let ran = Ran()
+        let bar = bar(ran)
+        bar.commands = { _ in
+            NotchCommands(fallbacks: [CommandItem(id: "agent", title: "Start an agent", symbol: "terminal", kind: "Claude",
+                                                  needsConfirm: true) { ran.items.append("agent") }])
+        }
+        bar.query = "do the thing"
+        bar.runSelected()
+        #expect(ran.items.isEmpty && bar.confirming == "item:agent")
+        bar.runSelected()
+        #expect(ran.items == ["agent"])
+    }
 }

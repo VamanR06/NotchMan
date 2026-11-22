@@ -10,6 +10,7 @@ final class CommandBarModel {
     enum Row: Identifiable {
         case action(CommandInterpretation, CommandAction)
         case item(CommandItem)
+        /// Opens a Claude chat with the text typed in, when no app offers its own fallbacks.
         case askClaude(String)
 
         var id: String {
@@ -21,10 +22,19 @@ final class CommandBarModel {
         }
     }
 
+    /// An item's answer, shown in place of the rows.
+    struct Answer {
+        let title: String
+        var text: String?
+        var error: String?
+        var isLoading: Bool { text == nil && error == nil }
+    }
+
     var query = "" {
         didSet {
             guard query != oldValue else { return }
             confirming = nil
+            if answer != nil { closeAnswer() }  // typing again goes back to the results
             update()
         }
     }
@@ -34,6 +44,10 @@ final class CommandBarModel {
     private(set) var isAsking = false
     /// A risky action waiting for a second Return.
     private(set) var confirming: String?
+    /// An answer being shown (Esc goes back to the rows).
+    private(set) var answer: Answer?
+    @ObservationIgnored private var answerTask: Task<Void, Never>?
+    @ObservationIgnored private var fallbacks: [CommandItem] = []
 
     /// What the apps offer for a query.
     @ObservationIgnored var commands: (String) -> NotchCommands = { _ in .none }
@@ -47,6 +61,8 @@ final class CommandBarModel {
 
     func reset() {
         jevTask?.cancel()
+        answerTask?.cancel()
+        answer = nil
         query = ""
         interpretation = nil
         rows = []
@@ -62,6 +78,7 @@ final class CommandBarModel {
         interpretation = nil
         let text = query.trimmingCharacters(in: .whitespaces)
         let offered = commands(text)
+        fallbacks = text.isEmpty ? [] : offered.fallbacks
         rebuild(items: text.isEmpty ? [] : CommandRouting.search(text, in: offered.items))
         guard Self.shouldAskJev(text), !offered.actions.isEmpty, JevSettings.isAvailable else { return }
         let request = CommandRouting.request(query: text, actions: offered.actions, context: .current(),
@@ -86,6 +103,27 @@ final class CommandBarModel {
         }
     }
 
+    private func show(_ produce: @escaping @MainActor () async throws -> String, title: String) {
+        answerTask?.cancel()
+        answer = Answer(title: title)
+        answerTask = Task { [weak self] in
+            do {
+                let text = try await produce()
+                guard !Task.isCancelled else { return }
+                self?.answer?.text = text
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.answer?.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// Back from an answer to the rows (Esc).
+    func closeAnswer() {
+        answerTask?.cancel()
+        answer = nil
+    }
+
     /// One word is a search; two or more might be a request.
     static func shouldAskJev(_ text: String) -> Bool {
         text.split(whereSeparator: \.isWhitespace).count >= 2
@@ -97,7 +135,8 @@ final class CommandBarModel {
         if let (reading, action) = interpretation { rows.append(.action(reading, action)) }
         rows += items.map(Row.item)
         let text = query.trimmingCharacters(in: .whitespaces)
-        if !text.isEmpty { rows.append(.askClaude(text)) }
+        rows += fallbacks.map(Row.item)
+        if !text.isEmpty && fallbacks.isEmpty { rows.append(.askClaude(text)) }
         self.rows = rows
         // Jev's reading arriving moves the selection to it only if you hadn't moved off the first row.
         selection = interpretation != nil && (selection == 0 || selectedID == nil) ? 0
@@ -111,7 +150,7 @@ final class CommandBarModel {
     }
 
     func runSelected() {
-        guard rows.indices.contains(selection) else { return }
+        guard answer == nil, rows.indices.contains(selection) else { return }
         run(rows[selection])
     }
 
@@ -125,6 +164,14 @@ final class CommandBarModel {
             action.perform(reading.choices)
             onRun(action.revealsApp)
         case .item(let item):
+            if item.needsConfirm && confirming != row.id {
+                confirming = row.id
+                return
+            }
+            if let produce = item.answer {
+                show(produce, title: item.title)
+                return
+            }
             item.run()
             onRun(item.revealsApp)
         case .askClaude(let text):
@@ -153,7 +200,7 @@ struct CommandBarView: View {
                     .onKeyPress(.downArrow) { bar.move(1); return .handled }
                     .onKeyPress(.upArrow) { bar.move(-1); return .handled }
                     .onKeyPress(.escape) {
-                        if bar.query.isEmpty { close() } else { bar.query = "" }
+                        if bar.answer != nil { bar.closeAnswer() } else if bar.query.isEmpty { close() } else { bar.query = "" }
                         return .handled
                     }
                 if bar.isAsking { NotchSpinner(size: 11, lineWidth: 1.6) }
@@ -161,6 +208,9 @@ struct CommandBarView: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.1)))
 
+            if let answer = bar.answer {
+                AnswerView(answer: answer, back: bar.closeAnswer)
+            } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -180,6 +230,7 @@ struct CommandBarView: View {
                     if bar.rows.indices.contains(index) { proxy.scrollTo(bar.rows[index].id) }
                 }
             }
+            }
         }
         .padding(.top, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -198,6 +249,41 @@ struct CommandBarView: View {
         .font(.system(size: 11))
         .foregroundStyle(.white.opacity(0.45))
         .padding(.horizontal, 12).padding(.top, 4)
+    }
+}
+
+/// Claude's answer (or the error), with the question above it.
+private struct AnswerView: View {
+    let answer: CommandBarModel.Answer
+    let back: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkle").foregroundStyle(.orange)
+                Text(answer.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button("Back (Esc)", action: back).buttonStyle(.plain).font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            ScrollView(.vertical) {
+                Group {
+                    if let text = answer.text {
+                        Text(text).textSelection(.enabled)
+                    } else if let error = answer.error {
+                        Text(error).foregroundStyle(.orange)
+                    } else {
+                        HStack(spacing: 6) {
+                            NotchSpinner(size: 11, lineWidth: 1.6)
+                            Text("Claude is thinking…").foregroundStyle(.white.opacity(0.5))
+                        }
+                    }
+                }
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
     }
 }
 
@@ -257,6 +343,7 @@ private struct CommandRowView: View {
 
     private var trailing: String {
         if confirming { return "Return again to confirm" }
+        if case .item(let item) = row, item.needsConfirm, selected { return "↩ (asks first)" }
         if case .action(_, let action) = row, action.risk == .confirm, selected { return "↩ (asks first)" }
         return selected ? "↩" : ""
     }
