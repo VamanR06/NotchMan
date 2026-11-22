@@ -110,6 +110,8 @@ struct CommandRunner: Sendable {
     var run: @MainActor @Sendable (String) -> Void
     /// In a new Terminal window.
     var runInTerminal: @MainActor @Sendable (String) -> Void
+    /// Saves it as one of the project's quick commands.
+    var save: @MainActor @Sendable (String) -> Void = { _ in }
 
     /// ⌘-click runs, ⌥⌘-click runs in Terminal, a plain click copies.
     @MainActor func click(_ command: String) {
@@ -126,4 +128,30 @@ struct CommandRunner: Sendable {
 
 extension EnvironmentValues {
     @Entry var commandRunner: CommandRunner?
+}
+
+/// Right-click on a command: run it here or in Terminal, copy it, or keep it as a quick command.
+private struct CommandContextMenu: ViewModifier {
+    let command: String?
+    @Environment(\.commandRunner) private var runner
+
+    func body(content: Content) -> some View {
+        if let command, let runner {
+            content.contextMenu {
+                Button("Run") { runner.run(command) }
+                Button("Run in Terminal") { runner.runInTerminal(command) }
+                Button("Copy") { ShellCommand.copy(command) }
+                Divider()
+                Button("Save as Quick Command") { runner.save(command) }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func commandMenu(_ command: String?) -> some View {
+        modifier(CommandContextMenu(command: command))
+    }
 }

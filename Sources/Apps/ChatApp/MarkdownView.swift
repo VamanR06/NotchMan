@@ -311,6 +311,7 @@ private struct CodeBlock: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.06)))
         .onHover { hovering = $0 }
+        .commandMenu(command)
         .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
             if let command, let runner { runner.click(command) }
         })

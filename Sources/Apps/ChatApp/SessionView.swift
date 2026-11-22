@@ -13,6 +13,8 @@ struct AgentSessionView: View {
     /// Images going with the next message (pasted with ⌘V or dropped on the session).
     @State private var images: [URL] = []
     @State private var pasteMonitor = ImagePasteMonitor()
+    /// Typing a new quick command (the field shows in the bar above the message box).
+    @State private var addingQuickCommand = false
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
@@ -27,6 +29,11 @@ struct AgentSessionView: View {
                         .id(preview.id)
                 }
             }
+            QuickCommandBar(folder: terminal.agent.cwd, adding: $addingQuickCommand) { command in
+                terminal.runInShell(command)
+            } runInTerminal: { command in
+                ShellCommand.openInTerminal(command, in: terminal.agent.cwd)
+            }
             composer
         }
         .task(id: terminal.id) { await transcript.follow() }
@@ -38,7 +45,8 @@ struct AgentSessionView: View {
         .onDisappear { pasteMonitor.stop() }
         .environment(\.commandRunner, CommandRunner(
             run: { [terminal] command in terminal.runInShell(command) },
-            runInTerminal: { [terminal] command in ShellCommand.openInTerminal(command, in: terminal.agent.cwd) }))
+            runInTerminal: { [terminal] command in ShellCommand.openInTerminal(command, in: terminal.agent.cwd) },
+            save: { [terminal] command in QuickCommands.shared.add(command, for: terminal.agent.cwd) }))
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             for provider in providers {
                 if provider.canLoadObject(ofClass: URL.self) {
@@ -266,6 +274,14 @@ struct AgentSessionView: View {
                     app.backToOverview()
                     return .handled
                 }
+            if QuickCommands.shared.commands(for: terminal.agent.cwd).isEmpty && !addingQuickCommand {
+                Button { withAnimation(.easeOut(duration: 0.15)) { addingQuickCommand = true } } label: {
+                    Image(systemName: "bolt").font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.4))
+                .help("Save a command you run often here (like make run) as a one-click button")
+            }
             if terminal.isRunning {
                 Text(draft.isEmpty && images.isEmpty ? "⌘V image" : "↩ send")
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
@@ -579,11 +595,17 @@ private struct ToolCallRow: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
+            .commandMenu(ranCommand)
             if expanded { detail.padding(.leading, 21) }
         }
         .padding(.horizontal, 4).padding(.vertical, 3)
         .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(expanded ? 0.06 : hovering ? 0.04 : 0)))
         .onHover { hovering = $0 }
+    }
+
+    /// The command a Bash step ran, for its right-click menu (run again, save as a quick command).
+    private var ranCommand: String? {
+        if case .command(let command) = call.detail { command } else { nil }
     }
 
     /// What the call did, in a few words: "Edited ShelfView.swift", "Run the tests", "Searched “TODO”".
