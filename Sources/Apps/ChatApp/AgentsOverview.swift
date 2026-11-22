@@ -13,16 +13,23 @@ struct AgentsOverview: View {
             AgentTerminalScreen(app: app, terminal: terminal)
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                ChatStrip(app: app)
+                // One slim row: the chats, your terminals, and plan usage at a glance (click it for the details).
+                HStack(spacing: 6) {
+                    ChatStrip(app: app)
+                    UsagePill(app: app)
+                }
                 ForEach(app.approvals) { request in
                     ApprovalCard(app: app, request: request)
                 }
-                UsageCard(app: app)
+                if app.showUsageBreakdown {
+                    UsageCard(app: app).transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 if app.composingAgent {
                     NewAgentForm(app: app)
                 }
                 HStack(spacing: 6) {
                     SessionSearch(app: app)
+                    NewAgentButton(app: app)
                     if app.groupsAgentsByProject { NewFolderButton(app: app) }
                     GroupingToggle(app: app)
                 }
@@ -81,6 +88,66 @@ struct ApprovalCard: View {
 }
 
 /// ChatGPT / Claude / Muse status pills (click to open that chat), then Terminal.
+/// Plan usage in a few characters — the fullest limit's percent, else today's tokens — that opens the usage card.
+private struct UsagePill: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        let windows = app.agentMonitor?.limits?.windows ?? []
+        let fullest = windows.max { $0.percent < $1.percent }
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { app.showUsageBreakdown.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chart.bar.fill").font(.system(size: 10)).foregroundStyle(.orange)
+                if let fullest {
+                    Text("\(fullest.label) \(fullest.percent)%")
+                        .foregroundStyle(fullest.isAtLimit ? .red : fullest.isNearLimit ? .orange : .white.opacity(0.85))
+                } else if app.usageMonitor.hasLoaded {
+                    Text(UsageSummary.format(app.usageMonitor.summary.today.work) + " today").foregroundStyle(.white.opacity(0.85))
+                } else {
+                    Text("Usage").foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(app.showUsageBreakdown ? 0.14 : 0.06)))
+            .contentShape(Rectangle())
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help("Claude Code usage and plan limits")
+        .task {
+            // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
+            while !Task.isCancelled {
+                await app.refreshUsage()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+}
+
+/// Starts a new background agent: opens the form above the list.
+private struct NewAgentButton: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { app.composingAgent.toggle() }
+        } label: {
+            Label("New agent", systemImage: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(app.composingAgent ? 0.5 : 0.85)))
+                .foregroundStyle(.white)
+                .contentShape(Rectangle())
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help("Start a Claude Code agent in the background")
+    }
+}
+
 private struct ChatStrip: View {
     let app: ChatApp
 
@@ -94,10 +161,10 @@ private struct ChatStrip: View {
                         Text(statusText(service)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                     }
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -122,10 +189,10 @@ private struct ChatStrip: View {
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -572,13 +639,6 @@ struct UsageCard: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
-        .task {
-            // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
-            while !Task.isCancelled {
-                await app.refreshUsage()
-                try? await Task.sleep(for: .seconds(60))
-            }
-        }
     }
 
     private func stat(_ label: String, _ tokens: Int) -> some View {
@@ -712,6 +772,27 @@ private struct AgentRow: View {
         return isWorktree ? agent.project : URL(fileURLWithPath: ownProject).lastPathComponent
     }
 
+    /// What's happening, in a few words: from the bridge when it's fresh, else the phase.
+    private var status: String {
+        if let activity = app.sessionActivity[agent.id], activity.isFresh(), agent.phase == .working || activity.isTurnRunning {
+            return activity.lastAction
+        }
+        return switch agent.phase {
+        case .needsYou: "Waiting for you"
+        case .working: "Working"
+        case .done: "Done"
+        case .idle: "Idle"
+        }
+    }
+
+    private var statusTint: Color {
+        switch agent.phase {
+        case .needsYou: .orange
+        case .working: .white.opacity(0.75)
+        case .done, .idle: .white.opacity(0.5)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 9) {
             PhaseMark(phase: agent.phase).frame(width: 14)
@@ -737,12 +818,8 @@ private struct AgentRow: View {
                         Text(folderLabel)
                         Text("·")
                     }
-                    if let activity = app.sessionActivity[agent.id], activity.isFresh() {
-                        // What it's doing now, from the bridge mod.
-                        Text(activity.lastAction).foregroundStyle(.white.opacity(activity.isTurnRunning ? 0.75 : 0.5))
-                    } else {
-                        Text(agent.kind == .background ? "Background" : "Interactive")
-                    }
+                    Text(status).foregroundStyle(statusTint)
+                    if agent.kind == .interactive { Text("·"); Text("in your editor") }
                     if let started = agent.startedAt {
                         Text("·")
                         Text(started, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))

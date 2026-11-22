@@ -57,18 +57,66 @@ import Testing
     }
 }
 
-@Suite struct MarkdownLinesTests {
+@Suite struct MarkdownDocumentTests {
     @Test func parsesThePartsPlansUse() {
-        let blocks = MarkdownLines.blocks([
-            "# Plan", "", "", "## Steps", "1. First", "  - nested", "- [x] done", "> note", "```", "# not a heading", "```",
-            "---", "Plain **text**", "#hashtag",
+        let document = MarkdownDocument.parse("""
+        # Plan
+
+
+        ## Steps
+        1. First
+          - nested
+        - [x] done
+        > note
+        ```swift
+        # not a heading
+        ```
+        ---
+        Plain **text**
+        that wraps
+        #hashtag
+        """)
+        #expect(document.blocks == [
+            .heading(level: 1, text: "Plan"), .heading(level: 2, text: "Steps"),
+            .list([.init(marker: "1.", text: "First", depth: 0), .init(marker: "•", text: "nested", depth: 1),
+                   .init(marker: "☑", text: "done", depth: 0)]),
+            .quote("note"), .code(language: "swift", text: "# not a heading"), .rule,
+            .paragraph("Plain **text** that wraps #hashtag"),
         ])
-        #expect(blocks == [
-            .heading(level: 1, text: "Plan"), .blank, .heading(level: 2, text: "Steps"),
-            .bullet(marker: "1.", text: "First", indent: 0), .bullet(marker: "•", text: "nested", indent: 1),
-            .bullet(marker: "☑", text: "done", indent: 0), .quote("note"), .code("# not a heading"), .rule,
-            .paragraph("Plain **text**"), .paragraph("#hashtag"),
-        ])
+    }
+
+    @Test func readsTables() {
+        let document = MarkdownDocument.parse("""
+        Results:
+
+        | Test | Before | After |
+        |:-----|-------:|:-----:|
+        | build | 41 s | **12 s** |
+        | tests | 3 failing |
+        | a \\| b | x | y |
+
+        Done.
+        """)
+        #expect(document.blocks.count == 3)
+        guard case .table(let header, let alignments, let rows) = document.blocks[1] else {
+            Issue.record("expected a table: \(document.blocks)")
+            return
+        }
+        #expect(header == ["Test", "Before", "After"])
+        #expect(alignments == [.leading, .trailing, .center])
+        #expect(rows == [["build", "41 s", "**12 s**"], ["tests", "3 failing", ""], ["a | b", "x", "y"]],
+                "short rows are padded; an escaped pipe stays in its cell")
+        #expect(document.blocks[2] == .paragraph("Done."))
+    }
+
+    @Test func aPipeInProseIsntATable() {
+        #expect(MarkdownDocument.parse("Use a | b for or\nand more").blocks == [.paragraph("Use a | b for or and more")])
+    }
+
+    @Test func wrappedListItemsStayOneItem() {
+        let document = MarkdownDocument.parse("- first item that\n  wraps here\n- second")
+        #expect(document.blocks == [.list([.init(marker: "•", text: "first item that wraps here", depth: 0),
+                                           .init(marker: "•", text: "second", depth: 0)])])
     }
 }
 

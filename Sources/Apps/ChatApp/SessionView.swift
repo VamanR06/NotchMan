@@ -31,35 +31,60 @@ struct AgentSessionView: View {
 
     // MARK: - Conversation
 
+    @State private var atBottom = true
+    @State private var unseenBelow = false
+
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if transcript.isLoaded && transcript.entries.isEmpty {
                         note("Nothing in this session yet.")
                     } else if !transcript.isLoaded {
                         note("Reading the session…")
                     }
-                    ForEach(transcript.entries) { entry in
-                        row(entry)
+                    ForEach(SessionItem.items(transcript.entries)) { item in
+                        row(item)
                     }
                     ForEach(approvals) { request in
                         ApprovalCard(app: app, request: request)
                     }
                     if isWorking && approvals.isEmpty {
                         HStack(spacing: 6) {
-                            NotchSpinner(size: 11, lineWidth: 1.6)
-                            Text("Working…").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                            NotchSpinner(size: 10, lineWidth: 1.5)
+                            Text(app.sessionActivity[terminal.agent.id].flatMap { $0.isFresh() ? $0.lastAction : nil } ?? "Working…")
+                                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                         }
                     }
+                    // Seen only when scrolled to the end: new rows follow along then, and leave you be otherwise.
                     Color.clear.frame(height: 1).id(Self.bottom)
+                        .onAppear { atBottom = true; unseenBelow = false }
+                        .onDisappear { atBottom = false }
                 }
-                .padding(10)
+                .padding(.horizontal, 14).padding(.vertical, 12)
             }
-            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.04)))
+            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.035)))
+            .overlay(alignment: .bottom) {
+                if unseenBelow {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+                    } label: {
+                        Label("New messages", systemImage: "arrow.down").font(.system(size: 10.5, weight: .medium))
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Capsule().fill(Color.accentColor))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
             .onAppear { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             .onChange(of: transcript.entries.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+                if atBottom {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+                } else {
+                    withAnimation(.easeOut(duration: 0.15)) { unseenBelow = true }
+                }
             }
             .onChange(of: approvals.count) { _, _ in proxy.scrollTo(Self.bottom, anchor: .bottom) }
         }
@@ -67,26 +92,30 @@ struct AgentSessionView: View {
 
     private static let bottom = "bottom"
 
-    @ViewBuilder private func row(_ entry: TranscriptEntry) -> some View {
-        switch entry.kind {
-        case .prompt(let text):
-            Text(text)
-                .font(.system(size: 12))
-                .foregroundStyle(.white)
-                .textSelection(.enabled)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Color.accentColor.opacity(0.3)))
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        case .reply(let text):
-            MarkdownLines(lines: text.components(separatedBy: "\n"))
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.92))
-        case .tool(let call):
-            ToolCallRow(call: call, cwd: terminal.agent.cwd) { path in
-                guard let mention = FileMentions.resolve(path, in: terminal.agent.cwd) else { return }
-                withAnimation(.easeOut(duration: 0.15)) { preview = FilePreview(mention: mention) }
+    @ViewBuilder private func row(_ item: SessionItem) -> some View {
+        switch item {
+        case .prompt(_, let text):
+            HStack {
+                Spacer(minLength: 80)
+                Text(text)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 11).padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.32)))
             }
+            .padding(.top, 4)
+        case .reply(_, let text):
+            MarkdownView(text: text)
+        case .steps(_, let calls):
+            ToolStepsRow(calls: calls, preview: previewFile)
         }
+    }
+
+    private func previewFile(_ path: String) {
+        guard let mention = FileMentions.resolve(path, in: terminal.agent.cwd) else { return }
+        withAnimation(.easeOut(duration: 0.15)) { preview = FilePreview(mention: mention) }
     }
 
     private func note(_ text: String) -> some View {
@@ -137,13 +166,98 @@ struct AgentSessionView: View {
     }
 }
 
+/// What the session view shows: your prompts, Claude's replies, and the tool calls between them as one group of steps.
+enum SessionItem: Identifiable {
+    case prompt(id: String, String)
+    case reply(id: String, String)
+    case steps(id: String, [ToolCall])
+
+    var id: String {
+        switch self {
+        case .prompt(let id, _), .reply(let id, _), .steps(let id, _): id
+        }
+    }
+
+    /// Entries with each run of tool calls gathered into one item.
+    static func items(_ entries: [TranscriptEntry]) -> [SessionItem] {
+        var items: [SessionItem] = []
+        for entry in entries {
+            switch entry.kind {
+            case .prompt(let text): items.append(.prompt(id: entry.id, text))
+            case .reply(let text): items.append(.reply(id: entry.id, text))
+            case .tool(let call):
+                if case .steps(let id, let calls)? = items.last {
+                    items[items.count - 1] = .steps(id: id, calls + [call])
+                } else {
+                    items.append(.steps(id: entry.id, [call]))
+                }
+            }
+        }
+        return items
+    }
+}
+
+/// A run of tool calls as one quiet line — how many steps, the latest one, and whether any is running or failed —
+/// that opens into a row per call.
+private struct ToolStepsRow: View {
+    let calls: [ToolCall]
+    let preview: (String) -> Void
+    @State private var expanded = false
+
+    private var running: Bool { calls.contains { !$0.isFinished } }
+    private var failures: Int { calls.filter(\.isError).count }
+
+    var body: some View {
+        if calls.count == 1, let call = calls.first {
+            ToolCallRow(call: call, preview: preview)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .frame(width: 10)
+                    Text("\(calls.count) steps").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                    if let last = calls.last {
+                        Text("·").foregroundStyle(.white.opacity(0.3))
+                        Text(ToolCallRow.describe(last))
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: 4)
+                    if failures > 0 {
+                        Label("\(failures)", systemImage: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(.red.opacity(0.85))
+                    }
+                    if running {
+                        NotchSpinner(size: 10, lineWidth: 1.5)
+                    } else if failures == 0 {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.green.opacity(0.7))
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
+                if expanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(calls.enumerated()), id: \.offset) { _, call in
+                            ToolCallRow(call: call, preview: preview)
+                        }
+                    }
+                    .padding(.leading, 12)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+}
+
 /// One tool call: an icon, what it did, and whether it's running, done or failed. Click to see the details —
 /// the command and its output, an edit as a diff, the file it wrote.
 private struct ToolCallRow: View {
     let call: ToolCall
-    let cwd: String
     let preview: (String) -> Void
     @State private var expanded = false
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -151,11 +265,10 @@ private struct ToolCallRow: View {
                 Image(systemName: Self.symbol(call.name))
                     .font(.system(size: 10))
                     .frame(width: 14)
-                    .foregroundStyle(.white.opacity(0.6))
-                Text(call.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
-                Text(call.summary)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.white.opacity(0.45))
+                Text(Self.describe(call))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.65))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
@@ -171,8 +284,26 @@ private struct ToolCallRow: View {
             .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
             if expanded { detail.padding(.leading, 21) }
         }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(expanded ? 0.07 : 0.035)))
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(expanded ? 0.06 : hovering ? 0.04 : 0)))
+        .onHover { hovering = $0 }
+    }
+
+    /// What the call did, in a few words: "Edited ShelfView.swift", "Run the tests", "Searched “TODO”".
+    static func describe(_ call: ToolCall) -> String {
+        let file = call.path.map { ($0 as NSString).lastPathComponent }
+        switch call.name {
+        case "Edit", "MultiEdit", "NotebookEdit": return "Edited " + (file ?? call.summary)
+        case "Write": return "Wrote " + (file ?? call.summary)
+        case "Read": return "Read " + (file ?? call.summary)
+        case "Bash": return call.summary.isEmpty ? "Ran a command" : call.summary
+        case "Grep", "Glob": return "Searched “\(call.summary)”"
+        case "WebSearch": return "Searched the web for “\(call.summary)”"
+        case "WebFetch": return "Read " + (URL(string: call.summary)?.host ?? call.summary)
+        case "Agent", "Task": return "Subagent: " + call.summary
+        case "TodoWrite": return "Updated the plan"
+        default: return call.summary.isEmpty ? call.name : "\(call.name): \(call.summary)"
+        }
     }
 
     @ViewBuilder private var status: some View {
