@@ -69,19 +69,37 @@ private final class ClaimingApp: NotchApp {
         #expect(model.state == .collapsed)
     }
 
-    @Test func hoveringOpenTakesTheKeyboardAndClosingGivesItBack() async throws {
+    @Test func hoveringOpenLeavesTheKeyboardWithTheAppYouAreIn() async throws {
         let model = model()
-        var took = 0, gaveBack = 0
-        model.onWantsKeyboard = { took += 1 }
+        var gaveBack = 0
         model.onCollapse = { gaveBack += 1 }
         let center = CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5)
         model.mouseMoved(to: center)
         try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
         #expect(model.state == .expanded)
-        model.mouseMoved(to: center)
-        #expect(took == 1)  // once per opening
+        model.mouseMoved(to: center)  // resting inside doesn't take it either
+        #expect(!model.tookKeyboard)
+        model.collapse()
+        #expect(gaveBack == 0)
+    }
+
+    @Test func aClickInsideTakesTheKeyboardAndClosingGivesItBack() async throws {
+        let model = model()
+        var gaveBack = 0
+        model.onCollapse = { gaveBack += 1 }
+        model.mouseMoved(to: CGPoint(x: geometry.centerX, y: geometry.screenFrame.maxY - 5))
+        try await Task.sleep(for: .seconds(NotchViewModel.hoverDelay + 0.2))
+        model.keyboardTaken()  // the panel became key: a click inside, or the hotkey
+        #expect(model.tookKeyboard)
         model.collapse()
         #expect(gaveBack == 1)
+        #expect(!model.tookKeyboard)  // the next opening starts without it
+    }
+
+    @Test func aClosedNotchNeverTakesTheKeyboard() {
+        let model = model()
+        model.keyboardTaken()
+        #expect(!model.tookKeyboard)
     }
 
     @Test func anAppCanClaimAHoverOpening() async throws {
@@ -111,11 +129,10 @@ private final class ClaimingApp: NotchApp {
 
     @Test func openingsTheUserDidNotAskForLeaveTheKeyboardAlone() {
         let model = model()
-        var took = 0, gaveBack = 0
-        model.onWantsKeyboard = { took += 1 }
+        var gaveBack = 0
         model.onCollapse = { gaveBack += 1 }
         model.handleAttention(.expand(duration: 5), from: "agents")
-        #expect(model.state == .expanded && took == 0)
+        #expect(model.state == .expanded && !model.tookKeyboard)
         model.collapse()
         #expect(gaveBack == 0)
     }

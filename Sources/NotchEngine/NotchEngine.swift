@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 import NotchKit
 
 /// Owns the notch windows (one per display) and hosts the registered apps.
@@ -170,23 +171,25 @@ public final class NotchEngine {
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
         // A nonactivating panel can take typing without making NotchMan the active app, so the app you were
-        // in stays active and gets the keyboard back as soon as the notch closes.
-        model.onWantsKeyboard = { [weak panel] in
-            guard let panel, !panel.isKeyWindow else { return }
-            panel.makeKey()
-            panel.makeFirstResponder(panel.contentView)
-        }
+        // in stays active and gets the keyboard back as soon as the notch closes. Hovering doesn't make it key; a
+        // click inside does (AppKit) and so does the hotkey, and either way the model hears about it here.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak model] _ in
+            MainActor.assumeIsolated {
+                guard let model, model.state == .expanded, !model.tookKeyboard else { return }
+                model.keyboardTaken()
+                NotchFocus.notchTookKeyboard()
+            }
+        })
         model.onCollapse = { [weak panel] in
             guard let panel, panel.isKeyWindow else { return }
             panel.makeFirstResponder(nil)
-            if NSApp.isActive {
-                // One of NotchMan's own windows (Settings, a popped-out chat) had it; anything else is handled by
-                // NotchFocus.restore once the notch is closed.
-                NSApp.windows.first { $0 !== panel && $0.isVisible && $0.styleMask.contains(.titled) }?.makeKey()
-            } else {
-                panel.resignKey()
+            panel.resignKey()
+            if !NSApp.isActive {
+                // The panel took typing without activating NotchMan; the app you were in is still active.
                 NSWorkspace.shared.frontmostApplication?.activate()
             }
+            NotchFocus.restore()
         }
         layout(notch)
         panel.orderFrontRegardless()
@@ -368,8 +371,7 @@ public final class NotchEngine {
         if responder is NSTextView { return true }
         var view = responder as? NSView
         while let current = view {
-            let name = String(describing: type(of: current))
-            if name.contains("Terminal") || name.hasPrefix("WK") { return true }
+            if current is NotchTypingView || current is WKWebView { return true }
             view = current.superview
         }
         return false

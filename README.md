@@ -113,6 +113,9 @@ Press **⌥Space** (change it in Settings → General) from any app to open the 
 action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
 closes the notch. Text fields, terminals and chats keep their keys while you type in them.
 
+Hovering opens the notch without taking the keyboard, so typing stays in the app you're in. Click inside the notch
+(or use the hotkey) to type there; when it closes, the keyboard goes back to where you were.
+
 ## System HUDs
 
 Volume, brightness, charging, low battery and headphones connecting show in the notch as a small icon with a

@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import SwiftTerm
 import SwiftUI
 
@@ -132,15 +133,29 @@ final class TerminalSession: Identifiable {
         view.window?.makeFirstResponder(view)
     }
 
-    /// Puts keyboard focus in this terminal once it's on screen (a new tab takes a moment to be attached).
+    /// Puts keyboard focus in this terminal once it's on screen (a new tab takes a moment to be attached) — but only
+    /// within a notch that already has the keyboard, so a late attempt never pulls typing out of the app you're in
+    /// (the notch closed, or was only hovered open). A newer request replaces an older one.
     func focusWhenShown() {
-        Task { [weak self] in
+        pendingFocus?.cancel()
+        pendingFocus = Task { [weak self] in
             for _ in 0..<20 {
-                guard let self else { return }
-                if self.view.window != nil { return self.focus() }
+                guard let self, !Task.isCancelled else { return }
+                if let window = self.view.window {
+                    if Self.shouldTakeFocus(windowIsVisible: window.isVisible, windowIsKey: window.isKeyWindow) {
+                        window.makeFirstResponder(self.view)
+                    }
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(25))
             }
         }
+    }
+
+    @ObservationIgnored private var pendingFocus: Task<Void, Never>?
+
+    static func shouldTakeFocus(windowIsVisible: Bool, windowIsKey: Bool) -> Bool {
+        windowIsVisible && windowIsKey
     }
 
     /// The visible text (for tests and diagnostics).
@@ -335,7 +350,7 @@ final class AgentTerminal: Identifiable {
 
 /// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel, and
 /// translates macOS editing shortcuts into what terminal programs expect (see `TerminalKeyMap`).
-final class NotchTerminalView: LocalProcessTerminalView {
+final class NotchTerminalView: LocalProcessTerminalView, NotchTypingView {
     /// Sees every key pressed in this terminal (after our shortcut translation); true keeps it from the program.
     var onKey: ((NSEvent) -> Bool)?
 

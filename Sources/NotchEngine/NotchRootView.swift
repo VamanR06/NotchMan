@@ -25,6 +25,8 @@ struct NotchRootView: View {
                 }
             }
             .frame(width: model.shapeSize.width, height: model.shapeSize.height, alignment: .top)
+            // No focus rings on the notch's buttons (with Full Keyboard Access on, taking the keyboard drew them).
+            .focusEffectDisabled()
             .clipShape(shape)
             .background(
                 shape
