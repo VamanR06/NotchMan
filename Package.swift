@@ -26,12 +26,15 @@ let package = Package(
         .target(name: "TodayApp", dependencies: ["NotchKit"], path: "Sources/Apps/TodayApp"),
         .target(name: "ShelfApp", dependencies: ["NotchKit"], path: "Sources/Apps/ShelfApp"),
         .target(name: "ClockApp", dependencies: ["NotchKit"], path: "Sources/Apps/ClockApp"),
+        // Generated notch apps: scripts that draw with native elements, made by Claude.
+        .target(name: "NotchMods", dependencies: ["NotchKit"]),
         // App shell: wires the registry of apps into the engine.
         .executableTarget(
             name: "NotchMan",
-            dependencies: ["NotchKit", "NotchEngine", "CalendarApp", "NowPlayingApp", "TasksApp", "JobsApp", "ChatApp", "TodayApp", "ShelfApp", "ClockApp"]
+            dependencies: ["NotchKit", "NotchEngine", "NotchMods", "CalendarApp", "NowPlayingApp", "TasksApp", "JobsApp", "ChatApp", "TodayApp", "ShelfApp", "ClockApp"]
         ),
         .testTarget(name: "NotchKitTests", dependencies: ["NotchKit"]),
+        .testTarget(name: "NotchModsTests", dependencies: ["NotchMods", "NotchKit"]),
         .testTarget(name: "CalendarAppTests", dependencies: ["CalendarApp"]),
         .testTarget(name: "NotchEngineTests", dependencies: ["NotchEngine", "NotchKit"]),
         .testTarget(name: "TasksAppTests", dependencies: ["TasksApp"]),

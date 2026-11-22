@@ -437,6 +437,23 @@ The time here and in other cities, plus timers and a stopwatch.
   **Silence** stops the alarm.
 - **Stopwatch:** start, stop and reset. Running timers and the stopwatch show as chips while the notch is closed.
 
+## Notch apps you make
+
+Type what you want into the command bar (⌥Space) — "a pomodoro timer", "track the glasses of water I drink", "a
+countdown to Friday" — and choose **Make a notch app**. Claude Code writes a small app for it, NotchMan checks it runs
+(and has Claude fix it if not), and it appears in the dock like any other app, usually within a minute. Its ⋯ menu
+changes it with Claude ("make it 50 minutes"), shows its files, restarts or removes it.
+
+- **What they can do:** draw with NotchMan's own elements (text, buttons, inputs, toggles, lists, progress bars,
+  countdowns, charts, …), show a chip beside the collapsed notch, keep values between launches, run timers, post
+  notifications, copy text and open web links. They reach the network only if their manifest asks for it.
+- **What they can't:** read or write your files, run programs, or see other apps. Each runs in its own JavaScript
+  sandbox on its own thread; one that gets stuck shows "not responding" with a Restart button instead of freezing the
+  notch.
+- **Where they live:** `~/Library/Application Support/NotchMan/mods/<app>/` (`manifest.json`, `app.js`, and
+  `store.json` for its saved values). Edit the files and the app reloads; delete the folder and it leaves the dock.
+- Making or changing an app uses your Claude Code account (`claude -p`, writing text only — no tools).
+
 ## Privacy and data
 
 NotchMan runs entirely on your Mac and has no server of its own.

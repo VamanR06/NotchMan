@@ -1,14 +1,23 @@
 import AppKit
 import NotchEngine
+import NotchMods
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var engine: NotchEngine?
+    private var mods: ModLibrary?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let engine = NotchEngine(apps: AppRegistry.makeApps())
         engine.start()
         self.engine = engine
+        // Notch apps Claude made: added to the dock after the built-in ones, kept in step with their folders.
+        let mods = ModLibrary(add: { [weak engine] in engine?.add($0) },
+                              remove: { [weak engine] in engine?.remove(appID: $0) },
+                              reveal: { [weak engine] in engine?.reveal(appID: $0) })
+        engine.commandProviders.append { [weak mods] query in mods?.commands(for: query) ?? .none }
+        mods.start()
+        self.mods = mods
         NSApp.mainMenu = MainMenu.make(openSettings: #selector(openSettings), target: self)
     }
 

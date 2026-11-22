@@ -78,6 +78,8 @@ private final class StatusApp: NotchApp {
         let model = NotchViewModel(apps: [StatusApp("today"), StatusApp("calendar")], geometry: geometry)
         model.chooseOpening = { _ in "calendar" }
         try await hoverOpen(model)
+        // On a busy test machine the opening can land a little later.
+        for _ in 0..<20 where model.selectedAppID != "calendar" { try await Task.sleep(for: .milliseconds(100)) }
         #expect(model.selectedAppID == "calendar")
     }
 

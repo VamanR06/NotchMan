@@ -10,7 +10,12 @@ final class NotchViewModel {
     private(set) var pulsing = false
     var geometry: NotchGeometry
 
-    let apps: [any NotchApp]
+    /// The dock's apps; changes when a generated app is added or removed.
+    var apps: [any NotchApp] {
+        didSet {
+            if !apps.contains(where: { $0.id == selectedAppID }) { selectedAppID = apps.first?.id ?? "" }
+        }
+    }
 
     /// The All Apps grid is showing over the selected app.
     var isLauncherOpen = false

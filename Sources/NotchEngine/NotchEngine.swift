@@ -6,7 +6,10 @@ import NotchKit
 /// Owns the notch windows (one per display) and hosts the registered apps.
 @MainActor
 public final class NotchEngine {
-    public let apps: [any NotchApp]
+    /// The apps in the dock, in order. Generated notch apps are added and removed while NotchMan runs.
+    public private(set) var apps: [any NotchApp]
+    /// More things the command bar can find and do, besides the apps' own (e.g. making a new notch app).
+    public var commandProviders: [@MainActor (String) -> NotchCommands] = []
 
     /// When on, every display gets a notch (a virtual one where there's no hardware notch).
     static let allDisplaysKey = "showNotchOnAllDisplays"
@@ -53,28 +56,7 @@ public final class NotchEngine {
         }
         // "Ask ChatGPT / Claude / Muse" menus anywhere in the notch go to the Chat app.
         AskAI.shared.deliver = { [weak self] message in self?.deliver(message, to: "chat") }
-        for app in apps {
-            let appID = app.id
-            let context = NotchContext(
-                appID: appID,
-                attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
-                openSettings: { [weak self] in self?.showSettings(appID: appID) },
-                send: { [weak self] message, target, reveal in self?.deliver(message, to: target, reveal: reveal) },
-                isVisible: { [weak self] in
-                    self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
-                },
-                notify: { [weak self] title, body, payload, actions in
-                    self?.notifications?.post(appID: appID, title: title, body: body, payload: payload, actions: actions)
-                },
-                holdOpen: { [weak self] hold in
-                    self?.notches.values.forEach { notch in
-                        if hold { notch.model.heldApps.insert(appID) } else { notch.model.heldApps.remove(appID) }
-                    }
-                },
-                transient: { [weak self] transient in self?.showTransient(transient) }
-            )
-            app.activate(context: context)
-        }
+        apps.forEach(activate)
 
         rebuildNotches()
         installMouseMonitors()
@@ -114,6 +96,60 @@ public final class NotchEngine {
                 self?.hotKey?.update()
             }
         })
+    }
+
+
+    /// Starts an app with its context (storage, notifications, messages to other apps, …).
+    private func activate(_ app: any NotchApp) {
+        let appID = app.id
+        let context = NotchContext(
+            appID: appID,
+            attention: { [weak self] attention in self?.attentionTarget?.handleAttention(attention, from: appID) },
+            openSettings: { [weak self] in self?.showSettings(appID: appID) },
+            send: { [weak self] message, target, reveal in self?.deliver(message, to: target, reveal: reveal) },
+            isVisible: { [weak self] in
+                self?.notches.values.contains { $0.model.state == .expanded && $0.model.selectedAppID == appID } ?? false
+            },
+            notify: { [weak self] title, body, payload, actions in
+                self?.notifications?.post(appID: appID, title: title, body: body, payload: payload, actions: actions)
+            },
+            holdOpen: { [weak self] hold in
+                self?.notches.values.forEach { notch in
+                    if hold { notch.model.heldApps.insert(appID) } else { notch.model.heldApps.remove(appID) }
+                }
+            },
+            transient: { [weak self] transient in self?.showTransient(transient) }
+        )
+        app.activate(context: context)
+    }
+
+    /// Adds an app to the end of the dock (a generated notch app), started and ready.
+    public func add(_ app: any NotchApp) {
+        guard !apps.contains(where: { $0.id == app.id }) else { return }
+        activate(app)
+        apps.append(app)
+        appsChanged()
+    }
+
+    /// Takes an app out of the dock and stops it.
+    public func remove(appID: String) {
+        guard let index = apps.firstIndex(where: { $0.id == appID }) else { return }
+        apps.remove(at: index).deactivate()
+        appsChanged()
+    }
+
+    /// Shows `appID` in the notch on the cursor's screen, opening it if needed.
+    public func reveal(appID: String) {
+        guard let model = attentionTarget, apps.contains(where: { $0.id == appID }) else { return }
+        model.select(appID)
+        if model.state == .collapsed { model.expand() }
+    }
+
+    private func appsChanged() {
+        for notch in notches.values {
+            notch.model.apps = apps
+            layout(notch)
+        }
     }
 
     /// Opens Settings and closes the notch, which would otherwise cover the window (it floats above the menu bar).
@@ -400,6 +436,12 @@ public final class NotchEngine {
     /// Everything the apps offer for `query`, plus each app itself (to switch to it).
     func commands(for query: String) -> NotchCommands {
         var all = NotchCommands()
+        for provider in commandProviders {
+            let offered = provider(query)
+            all.items += offered.items
+            all.actions += offered.actions
+            all.fallbacks += offered.fallbacks
+        }
         for app in apps {
             let offered = app.commands(for: query)
             all.items += offered.items
