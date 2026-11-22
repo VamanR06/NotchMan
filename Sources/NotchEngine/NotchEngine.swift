@@ -314,6 +314,8 @@ public final class NotchEngine {
             notch.model.select(target.id)
             notch.model.expand()
             notch.panel.ignoresMouseEvents = false
+            let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+            target.fileDragEntered(urls ?? [])
         }
     }
 

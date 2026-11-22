@@ -44,6 +44,8 @@ public protocol NotchApp: AnyObject {
 
     /// Files dragged to the notch open this app (the first one that accepts them) so it can take the drop.
     var acceptsFileDrags: Bool { get }
+    /// A drag of these files reached the notch and opened this app (before they're dropped anywhere).
+    func fileDragEntered(_ urls: [URL])
 
     /// Handles a message sent by another app via `NotchContext.send(_:to:)`.
     func receive(_ message: NotchMessage)
@@ -59,6 +61,7 @@ public extension NotchApp {
     var activity: NotchActivity? { nil }
     var dockBadge: NotchBadge? { nil }
     var acceptsFileDrags: Bool { false }
+    func fileDragEntered(_ urls: [URL]) {}
     func notchWillOpen() {}
     var claimsNotchOnOpen: Bool { false }
     func deactivate() {}

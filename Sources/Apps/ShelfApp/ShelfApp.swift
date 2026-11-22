@@ -30,8 +30,18 @@ public final class ShelfApp: NotchApp {
     }
     /// Bumped when the open folder's contents change, so the browser re-lists it.
     private(set) var folderRevision = 0
-    /// The shelved file or download last clicked: Space previews it.
-    var selected: URL?
+    /// The shelved file or download last clicked: Space previews it, and the suggested folders are for it.
+    var selected: URL? {
+        didSet {
+            guard selected != oldValue, !isDragging else { return }
+            if let selected, tab == .shelf, items.contains(selected) { suggestFolders(for: [selected]) } else { predictor.clear() }
+        }
+    }
+    /// The best folders for the files being dragged in (or the selected shelved file).
+    let predictor = DropPredictor()
+    @ObservationIgnored private var dropHistory = DropHistory()
+    /// Files are being dragged in from outside (the suggestions are for them).
+    @ObservationIgnored private var isDragging = false
 
     /// The folder open in the drop browser. Browsing starts somewhere (a project, a place, a recent folder) and
     /// can go anywhere from there.
@@ -69,6 +79,41 @@ public final class ShelfApp: NotchApp {
         }
     }
 
+    // MARK: Suggested folders
+
+    public func fileDragEntered(_ urls: [URL]) {
+        tab = .shelf
+        browsing = nil
+        isDragging = true
+        suggestFolders(for: urls)
+    }
+
+    func suggestFolders(for files: [URL]) {
+        predictor.predict(files: files, candidates: dropCandidates(), history: dropHistory, context: .current())
+    }
+
+    /// The notch closed or the drag ended without a drop on a suggestion.
+    func clearSuggestions() {
+        isDragging = false
+        predictor.clear()
+    }
+
+    /// Where files might go: recent folders, projects, Desktop/Documents/Downloads, and the folders in Documents
+    /// and Desktop you've touched most recently.
+    func dropCandidates() -> [DropCandidate] {
+        let places = Self.places.filter { $0.name != "Home" }.map(\.url)
+        let extra = places.prefix(2).flatMap { Self.recentlyModifiedSubfolders(of: $0, limit: 10) }
+        return DropRanking.candidates(recents: recentFolders, projects: projects.map { URL(fileURLWithPath: $0.cwd) },
+                                      places: places, extra: extra)
+    }
+
+    static func recentlyModifiedSubfolders(of folder: URL, limit: Int) -> [URL] {
+        let modified = { (url: URL) in
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        }
+        return Array(ProjectDrop.subfolders(of: folder).sorted { modified($0) > modified($1) }.prefix(limit))
+    }
+
     /// Full-size Quick Look of `url` (or the selected file); ←/→ in it step through the tab's other files.
     func quickLook(_ url: URL? = nil) {
         guard let target = url ?? selected else { return }
@@ -101,6 +146,7 @@ public final class ShelfApp: NotchApp {
         self.context = context
         items = (context.defaults.array(forKey: "shelf") as? [Data] ?? []).compactMap(Self.resolve)
         moveFiles = context.defaults.bool(forKey: "moveFiles")
+        dropHistory = DropHistory.load(context.defaults)
         refreshDownloads()
         watcher = DirectoryWatcher(paths: [DownloadsFolder.url.path]) { [weak self] in self?.refreshDownloads() }
         watchProgress()
@@ -121,6 +167,7 @@ public final class ShelfApp: NotchApp {
     // MARK: - Shelf
 
     func addToShelf(_ urls: [URL]) {
+        clearSuggestions()
         let new = urls.filter { !items.contains($0) }
         guard !new.isEmpty else { return }
         items.append(contentsOf: new)
@@ -282,6 +329,9 @@ public final class ShelfApp: NotchApp {
         folderRevision += 1
         guard !placed.isEmpty else { return }
         remember(folder)
+        dropHistory.record(urls, into: folder)
+        dropHistory.save(to: context?.defaults)
+        clearSuggestions()
         guard let project else {
             lastDrop = ProjectDropResult(project: nil, folder: folder, files: placed, references: nil)
             context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",

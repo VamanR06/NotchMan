@@ -25,6 +25,7 @@ struct ShelfView: View {
             }
         }
         .onAppear(perform: app.pruneMissing)
+        .onDisappear(perform: app.clearSuggestions)
     }
 
     private var header: some View {
@@ -193,6 +194,64 @@ private struct ShelfTile: View {
 
 // MARK: - Destinations
 
+/// The three most likely folders for what you're dragging (or the shelved file you selected), large enough to aim
+/// at. Drop on one, or click it to put the selected file there.
+private struct SuggestedFolders: View {
+    let app: ShelfApp
+    let predictor: DropPredictor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 8))
+                Text(predictor.usedJev ? "Suggested by Jev" : "Suggested")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .textCase(.uppercase)
+                if predictor.isRefining { NotchSpinner(size: 8, lineWidth: 1.2) }
+            }
+            .foregroundStyle(.white.opacity(0.45))
+            HStack(spacing: 5) {
+                ForEach(predictor.suggestions) { suggestion in
+                    SuggestionTile(app: app, folder: suggestion.candidate.url,
+                                   isProject: suggestion.candidate.kind == .project)
+                }
+            }
+        }
+    }
+}
+
+private struct SuggestionTile: View {
+    let app: ShelfApp
+    let folder: URL
+    let isProject: Bool
+
+    var body: some View {
+        Button {
+            if let selected = app.selected, app.items.contains(selected) { app.drop([selected], into: folder) }
+            else { app.browse(folder) }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: isProject ? "terminal.fill" : "folder.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isProject ? .orange : Color.accentColor)
+                Text(folder.lastPathComponent)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.horizontal, 4)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.35)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fileDropTarget(folder.lastPathComponent, cornerRadius: 8, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
+        .help(ProjectDrop.displayPath(folder, project: nil) + (app.selected != nil ? "\nClick to put the selected file here" : ""))
+    }
+}
+
 /// Where files can go: recent folders, running Claude Code projects and the usual places, or any folder via
 /// Choose Folder…. Hold a drag over one to open it and keep going down; drop to put files there.
 private struct DestinationColumn: View {
@@ -213,6 +272,9 @@ private struct DestinationColumn: View {
                 }
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 8) {
+                        if !app.predictor.suggestions.isEmpty {
+                            SuggestedFolders(app: app, predictor: app.predictor)
+                        }
                         let recents = app.recentFolders
                         if !recents.isEmpty {
                             group("Recent") {
