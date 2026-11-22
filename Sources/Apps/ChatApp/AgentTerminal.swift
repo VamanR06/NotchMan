@@ -169,6 +169,14 @@ final class TerminalSession: Identifiable {
         return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
     }
 
+    /// The last `count` lines including scrollback (a long reply's start has often scrolled off the screen).
+    func recentLines(_ count: Int = 200) -> [String] {
+        let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
+        var lines = text.components(separatedBy: "\n")
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        return Array(lines.suffix(count))
+    }
+
     /// Where the cursor is on screen: zero-based row and column.
     var cursor: (row: Int, column: Int) {
         let location = view.getTerminal().getCursorLocation()
@@ -280,6 +288,56 @@ final class AgentTerminal: Identifiable {
     }
 
     @ObservationIgnored private var submitting: Task<Void, Never>?
+
+    // MARK: - The reply being written
+
+    /// The reply Claude is writing right now, read off its terminal: the session file only gets a reply once it's
+    /// finished, but the terminal shows it as it streams. That's the text after the last `⏺` above the input box —
+    /// unless that `⏺` is a tool call (`⏺ Bash(…)`), which the session file shows already.
+    static func liveReply(_ lines: [String]) -> String? {
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        var end = lines.count
+        if let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }), prompt > 0,
+           lines[prompt - 1].trimmingCharacters(in: .whitespaces).hasPrefix("─") {
+            end = prompt - 1
+        }
+        guard let start = lines[..<end].lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("⏺") })
+        else { return nil }
+        let head = lines[start].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
+        guard !isToolLine(head) else { return nil }
+        var body = [head]
+        for line in lines[(start + 1)..<end] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if isStatusLine(trimmed) || trimmed.hasPrefix("⎿") { break }
+            body.append(line.hasPrefix("  ") ? String(line.dropFirst(2)) : line)
+        }
+        let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// `Bash(swift test)`, `Update(ShelfView.swift)`, `Read 3 files (ctrl+o to expand)`.
+    static func isToolLine(_ line: String) -> Bool {
+        line.range(of: #"^[A-Za-z_][\w.:-]*( \(MCP\))?\("#, options: .regularExpression) != nil || line.contains("(ctrl+o")
+    }
+
+    /// Claude's spinner line under the reply (`✻ Thinking… (esc to interrupt)`).
+    static func isStatusLine(_ line: String) -> Bool {
+        if line.contains("esc to interrupt") { return true }
+        guard let first = line.first, "✻✶✳✢✽·*∗".contains(first) else { return false }
+        return line.contains("…")
+    }
+
+    /// Whether the terminal's (rendered) reply is one the session file already has: compared on letters and digits
+    /// only, since the terminal shows Markdown without its `**` and backticks.
+    static func reply(_ live: String, isIn replies: [String]) -> Bool {
+        let key = String(alphanumerics(live).prefix(40))
+        guard !key.isEmpty else { return true }
+        return replies.contains { alphanumerics($0).contains(key) }
+    }
+
+    private static func alphanumerics(_ text: String) -> String {
+        String(text.unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(Character.init)).lowercased()
+    }
 
     /// What Claude's input box holds right now: the text after `❯` on its last prompt line.
     static func promptText(_ lines: [String]) -> String? {

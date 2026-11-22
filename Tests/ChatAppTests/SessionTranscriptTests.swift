@@ -90,6 +90,40 @@ import Testing
         #expect(bytes.suffix(6) == ArraySlice(Array("\u{1B}[201~".utf8)))
     }
 
+    @Test func readsTheReplyBeingWrittenOffTheScreen() {
+        let screen = [
+            "> fix the build",
+            "",
+            "⏺ Bash(swift build)",
+            "  ⎿  Build complete!",
+            "",
+            "⏺ The build works again. The cause was a missing",
+            "  import in ShelfView.swift.",
+            "",
+            "  - added the import",
+            "",
+            "✻ Pondering… (12s · esc to interrupt)",
+            "",
+            "────────────────",
+            "❯ ",
+            "────────────────",
+        ]
+        #expect(AgentTerminal.liveReply(screen)
+            == "The build works again. The cause was a missing\nimport in ShelfView.swift.\n\n- added the import")
+    }
+
+    @Test func noLiveReplyWhileAToolRuns() {
+        let screen = ["⏺ Done thinking.", "", "⏺ Bash(swift test)", "  ⎿  Running…", "", "────", "❯ ", "────"]
+        #expect(AgentTerminal.liveReply(screen) == nil)
+        #expect(AgentTerminal.liveReply(["⏺ Read 3 files (ctrl+o to expand)", "────", "❯ "]) == nil)
+    }
+
+    @Test func liveReplyMatchesTheSavedOneDespiteMarkdown() {
+        #expect(AgentTerminal.reply("The build works again. The cause was a missing import in ShelfView.swift.",
+                                    isIn: ["**The build works again.** The cause was a missing import in `ShelfView.swift`."]))
+        #expect(!AgentTerminal.reply("Something new entirely, still being written", isIn: ["The build works again."]))
+    }
+
     @Test func readsWhatsLeftInClaudesInputBox() {
         let screen = ["⏺ Done.", "", "────────────", "❯ fix the build", "────────────", "  ? for shortcuts"]
         #expect(AgentTerminal.promptText(screen) == "fix the build")

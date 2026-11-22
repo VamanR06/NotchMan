@@ -15,6 +15,8 @@ struct AgentSessionView: View {
     @State private var pasteMonitor = ImagePasteMonitor()
     /// Typing a new quick command (the field shows in the bar above the message box).
     @State private var addingQuickCommand = false
+    /// The reply Claude is writing, read off its terminal until the finished one reaches the session file.
+    @State private var liveReply: String?
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
@@ -37,6 +39,7 @@ struct AgentSessionView: View {
             composer
         }
         .task(id: terminal.id) { await transcript.follow() }
+        .task(id: "\(terminal.id)-\(isWorking)") { await watchLiveReply() }
         .onAppear {
             pasteMonitor.start(isActive: { composerFocused && terminal.isRunning }) { image in
                 if let file = ImageAttachments.save(image) { images.append(file) }
@@ -110,6 +113,12 @@ struct AgentSessionView: View {
                     }
                     ForEach(shown) { item in
                         row(item)
+                    }
+                    if let liveReply {
+                        Gutter(mark: "⏺", color: .white.opacity(0.85)) {
+                            MarkdownView(text: liveReply)
+                        }
+                        .transition(.opacity)
                     }
                     ForEach(approvals) { request in
                         ApprovalCard(app: app, request: request)
@@ -231,6 +240,35 @@ struct AgentSessionView: View {
             Gutter(mark: "⎿", color: .white.opacity(0.3)) {
                 ToolStepsRow(calls: calls, preview: previewFile)
             }
+        }
+    }
+
+    /// While Claude works, reads the reply it's writing off its terminal a few times a second; drops it once the
+    /// session file has it (or Claude stops).
+    private func watchLiveReply() async {
+        guard isWorking else {
+            // Done: hold the text a moment until the finished reply reaches the session file, so it doesn't blink.
+            for _ in 0..<12 where liveReply != nil {
+                let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
+                    if case .reply(let text) = entry.kind { text } else { nil }
+                }
+                if let live = liveReply, AgentTerminal.reply(live, isIn: recent) { break }
+                try? await Task.sleep(for: .milliseconds(250))
+                if Task.isCancelled { return }
+            }
+            liveReply = nil
+            return
+        }
+        while !Task.isCancelled {
+            var next: String?
+            if terminal.isRunning, let live = AgentTerminal.liveReply(terminal.claude.recentLines()) {
+                let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
+                    if case .reply(let text) = entry.kind { text } else { nil }
+                }
+                next = AgentTerminal.reply(live, isIn: recent) ? nil : live
+            }
+            if next != liveReply { liveReply = next }
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 
@@ -409,6 +447,7 @@ private struct FollowsBottom: ViewModifier {
     struct Position: Equatable {
         var offset: CGFloat
         var height: CGFloat
+        var visibleHeight: CGFloat
         var atEnd: Bool
     }
 
@@ -421,16 +460,24 @@ private struct FollowsBottom: ViewModifier {
                 .onScrollGeometryChange(for: Position.self) { geometry in
                     let bottom = geometry.contentOffset.y + geometry.containerSize.height
                     return Position(offset: geometry.contentOffset.y, height: geometry.contentSize.height,
-                                    atEnd: bottom >= geometry.contentSize.height - 30)
+                                    visibleHeight: geometry.containerSize.height,
+                                    atEnd: bottom >= geometry.contentSize.height - 6)
                 } action: { old, new in
-                    if new.atEnd {
-                        if !follow { follow = true }
-                        if unseenBelow { unseenBelow = false }
-                    } else if userScrolling, new.offset < old.offset - 0.5 {
-                        follow = false  // you scrolled up
+                    // Any move up that the content didn't cause (it didn't shrink) is you — trackpad or mouse
+                    // wheel, however little — and lets go of the end. The view only ever moves itself downward.
+                    if new.offset < old.offset - 0.5, new.height >= old.height - 0.5 {
+                        if follow { follow = false }
+                        return
                     }
-                    // Taller content (a new row, a reply growing, a step finishing) keeps the end in view.
-                    if follow, !userScrolling, !new.atEnd, new.height > old.height + 0.5 { schedule() }
+                    if new.atEnd {
+                        if !follow { follow = true }  // back at the very end: follow again
+                        if unseenBelow { unseenBelow = false }
+                        return
+                    }
+                    // Taller content (a new row, a reply growing, a step finishing) or a shorter view (the message
+                    // box growing) keeps the end in view — only while following.
+                    let grew = new.height > old.height + 0.5 || new.visibleHeight < old.visibleHeight - 0.5
+                    if follow, !userScrolling, grew { schedule() }
                 }
         } else {
             content
