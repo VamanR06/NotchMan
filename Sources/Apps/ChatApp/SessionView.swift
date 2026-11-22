@@ -85,10 +85,10 @@ struct AgentSessionView: View {
     /// stack's guesses made the view jump, or show black and stop scrolling — so long sessions show their latest
     /// part and grow on request.
     @State private var shownCount = Self.page
-    private static let page = 60
+    private static let page = 40
 
     private var conversation: some View {
-        let items = SessionItem.items(transcript.entries)
+        let items = transcript.items
         let prompts = items.compactMap { item -> PromptMark? in
             if case .prompt(let id, let text) = item { PromptMark(id: id, text: text) } else { nil }
         }
@@ -118,7 +118,9 @@ struct AgentSessionView: View {
                         .frame(maxWidth: .infinity)
                     }
                     ForEach(shown) { item in
-                        row(item)
+                        // Equatable: a row redraws only when it changed, not on every update to the session.
+                        SessionRow(item: item, highlighted: visiblePrompt == item.id && !follow, preview: previewFile)
+                            .equatable()
                     }
                     if let liveReply {
                         Gutter(mark: "⏺", color: .white.opacity(0.85)) {
@@ -222,33 +224,6 @@ struct AgentSessionView: View {
     private static let railInset: CGFloat = 13
     static let mono = Font.system(size: 11.5, design: .monospaced)
 
-    /// Laid out like Claude Code's own terminal: a marker in the gutter (❯ you, ⏺ Claude, ⎿ its steps), everything
-    /// left-aligned — but replies drawn as Markdown, so tables and lists read properly.
-    @ViewBuilder private func row(_ item: SessionItem) -> some View {
-        switch item {
-        case .prompt(let id, let text):
-            Gutter(mark: "❯", color: .white.opacity(0.55)) {
-                Text(text)
-                    .font(Self.mono)
-                    .foregroundStyle(.white.opacity(0.95))
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.vertical, 5)
-            .background(Rectangle().fill(.white.opacity(visiblePrompt == id && !follow ? 0.1 : 0.06)).padding(.leading, -12).padding(.trailing, -40))
-            .padding(.top, 6)
-        case .reply(_, let text):
-            Gutter(mark: "⏺", color: .white.opacity(0.85)) {
-                MarkdownView(text: text)
-            }
-        case .steps(_, let calls):
-            Gutter(mark: "⎿", color: .white.opacity(0.3)) {
-                ToolStepsRow(calls: calls, preview: previewFile)
-            }
-        }
-    }
-
     /// A few times a second, reads Claude's attached terminal: whether its spinner is up (working or not), and the
     /// reply it's writing, until the session file has that reply. When the spinner and `claude agents` disagree,
     /// asks `claude agents` again so the overview catches up too.
@@ -280,7 +255,7 @@ struct AgentSessionView: View {
                 next = Date().timeIntervalSince(idleSince!) < 3 ? current : nil
             }
             if next != liveReply { liveReply = next }
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: .milliseconds(400))
         }
     }
 
@@ -520,6 +495,44 @@ private struct TracksVisiblePrompt: ViewModifier {
     }
 }
 
+/// One row of the conversation, laid out like Claude Code's own terminal: a marker in the gutter (❯ you, ⏺ Claude,
+/// ⎿ its steps), everything left-aligned — but replies drawn as Markdown, so tables and lists read properly.
+private struct SessionRow: View, Equatable {
+    let item: SessionItem
+    /// The prompt you jumped to from the rail.
+    let highlighted: Bool
+    let preview: (String) -> Void
+
+    nonisolated static func == (lhs: SessionRow, rhs: SessionRow) -> Bool {
+        lhs.item == rhs.item && lhs.highlighted == rhs.highlighted
+    }
+
+    var body: some View {
+        switch item {
+        case .prompt(_, let text):
+            Gutter(mark: "❯", color: .white.opacity(0.55)) {
+                Text(text)
+                    .font(AgentSessionView.mono)
+                    .foregroundStyle(.white.opacity(0.95))
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 5)
+            .background(Rectangle().fill(.white.opacity(highlighted ? 0.1 : 0.06)).padding(.leading, -12).padding(.trailing, -40))
+            .padding(.top, 6)
+        case .reply(_, let text):
+            Gutter(mark: "⏺", color: .white.opacity(0.85)) {
+                MarkdownView(text: text)
+            }
+        case .steps(_, let calls):
+            Gutter(mark: "⎿", color: .white.opacity(0.3)) {
+                ToolStepsRow(calls: calls, preview: preview)
+            }
+        }
+    }
+}
+
 /// A row with a terminal-style marker in a narrow gutter and its content beside it.
 private struct Gutter<Content: View>: View {
     let mark: String
@@ -538,7 +551,7 @@ private struct Gutter<Content: View>: View {
 }
 
 /// What the session view shows: your prompts, Claude's replies, and the tool calls between them as one group of steps.
-enum SessionItem: Identifiable {
+enum SessionItem: Identifiable, Equatable {
     case prompt(id: String, String)
     case reply(id: String, String)
     case steps(id: String, [ToolCall])

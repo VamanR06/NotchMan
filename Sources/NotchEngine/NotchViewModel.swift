@@ -301,6 +301,10 @@ final class NotchViewModel {
     }
 
     /// A click outside the notch (seen by the global monitor) closes a held notch; pinned ones stay.
+    /// You're typing in the open notch: its window keeps taking clicks even where it's empty, so a click meant
+    /// for it can't fall through to the app behind while NotchMan is busy (a click on the empty part closes it).
+    var holdsClicks: Bool { state == .expanded && keyboardHeld && !isPinned }
+
     func clickedOutside(at point: CGPoint) {
         guard state == .expanded, isHeld, !isPinned, !contains(point, slack: 4) else { return }
         collapse()

@@ -320,6 +320,11 @@ public final class NotchEngine {
             let isClick = event.type == .leftMouseDown
             let clickedNotch = isClick && event.window is NotchPanel
             MainActor.assumeIsolated {
+                // A click on the empty part of a notch window that's holding clicks (see `holdsClicks`): outside.
+                if clickedNotch, let notch = self?.notches.values.first(where: { $0.panel === event.window }),
+                   notch.model.holdsClicks, !notch.model.contains(NSEvent.mouseLocation, slack: 4) {
+                    notch.model.clickedOutside(at: NSEvent.mouseLocation)
+                }
                 self?.handleMouse()
                 if isClick { self?.watchFileDragsWhileMouseDown() }
                 // Clicking back into the notch closes macOS's password AutoFill, like clicking back into an app.
@@ -546,7 +551,8 @@ public final class NotchEngine {
             // Only capture clicks inside the visible notch shape; pass everything else through.
             // While files are dragged to it, the notch keeps taking the drag (a mouse update mid-drag must not let
             // the drop fall through to the app behind).
-            notch.panel.ignoresMouseEvents = !(notch.model.dragHeld || notch.model.contains(point))
+            notch.panel.ignoresMouseEvents = !(notch.model.dragHeld || notch.model.contains(point)
+                || (notch.model.holdsClicks && notch.panel.frame.contains(point)))
             // A text field in the notch makes the panel key; once collapsed, hand the keyboard back
             // to the app the user was in so keystrokes don't go to the hidden panel.
             if notch.model.state == .collapsed, notch.panel.isKeyWindow, !NSApp.isActive {

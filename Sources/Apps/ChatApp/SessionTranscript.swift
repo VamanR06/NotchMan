@@ -195,7 +195,11 @@ struct TranscriptParser {
 /// A background session's transcript, read as Claude Code writes it. Follows the file while `follow()` runs.
 @MainActor @Observable
 final class SessionTranscript {
-    private(set) var entries: [TranscriptEntry] = []
+    private(set) var entries: [TranscriptEntry] = [] {
+        didSet { items = SessionItem.items(entries) }
+    }
+    /// The entries as the session view shows them (tool calls grouped), worked out once per change.
+    private(set) var items: [SessionItem] = []
     private(set) var title: String?
     /// Claude is mid-turn, per the file (nil until it says); see `TranscriptParser.turnOpen`.
     private(set) var turnOpen: Bool?
