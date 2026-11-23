@@ -49,7 +49,7 @@ struct ToolCall: Equatable {
 
 /// Turns Claude Code's transcript lines (`~/.claude/projects/<project>/<session>.jsonl`) into entries. Fed new data as
 /// the file grows; keeps a partial last line until its newline arrives, and attaches tool results to their calls.
-struct TranscriptParser {
+struct TranscriptParser: Sendable {
     private(set) var entries: [TranscriptEntry] = []
     /// Claude Code's own title for the session, when it has made one.
     private(set) var title: String?
@@ -215,12 +215,35 @@ final class SessionTranscript {
         self.sessionID = sessionID
     }
 
-    /// Reads what's new every half second until cancelled (the view's `.task`).
+    /// Reads what's new every half second until cancelled (the view's `.task`). The first read of a long session
+    /// (megabytes of history) is parsed off the main thread, so opening it doesn't stall the notch.
     func follow(directory: URL = UsageScanner.projectsDirectory) async {
+        if !isLoaded { await loadInBackground(directory: directory) }
         while !Task.isCancelled {
             readNew(directory: directory)
             try? await Task.sleep(for: .milliseconds(500))
         }
+    }
+
+    private func loadInBackground(directory: URL) async {
+        if file == nil { file = Self.find(sessionID: sessionID, in: directory) }
+        guard let file, offset == 0 else { return }
+        let start = parser
+        let (parsed, size) = await Task.detached(priority: .userInitiated) { () -> (TranscriptParser, UInt64) in
+            var parser = start
+            guard let data = try? Data(contentsOf: file) else { return (parser, 0) }
+            // Only whole lines; the rest is read normally once its newline is written.
+            let end = data.lastIndex(of: UInt8(ascii: "\n")).map { $0 + 1 } ?? 0
+            parser.feed(data.prefix(end))
+            return (parser, UInt64(end))
+        }.value
+        guard offset == 0, size > 0 else { return }
+        parser = parsed
+        offset = size
+        if parser.entries != entries { entries = parser.entries }
+        if parser.title != title { title = parser.title }
+        if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
+        isLoaded = true
     }
 
     func readNew(directory: URL = UsageScanner.projectsDirectory) {

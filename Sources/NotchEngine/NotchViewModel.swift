@@ -239,8 +239,23 @@ final class NotchViewModel {
     /// pushed against the top (as it is under the physical notch) reports y == maxY, which
     /// `CGRect.contains` treats as outside.
     func contains(_ point: CGPoint, slack: CGFloat = 0) -> Bool {
-        Self.contains(hitRect, point, slack: slack)
+        Self.contains(cachedHitRect, point, slack: slack)
     }
+
+    /// `hitRect` for mouse moves, which arrive from anywhere on screen many times a second: collapsed, working it out
+    /// asks every app for its chip, so it's reused for a moment (expanded it's cheap and always fresh).
+    private var cachedHitRect: CGRect {
+        guard state == .collapsed else { return hitRect }
+        let now = Date()
+        if let cache = hitCache, cache.transient == (transient != nil), now.timeIntervalSince(cache.at) < 0.3 {
+            return cache.rect
+        }
+        let rect = hitRect
+        hitCache = (rect, now, transient != nil)
+        return rect
+    }
+
+    @ObservationIgnored private var hitCache: (rect: CGRect, at: Date, transient: Bool)?
 
     static func contains(_ hitRect: CGRect, _ point: CGPoint, slack: CGFloat) -> Bool {
         var rect = hitRect.insetBy(dx: -slack, dy: -slack)

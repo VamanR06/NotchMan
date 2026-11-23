@@ -62,6 +62,7 @@ public final class NotchEngine {
         installMouseMonitors()
         hotKey = HotKey { [weak self] in self?.toggleFromHotKey() }
         hotKey?.update()
+        MainThreadWatchdog.shared.start()
         huds = SystemHUDs { [weak self] transient in self?.showTransient(transient) }
         huds?.start()
         huds?.waitForAccessibility()
@@ -305,11 +306,12 @@ public final class NotchEngine {
                     }
                     return
                 }
-                // A click the app behind got although it landed on the open notch: the panel was letting clicks
-                // through. Shouldn't happen; log it to find out why, and make the panel take clicks again.
-                for notch in self?.notches.values ?? [:].values where notch.model.state == .expanded && notch.model.contains(point) {
-                    Self.log.error("Click passed through the open notch (ignoresMouseEvents=\(notch.panel.ignoresMouseEvents, privacy: .public), key=\(notch.panel.isKeyWindow, privacy: .public))")
-                    notch.panel.ignoresMouseEvents = false
+                // A click another app got while a notch is open: say where it landed and what the panel was doing, so a
+                // click falling through can be traced. Over the open notch, make the panel take clicks again.
+                for notch in self?.notches.values ?? [:].values where notch.model.state == .expanded {
+                    let inside = notch.model.contains(point, slack: 4)
+                    Self.log.error("Click went to another app while open: inside=\(inside, privacy: .public) inWindow=\(notch.panel.frame.contains(point), privacy: .public) ignores=\(notch.panel.ignoresMouseEvents, privacy: .public) visible=\(notch.panel.isVisible, privacy: .public) key=\(notch.panel.isKeyWindow, privacy: .public) held=\(notch.model.holdsClicks, privacy: .public) app=\(notch.model.selectedAppID, privacy: .public)")
+                    if inside { notch.panel.ignoresMouseEvents = false }
                 }
                 self?.notches.values.forEach { $0.model.clickedOutside(at: point) }
             }
@@ -319,6 +321,10 @@ public final class NotchEngine {
         if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { [weak self] event in
             let isClick = event.type == .leftMouseDown
             let clickedNotch = isClick && event.window is NotchPanel
+            if isClick {
+                let window = event.window.map { String(describing: type(of: $0)) } ?? "none"
+                Self.log.notice("Click in NotchMan: window=\(window, privacy: .public)")
+            }
             MainActor.assumeIsolated {
                 // A click on the empty part of a notch window that's holding clicks (see `holdsClicks`): outside.
                 if clickedNotch, let notch = self?.notches.values.first(where: { $0.panel === event.window }),
