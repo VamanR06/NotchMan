@@ -200,9 +200,19 @@ public final class NotchEngine {
             }
         }
         for (id, notch) in notches where !wanted.contains(id) {
+            notch.model.collapse()
             notch.panel.orderOut(nil)
+            notch.panel.close()
             notches[id] = nil
         }
+        // Any notch window not in the list (a display that came back under a new id) goes too.
+        let kept = Set(notches.values.map { ObjectIdentifier($0.panel) })
+        for panel in NSApp.windows.compactMap({ $0 as? NotchPanel }) where !kept.contains(ObjectIdentifier(panel)) && panel.isVisible {
+            Self.log.notice("Closing a notch window no display uses any more (#\(panel.windowNumber, privacy: .public))")
+            panel.orderOut(nil)
+            panel.close()
+        }
+        Self.log.notice("Notch windows: \(self.notches.map { "display \($0.key) at \($0.value.panel.frame)" }.joined(separator: ", "), privacy: .public)")
     }
 
     private func makeNotch(geometry: NotchGeometry) -> ScreenNotch {
@@ -290,6 +300,34 @@ public final class NotchEngine {
             ?? models.first
     }
 
+    /// A click went to another app at `point`. Every visible notch window under it gets fixed: one we track takes
+    /// clicks again (it's open there); one we don't track is a leftover from an earlier display setup — it keeps
+    /// drawing the apps but nothing routes clicks to it — so it's closed. Logged in full either way.
+    private func repairPassthrough(at point: CGPoint) {
+        let tracked = Dictionary(uniqueKeysWithValues: notches.map { (ObjectIdentifier($0.value.panel), $0) })
+        let panels = NSApp.windows.compactMap { $0 as? NotchPanel }.filter(\.isVisible)
+        let under = panels.filter { $0.frame.contains(point) }
+        guard !under.isEmpty || notches.values.contains(where: { $0.model.state == .expanded }) else { return }
+        let described = panels.map { panel -> String in
+            if let (id, notch) = tracked[ObjectIdentifier(panel)] {
+                return "#\(panel.windowNumber) display=\(id) \(notch.model.state) frame=\(panel.frame) hit=\(notch.model.hitRect) ignores=\(panel.ignoresMouseEvents)"
+            }
+            return "#\(panel.windowNumber) UNTRACKED frame=\(panel.frame) ignores=\(panel.ignoresMouseEvents)"
+        }
+        Self.log.error("Click went to another app at \(point.debugDescription, privacy: .public); notch windows: \(described.joined(separator: " | "), privacy: .public)")
+        for panel in under {
+            if let (_, notch) = tracked[ObjectIdentifier(panel)] {
+                if notch.model.state == .expanded, notch.model.contains(point, slack: 4) || notch.model.holdsClicks {
+                    panel.ignoresMouseEvents = false
+                }
+            } else {
+                Self.log.error("Closing a notch window left over from an earlier display setup (#\(panel.windowNumber, privacy: .public))")
+                panel.orderOut(nil)
+                panel.close()
+            }
+        }
+    }
+
     private func installMouseMonitors() {
         let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseDown]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] event in
@@ -313,13 +351,10 @@ public final class NotchEngine {
                     }
                     return
                 }
-                // A click another app got while a notch is open: say where it landed and what the panel was doing, so a
-                // click falling through can be traced. Over the open notch, make the panel take clicks again.
-                for notch in self?.notches.values ?? [:].values where notch.model.state == .expanded {
-                    let inside = notch.model.contains(point, slack: 4)
-                    Self.log.error("Click went to another app while open: inside=\(inside, privacy: .public) inWindow=\(notch.panel.frame.contains(point), privacy: .public) ignores=\(notch.panel.ignoresMouseEvents, privacy: .public) visible=\(notch.panel.isVisible, privacy: .public) key=\(notch.panel.isKeyWindow, privacy: .public) held=\(notch.model.holdsClicks, privacy: .public) app=\(notch.model.selectedAppID, privacy: .public)")
-                    if inside { notch.panel.ignoresMouseEvents = false }
-                }
+                // A click another app got: if it landed on a notch window — one of ours that wasn't taking clicks, or one
+                // we've lost track of (left over from a display change, still drawing but no longer handled) — log
+                // every notch window, and put it right.
+                self?.repairPassthrough(at: point)
                 self?.notches.values.forEach { $0.model.clickedOutside(at: point) }
             }
         }) {
