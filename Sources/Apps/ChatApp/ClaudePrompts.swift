@@ -72,7 +72,8 @@ struct ClaudePrompt: Equatable {
 
     /// "❯ 1. Red" / "  2. Green", each maybe followed by more-indented description lines; a rule may split the list.
     private static func numberedOptions(_ block: [String]) -> ([Option], Int)? {
-        var found: [(line: Int, number: Int, label: String, selected: Bool, column: Int)] = []
+        // Numbered rows, plus rows without a number reached with the arrows (/model's "▸ More models" / "▾").
+        var found: [(line: Int, number: Int?, label: String, selected: Bool, column: Int)] = []
         var index = block.count - 1
         var trailing = 0  // non-blank lines under the list before its last option
         while index >= 0 {
@@ -80,26 +81,29 @@ struct ClaudePrompt: Equatable {
             let text = line.trimmingCharacters(in: .whitespaces)
             if let option = numbered(line) {
                 found.insert((index, option.number, option.label, option.selected, option.column), at: 0)
-            } else if text.isEmpty || isRule(text) {
-                // A gap or rule inside the list.
+            } else if let row = line.firstMatch(of: /^(\s*)(❯\s*)?[▸▾→]\s+(.+)$/) {
+                let column = row.output.1.count + (row.output.2.map(\.count) ?? 0)
+                found.insert((index, nil, String(row.output.3).trimmingCharacters(in: .whitespaces), row.output.2 != nil, column), at: 0)
+            } else if text.isEmpty || isRule(text) || text.firstMatch(of: /^[↑↓] \d+ more$/) != nil {
+                // A gap, a rule, or a scroll marker ("↓ 6 more") inside the list.
             } else if let lowest = found.first, indent(line) > lowest.column - 1, index > lowest.line - 4 {
                 // A description under an option (more indented than its number).
             } else if found.isEmpty, trailing < 4 {
-                // A description under the last option, or extra lines under the list (/model's "▸ More models",
-                // its effort and fast-mode lines).
+                // A description under the last option, or extra lines under the list (/model's effort and
+                // fast-mode lines).
                 trailing += 1
             } else {
                 break
             }
             index -= 1
         }
-        guard found.count >= 2, found.contains(where: \.selected) else { return nil }
+        guard found.filter({ $0.number != nil }).count >= 2, found.contains(where: \.selected) else { return nil }
         var options: [Option] = []
         for (position, item) in found.enumerated() {
             let end = position + 1 < found.count ? found[position + 1].line : block.count
             let detail = block[(item.line + 1)..<end]
                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty && !isRule($0) && $0 != item.label }
+                .filter { !$0.isEmpty && !isRule($0) && $0 != item.label && $0.firstMatch(of: /^[↑↓] \d+ more$/) == nil }
                 .joined(separator: " ")
             options.append(Option(index: position, number: item.number, label: item.label,
                                   detail: detail.isEmpty ? nil : detail, isSelected: item.selected))
@@ -371,6 +375,8 @@ struct ClaudeScreenCard: View {
                         .help(key.help)
                 }
                 Spacer(minLength: 0)
+                Label("Keyboard works too", systemImage: "keyboard").font(.system(size: 9.5))
+                    .foregroundStyle(.white.opacity(0.35))
             }
         }
         .padding(10)

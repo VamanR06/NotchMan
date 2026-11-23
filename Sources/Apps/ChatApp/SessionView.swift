@@ -54,6 +54,9 @@ struct AgentSessionView: View {
     /// Working, by Claude's spinner in its attached terminal once it's been seen there (current to the moment, and it
     /// goes the instant you press Esc); else by the session file's turn markers; else by `claude agents`.
     private var isWorking: Bool { screenBusy ?? transcript.turnOpen ?? agentBusy }
+    /// One of Claude's menus or prompts is showing: the keyboard drives it.
+    private var menuOpen: Bool { claudePrompt != nil || claudeScreen != nil }
+
     private var agentBusy: Bool { terminal.agent.status == "busy" || terminal.agent.phase == .working }
 
     var body: some View {
@@ -78,12 +81,16 @@ struct AgentSessionView: View {
                 }
             }
             if let claudeScreen, claudePrompt == nil {
-                ClaudeScreenCard(screen: claudeScreen) { keys in terminal.claude.view.send(data: keys[...]) }
+                ClaudeScreenCard(screen: claudeScreen) { keys in
+                    terminal.claude.view.send(data: keys[...])
+                    composerFocused = true  // the keyboard keeps driving the menu after a click
+                }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let claudePrompt {
                 ClaudePromptCard(prompt: claudePrompt) { option in
                     terminal.claude.view.send(data: claudePrompt.keys(for: option)[...])
+                    composerFocused = true
                     if option.isTextEntry { composerFocused = true }
                 } cancel: {
                     terminal.claude.view.send(data: ClaudePrompt.cancelKey[...])
@@ -108,6 +115,10 @@ struct AgentSessionView: View {
         }
         .onDisappear { pasteMonitor.stop() }
         .onAppear { refreshSuggestions() }
+        .onChange(of: menuOpen) { _, open in
+            // A menu opened (yours, or Claude asking): put the keyboard on it.
+            if open { composerFocused = true }
+        }
         .onChange(of: transcript.withdrawnPrompt) { _, text in
             guard let text, text != withdrawn else { return }
             restore(text)
@@ -394,16 +405,25 @@ struct AgentSessionView: View {
     private var composerLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("❯").font(Self.mono).foregroundStyle(.white.opacity(composerFocused ? 0.9 : 0.5))
-            TextField(terminal.isRunning ? "Message \(terminal.agent.name)…" : "Detached — reattach to send",
+            TextField(menuOpen ? "Keys go to Claude's menu — arrows, Return, Esc, or type to search"
+                      : terminal.isRunning ? "Message \(terminal.agent.name)…" : "Detached — reattach to send",
                       text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Self.mono)
                 .lineLimit(1...6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focused($composerFocused)
+                // While one of Claude's menus or prompts is open, every key goes to it, as in Claude's own terminal:
+                // arrows, Return, Esc, Tab, a hint's letter, or typing into its search box.
+                .onKeyPress(phases: .down) { press in
+                    guard menuOpen, terminal.isRunning, let bytes = TerminalKeys.bytes(for: press) else { return .ignored }
+                    terminal.claude.view.send(data: bytes[...])
+                    return .handled
+                }
                 .disabled(!terminal.isRunning)
                 .onSubmit(send)
                 .onKeyPress(.leftArrow) {
+                    guard !menuOpen else { return .ignored }
                     // ← in an empty box goes back, like ← from Claude's empty prompt.
                     guard draft.isEmpty else { return .ignored }
                     app.backToOverview()
@@ -411,15 +431,18 @@ struct AgentSessionView: View {
                 }
                 // ↑ / ↓ move through the suggestions when they're showing, else through your earlier prompts.
                 .onKeyPress(.upArrow) {
+                    guard !menuOpen else { return .ignored }
                     if !suggestions.isEmpty { suggestionIndex = max(0, suggestionIndex - 1); return .handled }
                     return stepHistory(back: true) ? .handled : .ignored
                 }
                 .onKeyPress(.downArrow) {
+                    guard !menuOpen else { return .ignored }
                     if !suggestions.isEmpty { suggestionIndex = min(suggestions.count - 1, suggestionIndex + 1); return .handled }
                     return stepHistory(back: false) ? .handled : .ignored
                 }
                 // Tab takes a suggestion; Shift-Tab switches Claude's mode, as in its terminal.
                 .onKeyPress(keys: [.tab]) { press in
+                    guard !menuOpen else { return .ignored }
                     if press.modifiers.contains(.shift) {
                         guard terminal.isRunning else { return .ignored }
                         terminal.claude.view.send(data: ClaudeMode.cycleKey[...])
@@ -430,11 +453,13 @@ struct AgentSessionView: View {
                     return .handled
                 }
                 .onKeyPress(.return) {
+                    guard !menuOpen else { return .ignored }
                     guard suggestions.indices.contains(suggestionIndex) else { return .ignored }
                     take(suggestions[suggestionIndex])
                     return .handled
                 }
                 .onKeyPress(.escape) {
+                    guard !menuOpen else { return .ignored }
                     if !suggestions.isEmpty {
                         dismissedFor = draft
                         suggestions = []
