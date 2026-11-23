@@ -20,6 +20,13 @@ struct AgentSessionView: View {
     /// Whether Claude's terminal shows its spinner; nil until it has been seen once in this terminal (so a screen
     /// that looks different never hides a turn that's really running).
     @State private var screenBusy: Bool?
+    /// A choice Claude's terminal is waiting on (trust this folder, a question, a permission), shown as a card.
+    @State private var claudePrompt: ClaudePrompt?
+    /// Claude Code's permission mode from its footer ("Auto mode", "Plan mode").
+    @State private var claudeMode: String?
+    /// Going back through your earlier prompts with ↑ in the message box: how far back, and what you'd typed first.
+    @State private var historyIndex: Int?
+    @State private var draftBeforeHistory = ""
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
@@ -36,6 +43,15 @@ struct AgentSessionView: View {
                     FilePreviewOverlay(preview: preview) { withAnimation(.easeOut(duration: 0.15)) { self.preview = nil } }
                         .id(preview.id)
                 }
+            }
+            if let claudePrompt {
+                ClaudePromptCard(prompt: claudePrompt) { option in
+                    terminal.claude.view.send(data: claudePrompt.keys(for: option)[...])
+                    if option.isTextEntry { composerFocused = true }
+                } cancel: {
+                    terminal.claude.view.send(data: ClaudePrompt.cancelKey[...])
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             QuickCommandBar(folder: terminal.agent.cwd, adding: $addingQuickCommand) { command in
                 terminal.runInShell(command)
@@ -234,6 +250,10 @@ struct AgentSessionView: View {
         var idleSince: Date?
         while !Task.isCancelled {
             let lines = terminal.isRunning ? terminal.claude.screenLines : []
+            let prompt = ClaudePrompt.parse(lines)
+            if prompt != claudePrompt { withAnimation(.easeOut(duration: 0.15)) { claudePrompt = prompt } }
+            let mode = ClaudeMode.parse(lines)
+            if mode != claudeMode { claudeMode = mode }
             let spinner = AgentTerminal.showsSpinner(lines)
             if spinner { sawSpinner = true }
             let busy: Bool? = terminal.isRunning && sawSpinner ? spinner : nil
@@ -299,6 +319,15 @@ struct AgentSessionView: View {
                     app.backToOverview()
                     return .handled
                 }
+                // ↑ / ↓ go through your earlier prompts, like in Claude's own terminal.
+                .onKeyPress(.upArrow) { stepHistory(back: true) ? .handled : .ignored }
+                .onKeyPress(.downArrow) { stepHistory(back: false) ? .handled : .ignored }
+                .onKeyPress(.escape) {
+                    // Esc while Claude works stops it, as in its terminal.
+                    guard isWorking, terminal.isRunning else { return .ignored }
+                    terminal.claude.view.send(data: [0x1B][...])
+                    return .handled
+                }
             if QuickCommands.shared.commands(for: terminal.agent.cwd).isEmpty && !addingQuickCommand {
                 Button { withAnimation(.easeOut(duration: 0.15)) { addingQuickCommand = true } } label: {
                     Image(systemName: "bolt").font(.system(size: 10, weight: .medium))
@@ -308,6 +337,24 @@ struct AgentSessionView: View {
                 .help("Save a command you run often here (like make run) as a one-click button")
             }
             if terminal.isRunning {
+                if isWorking {
+                    Button { terminal.claude.view.send(data: [0x1B][...]) } label: {
+                        Label("Stop", systemImage: "stop.fill").font(.system(size: 10, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .help("Interrupt Claude (Esc)")
+                }
+                if let claudeMode {
+                    Button { terminal.claude.view.send(data: ClaudeMode.cycleKey[...]) } label: {
+                        Text(claudeMode).font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(.white.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .help("Claude Code's permission mode — click to switch (Shift-Tab)")
+                }
                 Text(draft.isEmpty && images.isEmpty ? "⌘V image" : "↩ send")
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
             } else {
@@ -325,6 +372,35 @@ struct AgentSessionView: View {
         terminal.sendToClaude(ImageAttachments.message(text, images: images))
         draft = ""
         images = []
+        historyIndex = nil
+    }
+
+    /// Your earlier prompts, oldest first.
+    private var promptHistory: [String] {
+        transcript.items.compactMap { if case .prompt(_, let text) = $0 { text } else { nil } }
+    }
+
+    /// One step back or forward through your earlier prompts. Only from an empty box or while already stepping, so
+    /// ↑ / ↓ still move between lines of a message you're writing.
+    private func stepHistory(back: Bool) -> Bool {
+        let history = promptHistory
+        guard !history.isEmpty, draft.isEmpty || historyIndex != nil else { return false }
+        if back {
+            if historyIndex == nil { draftBeforeHistory = draft }
+            let next = max(0, (historyIndex ?? history.count) - 1)
+            historyIndex = next
+            draft = history[next]
+        } else {
+            guard let index = historyIndex else { return false }
+            if index + 1 < history.count {
+                historyIndex = index + 1
+                draft = history[index + 1]
+            } else {
+                historyIndex = nil
+                draft = draftBeforeHistory
+            }
+        }
+        return true
     }
 }
 

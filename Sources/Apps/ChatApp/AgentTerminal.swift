@@ -169,13 +169,22 @@ final class TerminalSession: Identifiable {
     /// The visible rows, top to bottom.
     var screenLines: [String] {
         let terminal = view.getTerminal()
-        return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
+        return (0..<terminal.rows).compactMap { terminal.getLine(row: $0).map { Self.text(of: $0.translateToString(trimRight: true)) } }
+    }
+
+    /// A row's text as it looks. Cells a program skipped over with cursor moves (Claude Code draws its blank space that
+    /// way) come back as NULs, which show as "�" and defeat every check for leading spaces; they're spaces on screen.
+    static func text(of row: String) -> String {
+        guard row.contains("\0") else { return row }
+        var text = row.replacingOccurrences(of: "\0", with: " ")
+        while text.last == " " { text.removeLast() }
+        return text
     }
 
     /// The last `count` lines including scrollback (a long reply's start has often scrolled off the screen).
     func recentLines(_ count: Int = 200) -> [String] {
         let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
-        var lines = text.components(separatedBy: "\n")
+        var lines = text.components(separatedBy: "\n").map(Self.text(of:))
         while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
         return Array(lines.suffix(count))
     }
@@ -309,10 +318,15 @@ final class AgentTerminal: Identifiable {
         else { return nil }
         let head = lines[start].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
         guard !isToolLine(head) else { return nil }
+        // "⏺ Answered Claude's questions:" with a "⎿" result under it is a step, not a reply.
+        if let next = lines[(start + 1)..<end].first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           next.trimmingCharacters(in: .whitespaces).hasPrefix("⎿") { return nil }
         var body = [head]
         for line in lines[(start + 1)..<end] {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if isStatusLine(trimmed) || trimmed.hasPrefix("⎿") { break }
+            // Below the reply: Claude's status line, a step's result, or your next prompt echoed.
+            if isStatusLine(trimmed) || trimmed.hasPrefix("⎿") || trimmed.hasPrefix("❯") || trimmed.hasPrefix("> ")
+                || ClaudePrompt.isRule(trimmed) { break }
             body.append(line.hasPrefix("  ") ? String(line.dropFirst(2)) : line)
         }
         let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -333,14 +347,23 @@ final class AgentTerminal: Identifiable {
            lines[prompt - 1].trimmingCharacters(in: .whitespaces).hasPrefix("─") {
             end = prompt - 1
         }
-        return lines[max(0, end - 6)..<end].contains { isStatusLine($0.trimmingCharacters(in: .whitespaces)) }
+        return lines[max(0, end - 6)..<end].contains { isWorkingLine($0.trimmingCharacters(in: .whitespaces)) }
     }
 
     /// Claude's spinner line under the reply (`✻ Thinking… (esc to interrupt)`).
     static func isStatusLine(_ line: String) -> Bool {
         if line.contains("esc to interrupt") { return true }
-        guard let first = line.first, "✻✶✳✢✽·*∗".contains(first) else { return false }
+        guard let first = line.first else { return false }
+        // "✻ Pondering…" while working, "✻ Brewed for 2s · done 9:23 PM" after.
+        if "✻✶✳✢✽".contains(first) { return line.count > 2 }
+        guard "·*∗".contains(first) else { return false }
         return line.contains("…")
+    }
+
+    /// Claude is working: its spinner line says so ("… (12s · esc to interrupt)"), not the "Brewed for 2s" after.
+    static func isWorkingLine(_ line: String) -> Bool {
+        guard isStatusLine(line) else { return false }
+        return line.contains("…") || line.contains("esc to interrupt")
     }
 
     /// Whether the terminal's (rendered) reply is one the session file already has: compared on letters and digits
