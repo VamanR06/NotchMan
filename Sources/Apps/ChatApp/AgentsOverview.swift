@@ -13,16 +13,23 @@ struct AgentsOverview: View {
             AgentTerminalScreen(app: app, terminal: terminal)
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                ChatStrip(app: app)
+                // One slim row: the chats, your terminals, and plan usage at a glance (click it for the details).
+                HStack(spacing: 6) {
+                    ChatStrip(app: app)
+                    UsagePill(app: app)
+                }
                 ForEach(app.approvals) { request in
                     ApprovalCard(app: app, request: request)
                 }
-                UsageCard(app: app)
+                if app.showUsageBreakdown {
+                    UsageCard(app: app).transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 if app.composingAgent {
                     NewAgentForm(app: app)
                 }
                 HStack(spacing: 6) {
                     SessionSearch(app: app)
+                    NewAgentButton(app: app)
                     if app.groupsAgentsByProject { NewFolderButton(app: app) }
                     GroupingToggle(app: app)
                 }
@@ -34,9 +41,12 @@ struct AgentsOverview: View {
 }
 
 /// A tool call waiting for permission: what it wants, why it might be risky, and the answer buttons.
-private struct ApprovalCard: View {
+struct ApprovalCard: View {
     let app: ChatApp
     let request: ApprovalRequest
+    /// Haiku's plain-words read of the call, on request ("Explain").
+    @State private var explanation: String?
+    @State private var explaining = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -56,11 +66,44 @@ private struct ApprovalCard: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
                     .textSelection(.enabled)
+                if let explanation {
+                    Text(explanation)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .transition(.opacity)
+                } else {
+                    Button {
+                        explaining = true
+                        Task {
+                            let text = await app.explain(request)
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                explanation = text ?? "Couldn't get an explanation just now."
+                                explaining = false
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if explaining { NotchSpinner(size: 8, lineWidth: 1.2) } else { Image(systemName: "questionmark.circle") }
+                            Text(explaining ? "Reading it…" : "What does this do?")
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(explaining)
+                    .help("A quick plain-words read from Claude Haiku: what it does, why it wants it, what denying does")
+                }
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {
                     Button("Deny") { app.resolveApproval(request.id, .deny) }
+                    if let always = request.always {
+                        Button("Always") { app.resolveApproval(request.id, .always) }
+                            .help(always.label)
+                    }
                     Button("Allow") { app.resolveApproval(request.id, .allow) }
                         .keyboardShortcut(.defaultAction)
                 }
@@ -77,6 +120,68 @@ private struct ApprovalCard: View {
 }
 
 /// ChatGPT / Claude / Muse status pills (click to open that chat), then Terminal.
+/// Plan usage in a few characters — the fullest limit's percent, else today's tokens — that opens the usage card.
+private struct UsagePill: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        let windows = app.agentMonitor?.limits?.windows ?? []
+        let fullest = windows.max { $0.percent < $1.percent }
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { app.showUsageBreakdown.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chart.bar.fill").font(.system(size: 10)).foregroundStyle(.orange)
+                if let fullest {
+                    // "Week 45%", not "Current week 45%": it shares a row with the chats and Terminal.
+                    Text("\(fullest.shortLabel) \(fullest.percent)%")
+                        .foregroundStyle(fullest.isAtLimit ? .red : fullest.isNearLimit ? .orange : .white.opacity(0.85))
+                } else if app.usageMonitor.hasLoaded {
+                    Text(UsageSummary.format(app.usageMonitor.summary.today.work) + " today").foregroundStyle(.white.opacity(0.85))
+                } else {
+                    Text("Usage").foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(app.showUsageBreakdown ? 0.14 : 0.06)))
+            .contentShape(Rectangle())
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help(fullest.map { "\($0.label): \($0.percent)% used — Claude Code usage and plan limits" }
+              ?? "Claude Code usage and plan limits")
+        .task {
+            // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
+            while !Task.isCancelled {
+                await app.refreshUsage()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+}
+
+/// Starts a new background agent: opens the form above the list.
+private struct NewAgentButton: View {
+    @Bindable var app: ChatApp
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { app.composingAgent.toggle() }
+        } label: {
+            Label("New agent", systemImage: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(app.composingAgent ? 0.5 : 0.85)))
+                .foregroundStyle(.white)
+                .contentShape(Rectangle())
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help("Start a Claude Code agent in the background")
+    }
+}
+
 private struct ChatStrip: View {
     let app: ChatApp
 
@@ -86,14 +191,15 @@ private struct ChatStrip: View {
                 Button { app.show(service) } label: {
                     HStack(spacing: 6) {
                         statusMark(service)
-                        Text(service.name).font(.system(size: 12, weight: .semibold))
+                        Text(service.name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
                         Text(statusText(service)).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1).truncationMode(.tail)
                     }
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -113,15 +219,22 @@ private struct ChatStrip: View {
                 } else {
                     Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
                 }
-                Text("Terminal").font(.system(size: 12, weight: .semibold))
-                Text(busy ? "running…" : tabs.isEmpty ? "⌘T" : "\(tabs.count) open")
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                // Never wraps under the name: when the row is tight, the "2 open" goes rather than squeezing.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        Text("Terminal").font(.system(size: 12, weight: .semibold))
+                        Text(busy ? "running…" : tabs.isEmpty ? "⌘T" : "\(tabs.count) open")
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    }
+                    .fixedSize()
+                    Text("Terminal").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                }
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -568,13 +681,6 @@ struct UsageCard: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.07)))
-        .task {
-            // Fresh on appear, then every minute while on screen (limits themselves only re-fetch every 2m).
-            while !Task.isCancelled {
-                await app.refreshUsage()
-                try? await Task.sleep(for: .seconds(60))
-            }
-        }
     }
 
     private func stat(_ label: String, _ tokens: Int) -> some View {
@@ -708,6 +814,29 @@ private struct AgentRow: View {
         return isWorktree ? agent.project : URL(fileURLWithPath: ownProject).lastPathComponent
     }
 
+    /// What's happening, in a few words: why it looks stuck, else from the bridge when it's fresh, else the phase.
+    private var status: String {
+        if let notice = app.stuck[agent.id] { return "Stuck: " + notice.line }
+        if let activity = app.sessionActivity[agent.id], activity.isFresh(), agent.phase == .working || activity.isTurnRunning {
+            return activity.lastAction
+        }
+        return switch agent.phase {
+        case .needsYou: "Waiting for you"
+        case .working: "Working"
+        case .done: "Done"
+        case .idle: "Idle"
+        }
+    }
+
+    private var statusTint: Color {
+        if app.stuck[agent.id] != nil { return .orange }
+        return switch agent.phase {
+        case .needsYou: .orange
+        case .working: .white.opacity(0.75)
+        case .done, .idle: .white.opacity(0.5)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 9) {
             PhaseMark(phase: agent.phase).frame(width: 14)
@@ -733,7 +862,8 @@ private struct AgentRow: View {
                         Text(folderLabel)
                         Text("·")
                     }
-                    Text(agent.kind == .background ? "Background" : "Interactive")
+                    Text(status).foregroundStyle(statusTint)
+                    if agent.kind == .interactive { Text("·"); Text("in your editor") }
                     if let started = agent.startedAt {
                         Text("·")
                         Text(started, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))

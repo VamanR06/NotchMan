@@ -30,6 +30,37 @@ public final class ShelfApp: NotchApp {
     }
     /// Bumped when the open folder's contents change, so the browser re-lists it.
     private(set) var folderRevision = 0
+    /// The shelved file or download last clicked: Space previews it, and the suggested folders are for it.
+    var selected: URL? {
+        didSet {
+            guard selected != oldValue, !isDragging else { return }
+            if let selected, tab == .shelf, items.contains(selected) { suggestFolders(for: [selected]) } else { predictor.clear() }
+        }
+    }
+    /// The best folders for the files being dragged in (or the selected shelved file).
+    let predictor = DropPredictor()
+    /// Filters the shelf by name.
+    var query = ""
+    /// When each shelved file was added (path → date), for taking old ones off.
+    @ObservationIgnored private var added: [String: Date] = [:]
+    /// Shelved files come off after this many days (0 = never).
+    var expiryDays = 7 {
+        didSet {
+            context?.defaults.set(expiryDays, forKey: "expiryDays")
+            pruneMissing()
+        }
+    }
+
+    /// The shelf as shown: newest first, filtered by `query`.
+    var shownItems: [URL] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        let newestFirst = items.reversed() as ReversedCollection<[URL]>
+        return needle.isEmpty ? Array(newestFirst)
+            : newestFirst.filter { $0.lastPathComponent.localizedCaseInsensitiveContains(needle) }
+    }
+    @ObservationIgnored private var dropHistory = DropHistory()
+    /// Files are being dragged in from outside (the suggestions are for them).
+    @ObservationIgnored private var isDragging = false
 
     /// The folder open in the drop browser. Browsing starts somewhere (a project, a place, a recent folder) and
     /// can go anywhere from there.
@@ -59,13 +90,108 @@ public final class ShelfApp: NotchApp {
 
     public init() {}
 
+    /// The files in the tab you're on, in order (what Quick Look steps through).
+    var shownFiles: [URL] {
+        switch tab {
+        case .shelf: shownItems
+        case .downloads: downloads.filter { !$0.isInProgress }.map(\.url)
+        }
+    }
+
+    // MARK: Suggested folders
+
+    public func fileDragEntered(_ urls: [URL]) {
+        tab = .shelf
+        browsing = nil
+        isDragging = true
+        suggestFolders(for: urls)
+    }
+
+    func suggestFolders(for files: [URL]) {
+        predictor.predict(files: files, candidates: dropCandidates(), history: dropHistory, context: .current())
+    }
+
+    /// The notch closed or the drag ended without a drop on a suggestion.
+    func clearSuggestions() {
+        isDragging = false
+        predictor.clear()
+    }
+
+    /// Where files might go: recent folders, projects, Desktop/Documents/Downloads, and the folders in Documents
+    /// and Desktop you've touched most recently.
+    func dropCandidates() -> [DropCandidate] {
+        let places = Self.places.filter { $0.name != "Home" }.map(\.url)
+        return DropRanking.candidates(recents: recentFolders, projects: projects.map { URL(fileURLWithPath: $0.cwd) },
+                                      places: places, extra: recentSubfolders())
+    }
+
+    @ObservationIgnored private var subfolderCache: (folders: [URL], read: Date)?
+    @ObservationIgnored private var readingSubfolders = false
+
+    /// The folders in Documents and Desktop touched most recently. Reading them means listing both folders, so it's
+    /// done in the background at most every 30 seconds; callers (the command bar, on every keystroke) get the last
+    /// result straight away.
+    private func recentSubfolders(now: Date = Date()) -> [URL] {
+        if (subfolderCache.map { now.timeIntervalSince($0.read) > 30 } ?? true), !readingSubfolders {
+            readingSubfolders = true
+            let places = Array(Self.places.filter { $0.name != "Home" }.map(\.url).prefix(2))
+            Task { [weak self] in
+                let folders = await Task.detached(priority: .utility) {
+                    places.flatMap { ShelfApp.recentlyModifiedSubfolders(of: $0, limit: 10) }
+                }.value
+                self?.subfolderCache = (folders, Date())
+                self?.readingSubfolders = false
+            }
+        }
+        return subfolderCache?.folders ?? []
+    }
+
+    nonisolated static func recentlyModifiedSubfolders(of folder: URL, limit: Int) -> [URL] {
+        let modified = { (url: URL) in
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        }
+        return Array(ProjectDrop.subfolders(of: folder).sorted { modified($0) > modified($1) }.prefix(limit))
+    }
+
+    /// Full-size Quick Look of `url` (or the selected file); ←/→ in it step through the tab's other files.
+    func quickLook(_ url: URL? = nil) {
+        guard let target = url ?? selected else { return }
+        let files = shownFiles
+        selected = target
+        QuickLookPanel.show(files.contains(target) ? files : [target], at: files.firstIndex(of: target) ?? 0)
+    }
+
+    /// Space previews the selected file, as in Finder; ←/→ move the selection.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .shift, .control]).isEmpty else { return false }
+        let files = shownFiles
+        switch event.keyCode {
+        case 49:  // Space
+            guard let selected, files.contains(selected) else { return false }
+            quickLook(selected)
+            return true
+        case 123, 124:  // ← →
+            guard !files.isEmpty else { return false }
+            let step = event.keyCode == 123 ? -1 : 1
+            let current = selected.flatMap { files.firstIndex(of: $0) } ?? (step > 0 ? -1 : files.count)
+            selected = files[min(max(current + step, 0), files.count - 1)]
+            return true
+        default:
+            return false
+        }
+    }
+
     public func activate(context: NotchContext) {
         self.context = context
         items = (context.defaults.array(forKey: "shelf") as? [Data] ?? []).compactMap(Self.resolve)
         moveFiles = context.defaults.bool(forKey: "moveFiles")
+        dropHistory = DropHistory.load(context.defaults)
+        added = (context.defaults.dictionary(forKey: "shelfAdded") as? [String: Date]) ?? [:]
+        expiryDays = context.defaults.object(forKey: "expiryDays") as? Int ?? 7
         refreshDownloads()
         watcher = DirectoryWatcher(paths: [DownloadsFolder.url.path]) { [weak self] in self?.refreshDownloads() }
         watchProgress()
+        _ = recentSubfolders()  // warm the folder cache for the first drag or command bar
         HookServer.shared.route("/progress") { [weak self] request in
             let json = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             let id = json["id"] as? String, title = json["title"] as? String, state = json["state"] as? String
@@ -83,9 +209,12 @@ public final class ShelfApp: NotchApp {
     // MARK: - Shelf
 
     func addToShelf(_ urls: [URL]) {
+        clearSuggestions()
         let new = urls.filter { !items.contains($0) }
         guard !new.isEmpty else { return }
         items.append(contentsOf: new)
+        let now = Date()
+        new.forEach { added[$0.path] = now }
         save()
         tab = .shelf
     }
@@ -101,12 +230,21 @@ public final class ShelfApp: NotchApp {
     }
 
     /// Files that were moved or deleted since being shelved drop off.
-    func pruneMissing() {
-        let existing = items.filter { FileManager.default.fileExists(atPath: $0.path) }
-        if existing.count != items.count {
-            items = existing
+    /// Takes files off the shelf that were deleted, or that have been there longer than `expiryDays`. (The files
+    /// themselves stay where they are.)
+    func pruneMissing(now: Date = Date()) {
+        // Files shelved before dates were kept count from now.
+        for item in items where added[item.path] == nil { added[item.path] = now }
+        let kept = items.filter { FileManager.default.fileExists(atPath: $0.path) && !isExpired($0, now: now) }
+        if kept.count != items.count {
+            items = kept
             save()
         }
+    }
+
+    func isExpired(_ url: URL, now: Date = Date()) -> Bool {
+        guard expiryDays > 0, let date = added[url.path] else { return false }
+        return now.timeIntervalSince(date) > Double(expiryDays) * 86400
     }
 
     func airDrop(_ urls: [URL]) {
@@ -115,6 +253,8 @@ public final class ShelfApp: NotchApp {
 
     private func save() {
         context?.defaults.set(items.compactMap { try? $0.bookmarkData() }, forKey: "shelf")
+        added = added.filter { path, _ in items.contains { $0.path == path } }
+        context?.defaults.set(added, forKey: "shelfAdded")
     }
 
     private static func resolve(_ data: Data) -> URL? {
@@ -244,6 +384,9 @@ public final class ShelfApp: NotchApp {
         folderRevision += 1
         guard !placed.isEmpty else { return }
         remember(folder)
+        dropHistory.record(urls, into: folder)
+        dropHistory.save(to: context?.defaults)
+        clearSuggestions()
         guard let project else {
             lastDrop = ProjectDropResult(project: nil, folder: folder, files: placed, references: nil)
             context?.showTransient(NotchTransient(id: "shelf", systemImage: "checkmark.circle.fill",
@@ -394,8 +537,10 @@ public final class ShelfApp: NotchApp {
             context?.requestAttention(.pulse)
             // Long ones also notify, since you've probably looked away.
             if took > 10 {
-                context?.notify(title: ok ? "✓ \(title)" : "✗ \(title)",
-                                body: ok ? "Finished in \(Int(took))s" : "Exited with status \(exitCode ?? 1)")
+                // A success arrives quietly; a failure makes a sound.
+                context?.notify(NotchNotification(id: "command:\(id)", title: ok ? "✓ \(title)" : "✗ \(title)",
+                                                  body: ok ? "Finished in \(Int(took))s" : "Failed (exit \(exitCode ?? 1))",
+                                                  urgency: ok ? .quiet : .normal))
             }
         default:
             break

@@ -259,6 +259,8 @@ final class ClaudeAgentsMonitor {
     private(set) var hasLoaded = false
     private(set) var error: String?
     private(set) var limits: ClaudeLimits?
+    /// For tests and previews.
+    func useLimitsForTesting(_ limits: ClaudeLimits?) { self.limits = limits }
     private(set) var limitsError: String?
     @ObservationIgnored private var limitsFetchedAt: Date?
     @ObservationIgnored private var limitsRunning = false

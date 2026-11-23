@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import SwiftTerm
 import SwiftUI
 
@@ -10,7 +11,7 @@ final class TerminalSession: Identifiable {
     private(set) var isRunning = false
     /// Title the program sets (OSC 0/2).
     private(set) var title = ""
-    /// A file ⌘-clicked in the output, shown in a popup over the terminal.
+    /// A file clicked in the output, previewed in a pane over the terminal.
     var preview: FilePreview?
     /// The folder the process is in, as of the last `refresh()` (a shell's follows `cd`).
     private(set) var currentDirectory: String?
@@ -20,11 +21,15 @@ final class TerminalSession: Identifiable {
     var clonedFolder: String?
     /// Where relative paths in the output are resolved from when the process's own directory can't be read.
     @ObservationIgnored var directory: String?
+    /// Watch the output for `git clone` (shells); off for Claude's own terminal, whose stream is long and busy.
+    @ObservationIgnored var detectsClones = true
+    /// Goes up with every chunk the program writes, so a reader can tell the screen changed without polling slowly.
+    @ObservationIgnored private(set) var outputCount = 0
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
     @ObservationIgnored private var cloneDetector = CloneDetector()
-    /// Every key pressed in this terminal (after shortcut translation).
-    @ObservationIgnored var onKey: ((NSEvent) -> Void)?
+    /// Every key pressed in this terminal (after shortcut translation). Return true to keep it from the program.
+    @ObservationIgnored var onKey: ((NSEvent) -> Bool)?
     /// The process exited.
     @ObservationIgnored var onExit: (() -> Void)?
     /// The user clicked into this terminal.
@@ -50,11 +55,11 @@ final class TerminalSession: Identifiable {
             self?.onExit?()
         }
         events.onTitle = { [weak self] title in self?.title = title }
-        view.onKey = { [weak self] event in self?.onKey?(event) }
+        view.onKey = { [weak self] event in self?.onKey?(event) ?? false }
         view.workingDirectory = { [weak self] in self?.workingDirectory }
         view.onOutput = { [weak self] bytes in self?.output(bytes) }
-        view.onOpenFile = { [weak self] mention, anchor in
-            withAnimation(.easeOut(duration: 0.12)) { self?.preview = FilePreview(mention: mention, anchor: anchor) }
+        view.onPreviewFile = { [weak self] mention in
+            withAnimation(.easeOut(duration: 0.15)) { self?.preview = FilePreview(mention: mention) }
         }
         view.dismissPopup = { [weak self] in
             guard let self, self.preview != nil else { return false }
@@ -95,6 +100,8 @@ final class TerminalSession: Identifiable {
     /// git prints "Cloning into 'name'..." as a clone starts; the name is relative to where it ran (this
     /// terminal's folder, as `cd` and `git clone` on one line still leave the shell in the new folder).
     private func output(_ bytes: ArraySlice<UInt8>) {
+        outputCount &+= 1
+        guard detectsClones else { return }
         for name in cloneDetector.feed(String(decoding: bytes, as: UTF8.self)) {
             let base = URL(fileURLWithPath: workingDirectory ?? NSHomeDirectory())
             let folder = name.hasPrefix("/") ? URL(fileURLWithPath: name) : base.appendingPathComponent(name)
@@ -132,22 +139,63 @@ final class TerminalSession: Identifiable {
         view.window?.makeFirstResponder(view)
     }
 
-    /// Puts keyboard focus in this terminal once it's on screen (a new tab takes a moment to be attached).
+    /// Puts keyboard focus in this terminal once it's on screen (a new tab takes a moment to be attached) — but only
+    /// within a notch that already has the keyboard, so a late attempt never pulls typing out of the app you're in
+    /// (the notch closed, or was only hovered open). A newer request replaces an older one.
     func focusWhenShown() {
-        Task { [weak self] in
+        pendingFocus?.cancel()
+        pendingFocus = Task { [weak self] in
             for _ in 0..<20 {
-                guard let self else { return }
-                if self.view.window != nil { return self.focus() }
+                guard let self, !Task.isCancelled else { return }
+                if let window = self.view.window {
+                    if Self.shouldTakeFocus(windowIsVisible: window.isVisible, windowIsKey: window.isKeyWindow) {
+                        window.makeFirstResponder(self.view)
+                    }
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(25))
             }
         }
     }
 
+    @ObservationIgnored private var pendingFocus: Task<Void, Never>?
+
+    static func shouldTakeFocus(windowIsVisible: Bool, windowIsKey: Bool) -> Bool {
+        windowIsVisible && windowIsKey
+    }
+
     /// The visible text (for tests and diagnostics).
     var screenText: String {
+        screenLines.joined(separator: "\n")
+    }
+
+    /// The visible rows, top to bottom.
+    var screenLines: [String] {
         let terminal = view.getTerminal()
-        return (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
-            .joined(separator: "\n")
+        return (0..<terminal.rows).compactMap { terminal.getLine(row: $0).map { Self.text(of: $0.translateToString(trimRight: true)) } }
+    }
+
+    /// A row's text as it looks. Cells a program skipped over with cursor moves (Claude Code draws its blank space that
+    /// way) come back as NULs, which show as "�" and defeat every check for leading spaces; they're spaces on screen.
+    static func text(of row: String) -> String {
+        guard row.contains("\0") else { return row }
+        var text = row.replacingOccurrences(of: "\0", with: " ")
+        while text.last == " " { text.removeLast() }
+        return text
+    }
+
+    /// The last `count` lines including scrollback (a long reply's start has often scrolled off the screen).
+    func recentLines(_ count: Int = 200) -> [String] {
+        let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
+        var lines = text.components(separatedBy: "\n").map(Self.text(of:))
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        return Array(lines.suffix(count))
+    }
+
+    /// Where the cursor is on screen: zero-based row and column.
+    var cursor: (row: Int, column: Int) {
+        let location = view.getTerminal().getCursorLocation()
+        return (location.y, location.x)
     }
 }
 
@@ -170,10 +218,16 @@ final class AgentTerminal: Identifiable {
     let id: String
     private(set) var agent: ClaudeAgent
     let claude = TerminalSession()
+    /// The session drawn natively (the default view); Claude's terminal runs attached behind it.
+    let transcript: SessionTranscript
+    /// Showing the native session view rather than a terminal.
+    var showsSession = true
     private(set) var shells: [ShellTab] = []
     var selected: Tab = .claude
     /// Claude on top, a shell below.
-    var split = false
+    var split = false {
+        didSet { if split { showsSession = false } }  // splitting is about the terminals
+    }
     /// Share of the split height given to Claude (the shell gets the rest); adjustable by dragging.
     var splitRatio: CGFloat = 0.6
     /// Called when Claude Code switches to its own agent list (← from the session); the app shows NotchMan's
@@ -192,7 +246,9 @@ final class AgentTerminal: Identifiable {
     init(agent: ClaudeAgent) {
         id = agent.id
         self.agent = agent
-        claude.onKey = { [weak self] event in self?.keyPressed(event) }
+        transcript = SessionTranscript(sessionID: agent.id)
+        claude.detectsClones = false
+        claude.onKey = { [weak self] event in self?.keyPressed(event) ?? false }
         claude.onNewTab = { [weak self] in self?.addShell().session.focusWhenShown() }
     }
 
@@ -225,6 +281,142 @@ final class AgentTerminal: Identifiable {
         self.agent = agent
     }
 
+    /// Types `text` into Claude's input and submits it, as if typed in its terminal. Several lines go in as one paste
+    /// so the line breaks don't submit early.
+    ///
+    /// Return goes as its own keystroke a moment later: arriving in the same burst as the text, Claude Code takes it
+    /// as part of a paste and puts a line break in the box instead of submitting. If the text is still sitting in
+    /// the box after that, Return is pressed once more.
+    func sendToClaude(_ text: String) {
+        guard isRunning else { return }
+        claude.view.send(data: Self.input(for: text)[...])
+        let probe = Self.submitProbe(for: text)
+        submitting?.cancel()
+        submitting = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self, !Task.isCancelled, self.isRunning else { return }
+            self.claude.view.send(data: [0x0D][...])
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, self.isRunning, let probe,
+                  Self.promptText(self.claude.screenLines)?.contains(probe) == true else { return }
+            self.claude.view.send(data: [0x0D][...])
+        }
+    }
+
+    @ObservationIgnored private var submitting: Task<Void, Never>?
+
+    // MARK: - The reply being written
+
+    /// The reply Claude is writing right now, read off its terminal: the session file only gets a reply once it's
+    /// finished, but the terminal shows it as it streams. That's the text after the last `⏺` above the input box —
+    /// unless that `⏺` is a tool call (`⏺ Bash(…)`), which the session file shows already.
+    static func liveReply(_ lines: [String]) -> String? {
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        var end = lines.count
+        if let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }), prompt > 0,
+           lines[prompt - 1].trimmingCharacters(in: .whitespaces).hasPrefix("─") {
+            end = prompt - 1
+        }
+        guard let start = lines[..<end].lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("⏺") })
+        else { return nil }
+        let head = lines[start].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
+        guard !isToolLine(head) else { return nil }
+        // "⏺ Answered Claude's questions:" with a "⎿" result under it is a step, not a reply.
+        if let next = lines[(start + 1)..<end].first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           next.trimmingCharacters(in: .whitespaces).hasPrefix("⎿") { return nil }
+        var body = [head]
+        for line in lines[(start + 1)..<end] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // Below the reply: Claude's status line, a step's result, or your next prompt echoed.
+            if isStatusLine(trimmed) || trimmed.hasPrefix("⎿") || trimmed.hasPrefix("❯") || trimmed.hasPrefix("> ")
+                || ClaudePrompt.isRule(trimmed) { break }
+            body.append(line.hasPrefix("  ") ? String(line.dropFirst(2)) : line)
+        }
+        let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// `Bash(swift test)`, `Update(ShelfView.swift)`, `Read 3 files (ctrl+o to expand)`.
+    static func isToolLine(_ line: String) -> Bool {
+        line.range(of: #"^[A-Za-z_][\w.:-]*( \(MCP\))?\("#, options: .regularExpression) != nil || line.contains("(ctrl+o")
+    }
+
+    /// Claude's spinner is up — a turn is running. It sits just above the input box (a reply's own lines further up
+    /// don't count, even with a `…` in them).
+    static func showsSpinner(_ lines: [String]) -> Bool {
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        var end = lines.count
+        if let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }), prompt > 0,
+           lines[prompt - 1].trimmingCharacters(in: .whitespaces).hasPrefix("─") {
+            end = prompt - 1
+        }
+        return lines[max(0, end - 6)..<end].contains { isWorkingLine($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// Claude's spinner line under the reply (`✻ Thinking… (esc to interrupt)`).
+    static func isStatusLine(_ line: String) -> Bool {
+        if line.contains("esc to interrupt") { return true }
+        guard let first = line.first else { return false }
+        // "✻ Pondering…" while working, "✻ Brewed for 2s · done 9:23 PM" after.
+        if "✻✶✳✢✽".contains(first) { return line.count > 2 }
+        guard "·*∗".contains(first) else { return false }
+        return line.contains("…")
+    }
+
+    /// Claude is working: its spinner line says so ("… (12s · esc to interrupt)"), not the "Brewed for 2s" after.
+    static func isWorkingLine(_ line: String) -> Bool {
+        guard isStatusLine(line) else { return false }
+        return line.contains("…") || line.contains("esc to interrupt")
+    }
+
+    /// Whether the terminal's (rendered) reply is one the session file already has: compared on letters and digits
+    /// only, since the terminal shows Markdown without its `**` and backticks.
+    static func reply(_ live: String, isIn replies: [String]) -> Bool {
+        let key = String(alphanumerics(live).prefix(40))
+        guard !key.isEmpty else { return true }
+        return replies.contains { alphanumerics($0).contains(key) }
+    }
+
+    private static func alphanumerics(_ text: String) -> String {
+        String(text.unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(Character.init)).lowercased()
+    }
+
+    /// What Claude's input box holds right now: the text after `❯` on its last prompt line.
+    static func promptText(_ lines: [String]) -> String? {
+        // The marker may sit inside a box (`│ ❯ text │`).
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        guard let line = lines.last(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }) else { return nil }
+        let text = line.trimmingCharacters(in: frame).dropFirst().trimmingCharacters(in: frame)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Claude's hint in an empty input box ("Try "edit <filepath> to…"").
+    static func isPlaceholder(_ text: String) -> Bool {
+        text.hasPrefix("Try \"") || text.hasPrefix("Try '")
+    }
+
+    /// A bit of the message to look for in the box afterwards (one line only; a paste shows as "[Pasted text…]").
+    static func submitProbe(for text: String) -> String? {
+        guard !text.contains("\n") else { return nil }
+        let probe = String(text.prefix(24)).trimmingCharacters(in: .whitespaces)
+        return probe.count >= 3 ? probe : nil
+    }
+
+    /// Claude's input box is on screen (its session view, not its agent list or a dialog).
+    var isAtPrompt: Bool {
+        guard isRunning else { return false }
+        let lines = claude.screenLines
+        return !Self.isClaudeAgentList(lines.joined(separator: "\n"))
+            && lines.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }
+    }
+
+    /// The text as typed (several lines as one bracketed paste), without the Return that submits it.
+    static func input(for text: String) -> [UInt8] {
+        let body = Array(text.utf8)
+        return text.contains("\n") ? [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] + body + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
+                                   : body
+    }
+
     /// Focuses whichever terminal is selected.
     func focus() {
         selectedSession.focus()
@@ -245,6 +437,18 @@ final class AgentTerminal: Identifiable {
         shells.append(shell)
         selected = .shell(shell.id)
         return shell
+    }
+
+    /// Runs `command` in a shell in the project folder and shows it: a shell tab that's sitting at its prompt if
+    /// there is one, else a new tab (zsh reads it once it's up).
+    func runInShell(_ command: String) {
+        shells.forEach { $0.session.refresh() }
+        let shell = shells.last { $0.session.isRunning && !$0.session.isBusy } ?? addShell()
+        shell.session.view.send(data: Self.input(for: command)[...])
+        shell.session.view.send(data: [0x0D][...])
+        selected = .shell(shell.id)
+        showsSession = false
+        shell.session.focusWhenShown()
     }
 
     func closeShell(_ id: UUID) {
@@ -276,23 +480,45 @@ final class AgentTerminal: Identifiable {
 
     // MARK: - ← out of the session
 
-    /// ← either moves the cursor (while editing) or makes Claude Code open its agent list; only the program
-    /// knows which. So let it through, and if the agent list appears, hand over to NotchMan's Overview.
-    private func keyPressed(_ event: NSEvent) {
+    /// ← either moves the cursor (while editing) or makes Claude Code open its agent list. With the caret at the
+    /// start of Claude's input box there's nowhere left to move, so go straight to NotchMan's Overview and keep the
+    /// key from Claude (no flash of its list, and the session stays attached). Otherwise let it through, and if
+    /// Claude's agent list appears anyway, hand over then. Returns true when the key was taken.
+    private func keyPressed(_ event: NSEvent) -> Bool {
         let plainLeftArrow = event.keyCode == TerminalKeyMap.KeyCode.left
             && event.modifierFlags.intersection([.command, .option, .shift, .control]).isEmpty
-        guard plainLeftArrow, isRunning else { return }
+        guard plainLeftArrow, isRunning else { return false }
         watch?.cancel()
+        let cursor = claude.cursor
+        if Self.caretAtPromptStart(lines: claude.screenLines, cursorRow: cursor.row, cursorColumn: cursor.column) {
+            onAgentList?()
+            return true
+        }
         watch = Task { [weak self] in
-            for _ in 0..<15 {
-                try? await Task.sleep(for: .milliseconds(100))
+            for _ in 0..<40 {
+                try? await Task.sleep(for: .milliseconds(25))
                 guard let self, !Task.isCancelled else { return }
                 if Self.isClaudeAgentList(self.screenText) {
+                    // Enter returns Claude to the session, so reopening shows it rather than Claude's list.
+                    self.claude.view.send(data: [0x0D][...])
                     self.onAgentList?()
                     return
                 }
             }
         }
+        return false
+    }
+
+    /// Claude Code's input line starts with `❯` under a rule (`────`). True when the cursor sits on that line at or
+    /// before the first character after `❯ `, i.e. ← can't move it any further left.
+    static func caretAtPromptStart(lines: [String], cursorRow: Int, cursorColumn: Int) -> Bool {
+        guard lines.indices.contains(cursorRow), cursorRow > 0 else { return false }
+        let line = Array(lines[cursorRow])
+        guard let marker = line.firstIndex(of: "❯"),
+              line[..<marker].allSatisfy({ $0 == " " || $0 == "│" }) else { return false }
+        let ruleAbove = lines[cursorRow - 1].trimmingCharacters(in: .whitespaces)
+        guard ruleAbove.hasPrefix("─") else { return false }
+        return cursorColumn <= marker + 2
     }
 
     /// Claude Code's agent list (what `claude attach` shows after ←), recognized by its prompt and footer.
@@ -303,16 +529,16 @@ final class AgentTerminal: Identifiable {
 
 /// Terminal view that takes keyboard focus when clicked, even inside the non-activating notch panel, and
 /// translates macOS editing shortcuts into what terminal programs expect (see `TerminalKeyMap`).
-final class NotchTerminalView: LocalProcessTerminalView {
-    /// Sees every key pressed in this terminal (after our shortcut translation).
-    var onKey: ((NSEvent) -> Void)?
+final class NotchTerminalView: LocalProcessTerminalView, NotchTypingView {
+    /// Sees every key pressed in this terminal (after our shortcut translation); true keeps it from the program.
+    var onKey: ((NSEvent) -> Bool)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// The user clicked into this terminal (to type).
     var onClick: (() -> Void)?
-    /// ⌘-click on a file path: show it. The rect is the clicked row, origin top left.
-    var onOpenFile: ((FileMention, CGRect) -> Void)?
+    /// A click on a file path: preview it.
+    var onPreviewFile: ((FileMention) -> Void)?
     /// Relative paths in the output are relative to this.
     var workingDirectory: (() -> String?)?
     /// Esc closes a popup over the terminal, if one is showing, instead of reaching the program.
@@ -321,47 +547,76 @@ final class NotchTerminalView: LocalProcessTerminalView {
     var onNewTab: (() -> Void)?
     /// The process's output, as it arrives (before it's drawn).
     var onOutput: ((ArraySlice<UInt8>) -> Void)?
-    private var lastCommandClick: CGRect?
+    private var commandClicked = false
     private var suppressLinkOpen = false
+    private var mouseDownPoint: CGPoint?
 
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
         window?.makeFirstResponder(self)
         onClick?()
+        mouseDownPoint = event.locationInWindow
         super.mouseDown(with: event)
     }
 
-    /// ⌘-click on a path shows the file in a popup. SwiftTerm's own link detection only knows paths with a `/`
-    /// and opens them relative to NotchMan rather than the terminal, so look up the word under the cursor first.
+    /// What a click on a file path in the output does.
+    enum PathClick: Equatable {
+        case preview
+        case openInApp
+        case none
+    }
+
+    /// A plain click (not a drag to select, not a double-click) previews the file; ⌘-click opens it in its app.
+    /// While the program uses the mouse itself, plain clicks are its own, so ⌘-click previews instead.
+    static func pathClick(command: Bool, otherModifiers: Bool, clickCount: Int, dragged: Bool,
+                          programUsesMouse: Bool) -> PathClick {
+        guard !otherModifiers, !dragged, clickCount == 1 else { return .none }
+        if programUsesMouse { return command ? .preview : .none }
+        return command ? .openInApp : .preview
+    }
+
+    /// SwiftTerm's own link detection only knows paths with a `/` and opens them relative to NotchMan rather than the
+    /// terminal, so look up the word under the cursor first.
     override func mouseUp(with event: NSEvent) {
-        lastCommandClick = nil
-        guard event.modifierFlags.contains(.command), let hit = cell(at: event) else {
+        commandClicked = false
+        let modifiers = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        let dragged = mouseDownPoint.map { hypot($0.x - event.locationInWindow.x, $0.y - event.locationInWindow.y) > 3 }
+            ?? false
+        let action = Self.pathClick(command: modifiers.contains(.command), otherModifiers: !modifiers.subtracting(.command).isEmpty,
+                                    clickCount: event.clickCount, dragged: dragged,
+                                    programUsesMouse: getTerminal().mouseMode != .off)
+        guard action != .none, let hit = cell(at: event) else {
             super.mouseUp(with: event)
             return
         }
-        lastCommandClick = hit.rect
+        commandClicked = action == .openInApp
         guard let mention = fileMention(row: hit.screenRow, column: hit.column) else {
-            super.mouseUp(with: event)  // URLs: SwiftTerm opens them (through requestOpenLink below)
+            super.mouseUp(with: event)  // URLs: SwiftTerm opens them on ⌘-click (through requestOpenLink below)
             return
         }
         // Still let SwiftTerm finish the click (mouse reporting, selection state), without opening anything.
         suppressLinkOpen = true
         super.mouseUp(with: event)
         suppressLinkOpen = false
-        onOpenFile?(mention, hit.rect)
+        commandClicked = false
+        switch action {
+        case .preview: onPreviewFile?(mention)
+        case .openInApp: NSWorkspace.shared.open(mention.url)
+        case .none: break
+        }
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         guard !suppressLinkOpen else { return }
-        if let anchor = lastCommandClick, let mention = FileMentions.resolve(link, in: workingDirectory?()) {
-            onOpenFile?(mention, anchor)
+        if commandClicked, let mention = FileMentions.resolve(link, in: workingDirectory?()) {
+            NSWorkspace.shared.open(mention.url)
             return
         }
         super.requestOpenLink(source: source, link: link, params: params)
     }
 
-    /// The visible cell under the mouse, and its row's rect (origin top left).
-    private func cell(at event: NSEvent) -> (screenRow: Int, column: Int, rect: CGRect)? {
+    /// The visible cell under the mouse.
+    private func cell(at event: NSEvent) -> (screenRow: Int, column: Int)? {
         let terminal = getTerminal()
         guard terminal.rows > 0, terminal.cols > 0 else { return nil }
         // Matches SwiftTerm's cell size: rows from its frame size, columns from the font's advance snapped to
@@ -373,8 +628,7 @@ final class NotchTerminalView: LocalProcessTerminalView {
         let point = convert(event.locationInWindow, from: nil)
         let screenRow = min(max(Int((frame.height - point.y) / cellHeight), 0), terminal.rows - 1)
         let column = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
-        let rect = CGRect(x: point.x, y: CGFloat(screenRow) * cellHeight, width: 1, height: cellHeight)
-        return (screenRow, column, rect)
+        return (screenRow, column)
     }
 
     /// The existing file named at a visible cell, following a path the terminal wrapped across rows.
@@ -428,9 +682,8 @@ final class NotchTerminalView: LocalProcessTerminalView {
                     newTab()
                     return true
                 }
-                let handled = terminal.handle(event)
-                if !handled { terminal.onKey?(event) }
-                return handled
+                if terminal.handle(event) { return true }
+                return terminal.onKey?(event) ?? false
             }
             return handled ? nil : event
         }
@@ -529,7 +782,9 @@ struct AgentTerminalScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-            if terminal.split, let shell = terminal.splitShell {
+            if terminal.showsSession && !terminal.split {
+                AgentSessionView(app: app, terminal: terminal)
+            } else if terminal.split, let shell = terminal.splitShell {
                 // Explicit heights: letting the stack divide the space squeezed the shell to a sliver.
                 GeometryReader { geo in
                     let heights = SplitLayout.heights(total: geo.size.height, ratio: terminal.splitRatio)
@@ -568,11 +823,16 @@ struct AgentTerminalScreen: View {
             .foregroundStyle(.white.opacity(0.7))
             .help("Back to Overview (terminals keep running)")
 
-            Text(terminal.agent.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .frame(maxWidth: 170, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(terminal.transcript.title ?? terminal.agent.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(terminal.agent.project + " · " + Self.status(terminal.agent))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .lineLimit(1)
+            .frame(maxWidth: 170, alignment: .leading)
 
             TerminalTabs(terminal: terminal)
 
@@ -582,6 +842,7 @@ struct AgentTerminalScreen: View {
                        help: terminal.split ? "Show one terminal" : "Split: Claude above a shell") {
                 if terminal.shells.isEmpty { terminal.addShell() }
                 terminal.split.toggle()
+                terminal.showsSession = false
             }
             iconButton("macwindow", help: "Detach here and attach Claude in a new Terminal window") {
                 app.openInTerminalApp(terminal.agent)
@@ -589,6 +850,15 @@ struct AgentTerminalScreen: View {
             iconButton("xmark", help: "Close these terminals (the agent keeps running)") {
                 app.closeTerminal(terminal.id)
             }
+        }
+    }
+
+    static func status(_ agent: ClaudeAgent) -> String {
+        switch agent.phase {
+        case .needsYou: "Needs you"
+        case .working: "Working"
+        case .done: "Done"
+        case .idle: "Idle"
         }
     }
 
@@ -691,11 +961,15 @@ private struct TerminalTabs: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            tab(.claude, title: "Claude", running: terminal.claude.isRunning, closable: nil)
+            sessionTab
+            tab(.claude, title: "Terminal", running: terminal.claude.isRunning, closable: nil)
             ForEach(terminal.shells) { shell in
                 tab(.shell(shell.id), title: "Shell \(shell.number)", running: true, closable: shell.id)
             }
-            Button { terminal.addShell() } label: {
+            Button {
+                terminal.addShell()
+                terminal.showsSession = false
+            } label: {
                 Image(systemName: "plus").font(.system(size: 10, weight: .bold)).frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
@@ -706,10 +980,29 @@ private struct TerminalTabs: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.08)))
     }
 
-    private func tab(_ id: AgentTerminal.Tab, title: String, running: Bool, closable: UUID?) -> some View {
-        let selected = terminal.selected == id
+    /// The native view of the session.
+    private var sessionTab: some View {
+        let selected = terminal.showsSession && !terminal.split
         return HStack(spacing: 4) {
-            Image(systemName: id == .claude ? "sparkle" : "terminal")
+            Image(systemName: "sparkle").font(.system(size: 9)).foregroundStyle(.orange)
+            Text("Session")
+        }
+        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? .white : .white.opacity(0.65))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(selected ? 0.2 : 0)))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            terminal.split = false
+            terminal.showsSession = true
+        }
+    }
+
+    private func tab(_ id: AgentTerminal.Tab, title: String, running: Bool, closable: UUID?) -> some View {
+        let selected = !terminal.showsSession && terminal.selected == id
+        return HStack(spacing: 4) {
+            Image(systemName: "terminal")
                 .font(.system(size: 9))
                 .foregroundStyle(id == .claude ? .orange : .white.opacity(0.6))
             Text(title)
@@ -728,7 +1021,10 @@ private struct TerminalTabs: View {
         .padding(.vertical, 3)
         .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(selected ? 0.2 : 0)))
         .contentShape(Rectangle())
-        .onTapGesture { terminal.selected = id }
+        .onTapGesture {
+            terminal.selected = id
+            terminal.showsSession = false
+        }
     }
 }
 

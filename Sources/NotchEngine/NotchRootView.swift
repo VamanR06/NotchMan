@@ -3,7 +3,10 @@ import NotchKit
 
 struct NotchRootView: View {
     let model: NotchViewModel
+    let commandBar: CommandBarModel
     let openSettings: () -> Void
+    let openCommandBar: () -> Void
+    let closeCommandBar: () -> Void
 
     var body: some View {
         let shape = NotchShape(topRadius: model.topCornerRadius, bottomRadius: model.bottomCornerRadius)
@@ -25,6 +28,8 @@ struct NotchRootView: View {
                 }
             }
             .frame(width: model.shapeSize.width, height: model.shapeSize.height, alignment: .top)
+            // No focus rings on the notch's buttons (with Full Keyboard Access on, taking the keyboard drew them).
+            .focusEffectDisabled()
             .clipShape(shape)
             .background(
                 shape
@@ -110,12 +115,17 @@ struct NotchRootView: View {
                 DockView(model: model)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: model.geometry.notchSize.width)
-                HStack(spacing: 10) {
-                    Text(model.selectedApp?.name ?? "")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                    PinButton(model: model)
-                    EngineMenu(openSettings: openSettings)
+                // Just two controls: the dock already says which app this is, and "keep open" lives in the menu
+                // (a pin shows here only while it's on, to turn it off).
+                HStack(spacing: 12) {
+                    if model.isPinned { PinButton(model: model) }
+                    Button(action: openCommandBar) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Find anything, or say what to do (⌥Space)")
+                    EngineMenu(model: model, openSettings: openSettings)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -134,6 +144,9 @@ struct NotchRootView: View {
                             AppLauncher(model: model)
                                 .padding(.top, 6)
                                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+                        } else if model.isCommandBarShown {
+                            CommandBarView(bar: commandBar, close: closeCommandBar)
+                                .transition(.opacity)
                         }
                     }
             }
@@ -188,28 +201,31 @@ private struct PinButton: View {
 
     var body: some View {
         Button { model.isPinned.toggle() } label: {
-            Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 12))
-                .foregroundStyle(model.isPinned ? .orange : .white.opacity(0.7))
+            Image(systemName: "pin.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
                 .rotationEffect(.degrees(45))
         }
         .buttonStyle(.plain)
-        .help(model.isPinned ? "Unpin (collapse when the mouse leaves)" : "Pin open")
+        .help("Kept open — click to let it close when the mouse leaves")
     }
 }
 
 private struct EngineMenu: View {
+    @Bindable var model: NotchViewModel
     let openSettings: () -> Void
 
     var body: some View {
         Menu {
+            Toggle("Keep Open", isOn: $model.isPinned)
             Button("Settings…", action: openSettings)
             Divider()
             Button("Quit NotchMan") { NSApp.terminate(nil) }
         } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 14))
-                .foregroundStyle(.white.opacity(0.7))
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 18, height: 18)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

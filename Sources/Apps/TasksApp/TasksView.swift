@@ -6,10 +6,12 @@ struct TasksView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Summary(app: app)
-                .frame(width: 120, alignment: .leading)
-
-            Rectangle().fill(.white.opacity(0.1)).frame(width: 1)
+            // The counts only mean something once there are tasks to count.
+            if app.isConnected && app.databases.contains(where: app.isEnabled) {
+                Summary(app: app)
+                    .frame(width: 120, alignment: .leading)
+                Rectangle().fill(.white.opacity(0.08)).frame(width: 1)
+            }
 
             if !app.isConnected || !app.databases.contains(where: app.isEnabled) {
                 placeholder(

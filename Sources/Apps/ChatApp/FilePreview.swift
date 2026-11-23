@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -64,27 +65,26 @@ enum FileMentions {
     }
 }
 
-/// A ⌘-clicked file, shown in a popup over the terminal.
+/// A file clicked in terminal output, previewed in a pane over the terminal.
 struct FilePreview: Identifiable {
-    enum Content {
+    enum Content: Equatable {
+        /// Source and plain text, with line numbers (and the mentioned line marked).
         case text([String], truncated: Bool)
         case markdown([String], truncated: Bool)
-        case image(NSImage)
         case folder([String])
+        /// Everything else macOS can preview: PDFs, images, video, Office documents, archives, …
+        case quickLook
         case unavailable(String)
     }
 
     let id = UUID()
     let url: URL
     let line: Int?
-    /// The clicked row, in the terminal's coordinates (origin top left).
-    let anchor: CGRect
     let content: Content
 
-    init(mention: FileMention, anchor: CGRect) {
+    init(mention: FileMention) {
         url = mention.url
         line = mention.line
-        self.anchor = anchor
         content = Self.load(mention.url)
     }
 
@@ -97,65 +97,34 @@ struct FilePreview: Identifiable {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? []
             return .folder(names.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
         }
-        if values?.contentType?.conforms(to: .image) == true, let image = NSImage(contentsOf: url) {
-            return .image(image)
-        }
+        if let type = values?.contentType, Self.quickLookTypes.contains(where: type.conforms) { return .quickLook }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return .unavailable("Can't read this file.") }
         defer { try? handle.close() }
         let data = (try? handle.read(upToCount: maxBytes)) ?? Data()
+        // Not text: let Quick Look show it (it has a preview for most kinds, and a file summary for the rest).
         guard !data.contains(0), let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
-        else {
-            let size = ByteCountFormatter.string(fromByteCount: Int64(values?.fileSize ?? data.count), countStyle: .file)
-            return .unavailable("No preview for this kind of file (\(size)).")
-        }
+        else { return .quickLook }
         let truncated = (values?.fileSize ?? 0) > maxBytes
         let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         let isMarkdown = ["md", "markdown", "mdx"].contains(url.pathExtension.lowercased())
         return isMarkdown ? .markdown(lines, truncated: truncated) : .text(lines, truncated: truncated)
     }
+
+    /// Shown by Quick Look even when they're text inside (SVG, RTF), since its rendering is what you'd want.
+    static let quickLookTypes: [UTType] = [.image, .pdf, .audiovisualContent, .presentation, .spreadsheet, .rtf, .rtfd]
 }
 
-/// Where the popup goes: under the clicked row if it fits, else above it, kept inside the terminal.
-enum FilePreviewLayout {
-    static let margin: CGFloat = 8
-
-    static func origin(card: CGSize, anchor: CGRect, in container: CGSize) -> CGPoint {
-        let maxX = max(container.width - card.width - margin, margin)
-        let x = min(max(anchor.midX - card.width / 2, margin), maxX)
-        let below = anchor.maxY + 4
-        let above = anchor.minY - 4 - card.height
-        let y: CGFloat
-        if below + card.height <= container.height - margin {
-            y = below
-        } else if above >= margin {
-            y = above
-        } else {
-            y = max((container.height - card.height) / 2, margin)
-        }
-        return CGPoint(x: x, y: y)
-    }
-}
-
-/// The popup plus a backdrop that closes it when clicked.
+/// The preview as a pane over the whole terminal (Esc or ✕ closes it; the terminal keeps running underneath).
 struct FilePreviewOverlay: View {
     let preview: FilePreview
     let close: () -> Void
 
     var body: some View {
-        GeometryReader { geo in
-            let card = CGSize(width: min(480, geo.size.width - 2 * FilePreviewLayout.margin),
-                              height: min(290, geo.size.height - 2 * FilePreviewLayout.margin))
-            let origin = FilePreviewLayout.origin(card: card, anchor: preview.anchor, in: geo.size)
-            ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.25)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: close)
-                FilePreviewCard(preview: preview, close: close)
-                    .frame(width: card.width, height: card.height)
-                    .offset(x: origin.x, y: origin.y)
-            }
-        }
-        .transition(.opacity)
+        FilePreviewCard(preview: preview, close: close)
+            .padding(4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.35).onTapGesture(perform: close))
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
     }
 }
 
@@ -200,6 +169,9 @@ private struct FilePreviewCard: View {
                 NSWorkspace.shared.activateFileViewerSelecting([preview.url])
                 close()
             }
+            button("eye", help: "Quick Look (full size)") {
+                QuickLookPanel.show([preview.url])
+            }
             button("doc.on.doc", help: "Copy path") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(preview.url.path, forType: .string)
@@ -225,15 +197,17 @@ private struct FilePreviewCard: View {
             CodeLines(lines: lines, highlight: preview.line, truncated: truncated)
         case .markdown(let lines, let truncated):
             ScrollView {
-                MarkdownLines(lines: lines, truncated: truncated)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    MarkdownView(text: lines.joined(separator: "\n"))
+                    if truncated {
+                        Text("Preview cut off — open the file to see the rest.")
+                            .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+                .padding(14)
             }
-        case .image(let image):
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .padding(10)
+        case .quickLook:
+            QuickLookPreview(url: preview.url)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .folder(let names):
             ScrollView {
@@ -297,114 +271,5 @@ private struct CodeLines: View {
                 proxy.scrollTo(highlight, anchor: .center)
             }
         }
-    }
-}
-
-/// Just enough Markdown for plans and READMEs: headings, lists, quotes, code blocks and inline styles.
-struct MarkdownLines: View {
-    enum Block: Equatable {
-        case heading(level: Int, text: String)
-        case bullet(marker: String, text: String, indent: Int)
-        case quote(String)
-        case code(String)
-        case rule
-        case blank
-        case paragraph(String)
-    }
-
-    let lines: [String]
-    var truncated = false
-
-    var body: some View {
-        LazyVStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(Self.blocks(lines).enumerated()), id: \.offset) { _, block in
-                view(for: block)
-            }
-            if truncated {
-                Text("Preview cut off — open the file to see the rest.")
-                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
-            }
-        }
-        .textSelection(.enabled)
-    }
-
-    nonisolated static func blocks(_ lines: [String]) -> [Block] {
-        var blocks: [Block] = []
-        var inCode = false
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                inCode.toggle()
-                continue
-            }
-            if inCode {
-                blocks.append(.code(line))
-                continue
-            }
-            let indent = (line.prefix { $0 == " " }.count) / 2
-            if trimmed.isEmpty {
-                if blocks.last != .blank { blocks.append(.blank) }
-            } else if let hashes = trimmed.firstIndex(where: { $0 != "#" }), hashes != trimmed.startIndex,
-                      trimmed.distance(from: trimmed.startIndex, to: hashes) <= 6, trimmed[hashes] == " " {
-                let level = trimmed.distance(from: trimmed.startIndex, to: hashes)
-                blocks.append(.heading(level: level, text: String(trimmed[hashes...].dropFirst())))
-            } else if ["---", "***", "___"].contains(trimmed) {
-                blocks.append(.rule)
-            } else if let rest = ["- [ ] ", "- [x] ", "- [X] "].first(where: trimmed.hasPrefix) {
-                let done = rest != "- [ ] "
-                blocks.append(.bullet(marker: done ? "☑" : "☐", text: String(trimmed.dropFirst(rest.count)), indent: indent))
-            } else if let marker = ["- ", "* ", "+ "].first(where: trimmed.hasPrefix) {
-                blocks.append(.bullet(marker: "•", text: String(trimmed.dropFirst(marker.count)), indent: indent))
-            } else if let match = trimmed.range(of: #"^[0-9]+[.)] "#, options: .regularExpression) {
-                blocks.append(.bullet(marker: trimmed[match].trimmingCharacters(in: .whitespaces),
-                                      text: String(trimmed[match.upperBound...]), indent: indent))
-            } else if trimmed.hasPrefix(">") {
-                blocks.append(.quote(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)))
-            } else {
-                blocks.append(.paragraph(trimmed))
-            }
-        }
-        return blocks
-    }
-
-    @ViewBuilder private func view(for block: Block) -> some View {
-        switch block {
-        case .heading(let level, let text):
-            Text(Self.inline(text))
-                .font(.system(size: level == 1 ? 15 : level == 2 ? 13.5 : 12.5, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.top, level <= 2 ? 6 : 3)
-        case .bullet(let marker, let text, let indent):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker).foregroundStyle(.white.opacity(0.55))
-                Text(Self.inline(text)).foregroundStyle(.white.opacity(0.88))
-            }
-            .font(.system(size: 12))
-            .padding(.leading, CGFloat(indent) * 14)
-        case .quote(let text):
-            Text(Self.inline(text))
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.65))
-                .padding(.leading, 8)
-                .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.3)).frame(width: 2) }
-        case .code(let text):
-            Text(text.isEmpty ? " " : text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.white.opacity(0.06))
-        case .rule:
-            Divider().overlay(.white.opacity(0.2)).padding(.vertical, 4)
-        case .blank:
-            Spacer().frame(height: 4)
-        case .paragraph(let text):
-            Text(Self.inline(text)).font(.system(size: 12)).foregroundStyle(.white.opacity(0.88))
-        }
-    }
-
-    static func inline(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }

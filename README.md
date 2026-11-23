@@ -108,10 +108,32 @@ feature needs them:
 
 ## Keyboard
 
-Press **⌥Space** (change it in Settings → General) from any app to open the notch with the keyboard. Then
-**⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the selection, **⌘Return** runs its second
-action (join the meeting, check off the task), **Space** checks off a task, and **Esc** or the hotkey again
-closes the notch. Text fields, terminals and chats keep their keys while you type in them.
+Hover the notch and it opens ready to type. Then **⌘1–9** switch apps, **↑/↓** select in lists, **Return** opens the
+selection, **⌘Return** runs its second action (join the meeting, check off the task), **Space** checks off a task,
+and **Esc** closes the notch. Text fields, terminals and chats keep their keys while you type in them.
+
+**Command bar.** Press **⌥Space** from any app (change it in Settings → General), or click 🔍 in the top row. It
+works like Spotlight: it opens the notch with a search field ready (or adds it to a notch you hovered open), and
+⌥Space again or Esc closes it. Type to find
+shelved files, downloads, folders, Claude Code sessions, approvals, tasks and apps by name; ↑/↓ and Return open one.
+Start with "add", "todo" or "task" to add a task ("add call recruiter fri 3pm"). With [Jev](#intelligence-jev)
+connected you can also say what you want — "move the resume I downloaded to Resumes", "approve the npm test",
+"I called the recruiter" — and the action it understood shows on top with how sure it is; moving files, allowing or
+denying a request and checking off a task ask for a second Return. For anything else, the last rows hand it on:
+**Ask Claude** answers right in the bar as it writes (Claude Code with read-only tools — it can look things up but
+not change anything, and never stops to ask for permission; Esc stops it), **Ask ChatGPT** or **Ask in a Claude
+chat** sends it in that chat's tab, and **Start a Claude Code agent** runs it as a background agent in your latest
+project that asks before every edit and command (approvals come to the notch; asks for a second Return). Esc
+clears the field, then closes the bar: the notch closes too if ⌥Space opened it, else you're back in the app.
+
+**Opens to what's relevant.** Hovering opens the app that fits the moment instead of the last one: a meeting about
+to start, an approval waiting, the job page your browser is on. With [Jev](#intelligence-jev) connected it weighs
+every app's state with the app you're in and the time of day; without it, only urgent things switch it. Once you've
+picked an app yourself it stays put (Settings → General → Open to what's relevant).
+
+Hovering opens the notch ready to type in, while the app you were in stays active. Once you type something in the
+notch it stays open until Esc, the hotkey or a click outside; if you move away without typing, it closes and the
+keyboard goes back to the app you were in.
 
 ## System HUDs
 
@@ -260,14 +282,25 @@ deleted (its sessions go back to their project's folder, made afresh if needed).
 button beside the search — say one for a session that works on two projects — then drag sessions onto a folder or
 right-click a session → Move to Folder (Move All to Folder on a folder). A moved session shows its own project's
 name, and Move Back returns it. The last button switches to grouping by status (Needs you, Working, Done and
-Idle). Click a background agent to open an
-interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
+Idle). Click a background agent to open its **Session** view: your prompts, Claude's replies, each tool call as a
+row (click for the command and its output, an edit as a diff, or the eye to preview the file), this session's
+approvals with Allow/Deny, and a box to message it (Return sends; ← in the empty box goes back). The **Terminal**
+tab next to it is the interactive terminal attached to it right in the notch (it keeps running when the notch closes; the notch stays
 open while you type, and a click outside closes it) — or choose a new Terminal window instead (header button,
 right-click, or the default in Settings). Each agent's terminal is a small workspace: **+** (or ⌘T) opens shells in the
 agent's project folder as tabs next to Claude (type `exit` to close one), and the split button stacks Claude above
-a shell. **⌘-click** a file or folder named in a terminal (a plan Claude Code saved, a file it edited, `path:12`)
-to preview it in a popup — Markdown is formatted, code shows line numbers — with Open, Show in Finder and Copy
-Path; Esc or a click outside closes it. Interactive sessions open their folder in VS Code/Cursor.
+a shell. **Click** a file or folder named in a terminal (a plan Claude Code saved, a file it edited, `path:12`)
+to preview it over the whole terminal — Markdown is formatted, code shows line numbers and jumps to the line, and
+PDFs, images, video and documents show in Quick Look — with Open, Quick Look (full size), Show in Finder and Copy
+Path; Esc, ✕ or a click outside closes it. **⌘-click** opens the file in its app instead. (While a program in the
+terminal uses the mouse itself, ⌘-click previews.) ← from an empty prompt goes back to the Overview at once and
+keeps the session attached. Interactive sessions open their folder in VS Code/Cursor.
+
+**What sessions are doing (bridge).** Settings → Agents → Install Bridge adds a small Claude Code mod (needs Claude
+Code 2.1.287 or later) that tells NotchMan what each session is doing. Then the Overview shows it under each session
+("Editing ShelfView.swift", "Run the tests"), the notch can open to the Agents app when it matters, and the Shelf and
+command bar offer the files Claude just changed. The mod only posts to NotchMan on this Mac (with its secret token),
+never blocks or changes anything Claude does, and loads in sessions started after installing; Remove undoes it.
 
 **Terminal:** the Terminal pill on the Overview (or **⌘T** in the Agents app) opens a terminal of your own in
 the notch, in the last folder you used; right-click the pill, a folder or a session for **Open Terminal Here**.
@@ -282,17 +315,27 @@ into the new folder. The terminals keep running when you go back to the Overview
 Right-click a project's folder or a session → **New Agent Here…** to open it with that project already picked.
 Pick its mode first: **Plan** (the default; it plans and changes nothing until you approve), **Ask first**,
 **Accept edits** or **Auto**. The last mode you used is remembered. Return starts it, ⌥Return adds a line. You're notified when an agent needs you or
-finishes, and one notch chip summarizes everything (needs you > working > ready). Settings → Agents.
+finishes, and one notch chip summarizes everything (needs you > working > ready). Opening a session clears its
+"ready" or "needs you". Settings → Agents.
+
+**Notifications** are short: who, and what Claude last said ("fix-build finished — All 42 tests pass."). There's one
+per session: a later one replaces it, and it's withdrawn once you've opened the session. Finished agents arrive
+quietly, and **Reply** answers right from the notification (it attaches in the background and types your reply in).
+Chat replies are one per service and go away once you look at the chat.
 
 **Approvals in the notch:** in Settings → Agents → Approvals, click **Install Approval Hook**. When a background
 agent wants permission for a tool (a command, an edit, a fetch), you can answer from:
-- the chip, which shows "Allow Bash?"
-- the card at the top of the Overview, with the command or file and **Allow**, **Deny** or **Ask in terminal**
+- the chip, which says what it wants in plain words ("Run command", "Edit file", "3 waiting")
+- the card at the top of the Overview, with the command or file and **Allow**, **Always**, **Deny** or **Ask in
+  terminal**
 - the Today app
-- the notification's Allow/Deny buttons
+- the notification's **Allow**, **Always** and **Deny** buttons
 
-Claude Code waits for NotchMan before showing its own prompt. If you don't answer within the wait (1 minute by
-default), or NotchMan isn't running, the terminal asks as usual. Interactive sessions skip the notch unless you
+**Always** is the terminal's "don't ask again": it allows the call and saves the rule Claude Code suggests for it
+(such as `Bash(npm test)`), or for file edits accepts edits for the rest of the session. Claude Code asks in its
+terminal at the same time; if you answer there, NotchMan notices (the session moves on, or with the bridge the tool
+runs) and the chip and notification go away. If you don't answer within the wait (1 minute by default), or NotchMan
+isn't running, the terminal's question is the only one. Interactive sessions skip the notch unless you
 turn that on. Commands matching risky patterns (`rm -rf`, `sudo`, force-push, `curl … | sh`, writes outside the
 project) are marked red, and nothing is ever allowed automatically.
 
@@ -346,6 +389,14 @@ Apps opt in with `.askable { "description" }` or `AskMenuItems` inside an existi
 
 Drag files from anywhere (Finder, a browser, Mail) toward the notch and it opens on the Shelf.
 
+- **Suggested folders:** as a drag reaches the notch, the three folders it most likely belongs in show as large
+  drop targets above the rest — from where you've put files of that type before, folder names that match the
+  file's, and recent folders, refined by [Jev](#intelligence-jev) when it's set up. Select a shelved file to get
+  suggestions for it too, and click one to put it there.
+- **Find and tidy:** with more than four files, a Find field filters the shelf (newest first). Files come off the
+  shelf after a week (Settings → Shelf: a day to a month, or never); the files themselves stay where they are.
+- **Preview:** shelved files and downloads show thumbnails. Click one and press **Space** (or right-click →
+  Quick Look) to see it full size; ←/→ step through them.
 - **Keep on the shelf:** drop them in the big area to hold them for later. You can drag them back out anywhere,
   double-click to open, or right-click to AirDrop, reveal or remove. The chip shows how many are waiting.
 - **Drop into any folder:** the right side lists where files can go:
@@ -398,6 +449,23 @@ The time here and in other cities, plus timers and a stopwatch.
   **Silence** stops the alarm.
 - **Stopwatch:** start, stop and reset. Running timers and the stopwatch show as chips while the notch is closed.
 
+## Notch apps you make
+
+Type what you want into the command bar (⌥Space) — "a pomodoro timer", "track the glasses of water I drink", "a
+countdown to Friday" — and choose **Make a notch app**. Claude Code writes a small app for it, NotchMan checks it runs
+(and has Claude fix it if not), and it appears in the dock like any other app, usually within a minute. Its ⋯ menu
+changes it with Claude ("make it 50 minutes"), shows its files, restarts or removes it.
+
+- **What they can do:** draw with NotchMan's own elements (text, buttons, inputs, toggles, lists, progress bars,
+  countdowns, charts, …), show a chip beside the collapsed notch, keep values between launches, run timers, post
+  notifications, copy text and open web links. They reach the network only if their manifest asks for it.
+- **What they can't:** read or write your files, run programs, or see other apps. Each runs in its own JavaScript
+  sandbox on its own thread; one that gets stuck shows "not responding" with a Restart button instead of freezing the
+  notch.
+- **Where they live:** `~/Library/Application Support/NotchMan/mods/<app>/` (`manifest.json`, `app.js`, and
+  `store.json` for its saved values). Edit the files and the app reloads; delete the folder and it leaves the dock.
+- Making or changing an app uses your Claude Code account (`claude -p`, writing text only — no tools).
+
 ## Privacy and data
 
 NotchMan runs entirely on your Mac and has no server of its own.
@@ -411,7 +479,31 @@ NotchMan runs entirely on your Mac and has no server of its own.
 - **Claude Code integration is local.** Sessions are read from `claude agents --json`. The optional approval hook
   is an HTTP hook to `127.0.0.1` carrying a secret token, and `~/.claude/settings.json` is backed up before it's
   changed.
+- **Jev is opt-in and redacted.** Nothing goes to TypeSafe until you add an API key (see below).
 - **Logs** go to the unified log under the `com.notchman` subsystem (filter for it in Console.app).
+
+### Intelligence (Jev)
+
+Settings → Intelligence connects [Jev](https://docs.typesafe.ai), TypeSafe's fast decision model, which picks
+the Shelf's suggested folders. Without a key, NotchMan ranks them with its own rules.
+
+- **What's sent:** the dragged files' names, types and rough sizes (never their contents), the folders on offer
+  as `~/…` paths, the app in front and the time of day.
+- **Redacted (the default):** on your Mac first, your name, email and username become `MY_NAME`, `MY_EMAIL` and
+  `MY_USERNAME`. Other people's names, emails, phone numbers, addresses, card and ID numbers, and keys become
+  placeholders like `PERSON_1`. A last check holds back any request that still has something personal in it.
+  **Off** sends nothing; **Full** sends names as they are.
+- **Your identity** (what counts as "you") defaults to your account's name; add your email or nicknames there,
+  and try any text to see how it would be sent.
+- **What was sent** lists the last 50 requests exactly as they left the Mac, kept only while NotchMan runs.
+- **Opening the notch** sends each app's one-line state ("Meeting “…” starts in 3 min", "2 overdue tasks", redacted),
+  the app in front and the time of day, so Jev can pick which app to show.
+- **The command bar** sends what you typed (redacted) and the things it could mean — shelved files and downloads,
+  folders, sessions, approvals and tasks, listed by opaque keys with redacted names — and Jev picks among them.
+- **How well it works:** `JEV_API_KEY=… swift test --filter JevDropEval` runs 30 typical drags against the real
+  service and prints how often the right folder comes first / in the top three, with and without Jev, plus the
+  latency; `--filter JevCommandEval` does the same for 16 typed requests and `--filter JevOpeningEval` for 10
+  moments the notch is opened.
 
 ## Development
 
@@ -446,6 +538,9 @@ Open `Package.swift` in Xcode to edit and debug. The only dependency is
 2. Add a `.target(name: "MyApp", dependencies: ["NotchKit"], path: "Sources/Apps/MyApp")` to `Package.swift`
    and list it as a dependency of `NotchMan`.
 3. Add `MyApp()` to `AppRegistry.makeApps()`.
+4. Optionally report `relevance` (a one-line state, urgent or not) so the notch can open to your app when it matters,
+   and implement `commands(for:)` so the command bar can find your app's things (`CommandItem`s) and do
+   things described in words (`CommandAction`s, whose parameters list the choices Jev picks from).
 
 Collapsed-notch status is a `NotchActivity`: a `chip` (use `NotchChip("2 late", systemImage: "checklist")`
 so icon and label stay together), optionally with a split `leading`/`trailing` layout for media. Up to three

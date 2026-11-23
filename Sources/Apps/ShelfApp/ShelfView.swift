@@ -24,7 +24,8 @@ struct ShelfView: View {
                 LastDropBar(app: app, drop: drop)
             }
         }
-        .onAppear(perform: app.pruneMissing)
+        .onAppear { app.pruneMissing() }
+        .onDisappear(perform: app.clearSuggestions)
     }
 
     private var header: some View {
@@ -32,6 +33,16 @@ struct ShelfView: View {
             tabButton("Shelf", count: app.items.count, tab: .shelf)
             tabButton("Downloads", count: app.activeDownloads.count + app.commands.count, tab: .downloads)
             Spacer()
+            if app.tab == .shelf && app.items.count > 4 {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 9))
+                    TextField("Find", text: $app.query)
+                        .textFieldStyle(.plain)
+                        .frame(width: 90)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(.white.opacity(0.08)))
+            }
             if app.tab == .shelf && !app.items.isEmpty {
                 Button("AirDrop All") { app.airDrop(app.items) }
                 Button("Clear") { app.clearShelf() }
@@ -125,7 +136,7 @@ private struct ShelfGrid: View {
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 6)], spacing: 6) {
-                        ForEach(app.items, id: \.self) { url in
+                        ForEach(app.shownItems, id: \.self) { url in
                             ShelfTile(app: app, url: url)
                         }
                     }
@@ -145,10 +156,9 @@ private struct ShelfTile: View {
     @State private var hovering = false
 
     var body: some View {
+        let isSelected = app.selected == url
         VStack(spacing: 3) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 36, height: 36)
+            FileThumbnail(url: url, size: 40)
             Text(url.lastPathComponent)
                 .font(.system(size: 10))
                 .lineLimit(2)
@@ -156,7 +166,8 @@ private struct ShelfTile: View {
                 .truncationMode(.middle)
         }
         .frame(width: 74, height: 72)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(hovering ? 0.1 : 0.04)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor.opacity(0.35)
+                                                           : .white.opacity(hovering ? 0.1 : 0.04)))
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button { app.remove(url) } label: {
@@ -168,9 +179,11 @@ private struct ShelfTile: View {
         }
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(url) }
+        .onTapGesture { app.selected = url }
         .draggableFile(url)
-        .help(url.path)
+        .help(url.path + "\nSpace to preview")
         .contextMenu {
+            Button("Quick Look") { app.quickLook(url) }
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Button("AirDrop") { app.airDrop([url]) }
@@ -191,6 +204,64 @@ private struct ShelfTile: View {
 
 // MARK: - Destinations
 
+/// The three most likely folders for what you're dragging (or the shelved file you selected), large enough to aim
+/// at. Drop on one, or click it to put the selected file there.
+private struct SuggestedFolders: View {
+    let app: ShelfApp
+    let predictor: DropPredictor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 8))
+                Text(predictor.usedJev ? "Suggested by Jev" : "Suggested")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .textCase(.uppercase)
+                if predictor.isRefining { NotchSpinner(size: 8, lineWidth: 1.2) }
+            }
+            .foregroundStyle(.white.opacity(0.45))
+            HStack(spacing: 5) {
+                ForEach(predictor.suggestions) { suggestion in
+                    SuggestionTile(app: app, folder: suggestion.candidate.url,
+                                   isProject: suggestion.candidate.kind == .project)
+                }
+            }
+        }
+    }
+}
+
+private struct SuggestionTile: View {
+    let app: ShelfApp
+    let folder: URL
+    let isProject: Bool
+
+    var body: some View {
+        Button {
+            if let selected = app.selected, app.items.contains(selected) { app.drop([selected], into: folder) }
+            else { app.browse(folder) }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: isProject ? "terminal.fill" : "folder.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isProject ? .orange : Color.accentColor)
+                Text(folder.lastPathComponent)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.horizontal, 4)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.35)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fileDropTarget(folder.lastPathComponent, cornerRadius: 8, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
+        .help(ProjectDrop.displayPath(folder, project: nil) + (app.selected != nil ? "\nClick to put the selected file here" : ""))
+    }
+}
+
 /// Where files can go: recent folders, running Claude Code projects and the usual places, or any folder via
 /// Choose Folder…. Hold a drag over one to open it and keep going down; drop to put files there.
 private struct DestinationColumn: View {
@@ -203,14 +274,17 @@ private struct DestinationColumn: View {
             } else {
                 HStack {
                     Text("Drop into a folder")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .textCase(.uppercase)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.leading, 8)
                     Spacer()
                     CopyMoveSwitch(app: app)
                 }
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 8) {
+                        if !app.predictor.suggestions.isEmpty {
+                            SuggestedFolders(app: app, predictor: app.predictor)
+                        }
                         let recents = app.recentFolders
                         if !recents.isEmpty {
                             group("Recent") {
@@ -231,7 +305,7 @@ private struct DestinationColumn: View {
                                 }
                             }
                         }
-                        group("Places") {
+                        group(recents.isEmpty && app.projects.isEmpty && app.predictor.suggestions.isEmpty ? nil : "Places") {
                             ForEach(ShelfApp.places, id: \.url) { place in
                                 DestinationRow(app: app, folder: place.url, symbol: place.symbol, title: place.name, subtitle: nil)
                             }
@@ -252,12 +326,14 @@ private struct DestinationColumn: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
-                .textCase(.uppercase)
+    private func group<Content: View>(_ title: String?, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.leading, 8).padding(.bottom, 2)
+            }
             content()
         }
     }
@@ -270,7 +346,8 @@ private struct DestinationRow: View {
     let symbol: String
     let title: String
     let subtitle: String?
-    var tint: Color = .white.opacity(0.7)
+    var tint: Color = .white.opacity(0.6)
+    @State private var hovering = false
 
     var body: some View {
         Button { app.browse(folder) } label: {
@@ -283,13 +360,14 @@ private struct DestinationRow: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(0.35))
+                Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.white.opacity(hovering ? 0.5 : 0))
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(0.06)))
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .fileDropTarget(folder.lastPathComponent, cornerRadius: 7, spring: { app.browse(folder) }) { app.drop($0, into: folder) }
         .help("Drop to put files in \(folder.path); hold a drag here to open it. ⌥ does the other of Copy/Move.")
     }
@@ -517,9 +595,7 @@ private struct DownloadRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
-                .resizable()
-                .frame(width: 20, height: 20)
+            FileThumbnail(url: item.url, size: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 if item.isInProgress {
@@ -538,12 +614,15 @@ private struct DownloadRow: View {
                 .foregroundStyle(.white.opacity(0.5))
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: 7).fill(app.selected == item.url ? Color.accentColor.opacity(0.35)
+                                                           : .white.opacity(hovering ? 0.08 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { if !item.isInProgress { NSWorkspace.shared.open(item.url) } }
+        .onTapGesture { if !item.isInProgress { app.selected = item.url } }
         .draggableFile(item.url)
         .contextMenu {
+            Button("Quick Look") { app.quickLook(item.url) }.disabled(item.isInProgress)
             Button("Open") { NSWorkspace.shared.open(item.url) }.disabled(item.isInProgress)
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Button("Keep on Shelf") { app.addToShelf([item.url]) }.disabled(item.isInProgress)
@@ -554,10 +633,24 @@ private struct DownloadRow: View {
 // MARK: - Settings
 
 struct ShelfSettingsView: View {
-    let app: ShelfApp
+    @Bindable var app: ShelfApp
 
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $app.expiryDays) {
+                    Text("After a day").tag(1)
+                    Text("After 3 days").tag(3)
+                    Text("After a week").tag(7)
+                    Text("After a month").tag(30)
+                    Text("Never").tag(0)
+                } label: {
+                    Text("Take files off the shelf")
+                    Text("Only the shelf forgets them; the files stay where they are.")
+                }
+            } header: {
+                Text("Shelf")
+            }
             Section {
                 LabeledContent("notchman-run") {
                     if app.runInstalled {

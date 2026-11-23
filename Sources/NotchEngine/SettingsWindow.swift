@@ -7,6 +7,7 @@ import NotchKit
 final class SettingsModel {
     var selection: String = SettingsModel.generalID
     static let generalID = "_general"
+    static let intelligenceID = "_intelligence"
 }
 
 @MainActor
@@ -56,6 +57,7 @@ private struct SettingsView: View {
         NavigationSplitView {
             List(selection: $model.selection) {
                 Label("General", systemImage: "gearshape").tag(SettingsModel.generalID)
+                Label("Intelligence", systemImage: "sparkles").tag(SettingsModel.intelligenceID)
                 Section("Apps") {
                     ForEach(configurableApps, id: \.id) { app in
                         Label(app.name, systemImage: app.iconSystemName).tag(app.id)
@@ -69,6 +71,8 @@ private struct SettingsView: View {
                     if let app = configurableApps.first(where: { $0.id == model.selection }),
                        let view = app.makeSettingsView() {
                         view
+                    } else if model.selection == SettingsModel.intelligenceID {
+                        IntelligenceSettingsView()
                     } else {
                         GeneralSettingsView()
                     }
@@ -85,6 +89,7 @@ private struct GeneralSettingsView: View {
     @AppStorage(NotchEngine.allDisplaysKey) private var allDisplays = true
     @AppStorage(NotchViewModel.hoverDelayKey) private var hoverDelay = NotchViewModel.defaultHoverDelay
     @AppStorage(HotKey.defaultsKey) private var hotKey = HotKey.Preset.optionSpace.rawValue
+    @AppStorage(OpeningChooser.enabledKey) private var openToRelevant = true
     @AppStorage(SystemHUDs.volumeKey) private var hudVolume = true
     @AppStorage(SystemHUDs.brightnessKey) private var hudBrightness = true
     @AppStorage(SystemHUDs.batteryKey) private var hudBattery = true
@@ -114,8 +119,12 @@ private struct GeneralSettingsView: View {
             Picker(selection: $hotKey) {
                 ForEach(HotKey.Preset.allCases) { preset in Text(preset.title).tag(preset.rawValue) }
             } label: {
-                Text("Open the notch with")
-                Text("From any app. Then ⌘1–9 switch apps, ↑/↓ and Return pick in lists, Esc closes.")
+                Text("Command bar")
+                Text("From any app: find files, folders, agents and tasks, or say what to do. Press it again or Esc to close.")
+            }
+            Toggle(isOn: $openToRelevant) {
+                Text("Open to what needs you")
+                Text("Hovering opens the app with something waiting on you — an approval, a meeting about to start, a stuck agent — instead of the last one. Otherwise it stays where you left it.")
             }
             LabeledContent {
                 HStack {

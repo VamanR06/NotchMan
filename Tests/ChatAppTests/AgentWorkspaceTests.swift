@@ -127,3 +127,26 @@ import Testing
         workspace.stop()
     }
 }
+
+/// A terminal's focus-when-shown never pulls the keyboard into a notch you only hovered open (or that closed).
+@MainActor @Suite struct TerminalLateFocusTests {
+    @Test func onlyAWindowThatHasTheKeyboardIsFocusedInto() {
+        #expect(TerminalSession.shouldTakeFocus(windowIsVisible: true, windowIsKey: true))
+        #expect(!TerminalSession.shouldTakeFocus(windowIsVisible: true, windowIsKey: false))
+        #expect(!TerminalSession.shouldTakeFocus(windowIsVisible: false, windowIsKey: true))
+    }
+
+    @Test func aWindowWithoutTheKeyboardIsLeftAlone() async throws {
+        let session = TerminalSession()
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 680, height: 380), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = session.view
+        window.makeFirstResponder(nil)
+        #expect(!window.isKeyWindow)
+        session.focusWhenShown()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(window.firstResponder !== session.view)
+        #expect(!window.isKeyWindow, "it must not make the window key either")
+    }
+}

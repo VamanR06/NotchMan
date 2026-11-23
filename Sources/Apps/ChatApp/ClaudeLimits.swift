@@ -6,6 +6,14 @@ struct ClaudeLimitWindow: Identifiable, Equatable, Sendable {
     let percent: Int
     let resetsText: String
     var id: String { label }
+
+    /// For tight spots: "Current week (all models)" → "Week", "Current session" → "Session".
+    var shortLabel: String {
+        var short = label.replacingOccurrences(of: "Current ", with: "", options: .caseInsensitive)
+        if let paren = short.firstIndex(of: "(") { short = String(short[..<paren]) }
+        short = short.trimmingCharacters(in: .whitespaces)
+        return short.prefix(1).uppercased() + short.dropFirst()
+    }
 }
 
 /// A "Last 24h" / "Last 7d" usage-characteristics block (not a limit — context on what's driving it).

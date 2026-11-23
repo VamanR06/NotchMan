@@ -57,37 +57,117 @@ import Testing
     }
 }
 
-@Suite struct MarkdownLinesTests {
+@Suite struct MarkdownDocumentTests {
     @Test func parsesThePartsPlansUse() {
-        let blocks = MarkdownLines.blocks([
-            "# Plan", "", "", "## Steps", "1. First", "  - nested", "- [x] done", "> note", "```", "# not a heading", "```",
-            "---", "Plain **text**", "#hashtag",
+        let document = MarkdownDocument.parse("""
+        # Plan
+
+
+        ## Steps
+        1. First
+          - nested
+        - [x] done
+        > note
+        ```swift
+        # not a heading
+        ```
+        ---
+        Plain **text**
+        that wraps
+        #hashtag
+        """)
+        #expect(document.blocks == [
+            .heading(level: 1, text: "Plan"), .heading(level: 2, text: "Steps"),
+            .list([.init(marker: "1.", text: "First", depth: 0), .init(marker: "•", text: "nested", depth: 1),
+                   .init(marker: "☑", text: "done", depth: 0)]),
+            .quote("note"), .code(language: "swift", text: "# not a heading"), .rule,
+            .paragraph("Plain **text** that wraps #hashtag"),
         ])
-        #expect(blocks == [
-            .heading(level: 1, text: "Plan"), .blank, .heading(level: 2, text: "Steps"),
-            .bullet(marker: "1.", text: "First", indent: 0), .bullet(marker: "•", text: "nested", indent: 1),
-            .bullet(marker: "☑", text: "done", indent: 0), .quote("note"), .code("# not a heading"), .rule,
-            .paragraph("Plain **text**"), .paragraph("#hashtag"),
-        ])
+    }
+
+    @Test func readsTables() {
+        let document = MarkdownDocument.parse("""
+        Results:
+
+        | Test | Before | After |
+        |:-----|-------:|:-----:|
+        | build | 41 s | **12 s** |
+        | tests | 3 failing |
+        | a \\| b | x | y |
+
+        Done.
+        """)
+        #expect(document.blocks.count == 3)
+        guard case .table(let header, let alignments, let rows) = document.blocks[1] else {
+            Issue.record("expected a table: \(document.blocks)")
+            return
+        }
+        #expect(header == ["Test", "Before", "After"])
+        #expect(alignments == [.leading, .trailing, .center])
+        #expect(rows == [["build", "41 s", "**12 s**"], ["tests", "3 failing", ""], ["a | b", "x", "y"]],
+                "short rows are padded; an escaped pipe stays in its cell")
+        #expect(document.blocks[2] == .paragraph("Done."))
+    }
+
+    @Test func aPipeInProseIsntATable() {
+        #expect(MarkdownDocument.parse("Use a | b for or\nand more").blocks == [.paragraph("Use a | b for or and more")])
+    }
+
+    @Test func wrappedListItemsStayOneItem() {
+        let document = MarkdownDocument.parse("- first item that\n  wraps here\n- second")
+        #expect(document.blocks == [.list([.init(marker: "•", text: "first item that wraps here", depth: 0),
+                                           .init(marker: "•", text: "second", depth: 0)])])
     }
 }
 
-@Suite struct FilePreviewLayoutTests {
-    private let container = CGSize(width: 700, height: 400)
-    private let card = CGSize(width: 480, height: 290)
-
-    @Test func goesBelowTheClickedRowWhenItFits() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 100, y: 30, width: 1, height: 15), in: container)
-        #expect(origin == CGPoint(x: 8, y: 49))
+/// Plain click previews, ⌘-click opens in the file's app; drags select and double-clicks pick words as before.
+@MainActor @Suite struct PathClickTests {
+    private func click(command: Bool = false, other: Bool = false, count: Int = 1, dragged: Bool = false,
+                       mouse: Bool = false) -> NotchTerminalView.PathClick {
+        NotchTerminalView.pathClick(command: command, otherModifiers: other, clickCount: count, dragged: dragged,
+                                    programUsesMouse: mouse)
     }
 
-    @Test func goesAboveNearTheBottom() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 650, y: 360, width: 1, height: 15), in: container)
-        #expect(origin == CGPoint(x: 212, y: 66))
+    @Test func plainClickPreviews() { #expect(click() == .preview) }
+    @Test func commandClickOpensInItsApp() { #expect(click(command: true) == .openInApp) }
+
+    @Test func selectingAndWordPickingAreLeftAlone() {
+        #expect(click(dragged: true) == .none)
+        #expect(click(count: 2) == .none)
+        #expect(click(other: true) == .none)
     }
 
-    @Test func centersWhenNeitherFits() {
-        let origin = FilePreviewLayout.origin(card: card, anchor: CGRect(x: 350, y: 150, width: 0, height: 15), in: container)
-        #expect(origin == CGPoint(x: 110, y: 55))
+    @Test func whenTheProgramUsesTheMouseCommandClickPreviews() {
+        #expect(click(mouse: true) == .none)
+        #expect(click(command: true, mouse: true) == .preview)
+    }
+}
+
+/// What kind of preview each file gets.
+@Suite struct PreviewContentTests {
+    private func file(_ name: String, _ data: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + name)
+        try data.write(to: url)
+        return url
+    }
+
+    @Test func sourceIsShownAsText() throws {
+        let url = try file("a.swift", Data("let x = 1\nprint(x)".utf8))
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(FilePreview.load(url) == .text(["let x = 1", "print(x)"], truncated: false))
+    }
+
+    @Test func picturesAndDocumentsGoToQuickLook() throws {
+        let png = try file("a.png", Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0]))
+        let pdf = try file("a.pdf", Data("%PDF-1.4\n".utf8))
+        defer { [png, pdf].forEach { try? FileManager.default.removeItem(at: $0) } }
+        #expect(FilePreview.load(png) == .quickLook)
+        #expect(FilePreview.load(pdf) == .quickLook)
+    }
+
+    @Test func otherBinaryFilesGoToQuickLook() throws {
+        let url = try file("data.bin", Data([0, 1, 2, 3]))
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(FilePreview.load(url) == .quickLook)
     }
 }

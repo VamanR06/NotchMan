@@ -6,6 +6,39 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-11-22
+
+### Added
+- **Agents — Session view:** a background agent's session drawn natively, half terminal and half chat:
+  Markdown replies, grouped tool steps, the reply as Claude writes it, and the terminal a tab away.
+  - Everything Claude Code asks or opens shows as a card you can click or drive from the keyboard: folder trust,
+    questions, permissions, plans, rewind, and its menus (`/model`, `/config`, `/permissions`, `/mcp`, `/memory`,
+    `/hooks`, `/status`, `/usage`, `/effort`, `/theme`, `/export`, `/resume`, background tasks).
+  - Message box: `/` command and `@` file autocomplete, ↑/↓ prompt history, paste or drop images, Shift-Tab
+    and a chip for the permission mode, Stop/Esc (an unanswered prompt comes back to the box), Esc Esc to rewind.
+  - A prompt rail to jump through your prompts, a pinned plan from Claude's to-do list, quick commands saved per
+    project (`make run` in one click), ⌘-click a command in a reply to run it, recaps above your next prompt,
+    and Claude Code's notices folded into one line.
+- **Agents:** stuck-agent alerts from plain rules (a call failing or looping, a hung command, no progress), with
+  a one-line reason from Haiku; "What does this do?" on approval cards; approvals with Always, and
+  notifications you can answer from.
+- **Command bar (⌥Space):** find anything or say what to do; Ask Claude and Ask ChatGPT answer right in the bar
+  (ChatGPT through the Codex CLI), or start a Claude Code agent.
+- **Notch apps you make:** Claude writes small apps that run in the notch.
+- **Claude Code bridge mod:** shows what each session is doing.
+- **Shelf:** suggested drop folders, find and expiry, Quick Look previews and thumbnails.
+- **Intelligence:** Jev (TypeSafe) for command routing, with an on-device redactor.
+
+### Changed
+- Hovering opens the notch ready to type; typing keeps it open; leaving gives the keyboard back.
+- The notch opens to an app only when something needs you (an approval, a meeting, a stuck agent).
+- Shelf ranks folders by your own history first; Jev only nudges, for file types you've never filed.
+- Quieter notch: a single ⋯ menu in the top bar, no empty summaries, lighter Shelf rows.
+
+### Fixed
+- **Agents:** clicks in an open session no longer get lost or fall through to the app behind; no freeze while
+  Claude writes; Enter in the message box submits; "Working…" clears when the turn ends.
+
 ## [1.1.0] — 2026-11-06
 
 ### Added

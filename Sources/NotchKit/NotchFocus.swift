@@ -10,6 +10,12 @@ import os
 @MainActor
 public enum NotchFocus {
     private static var previous: NSRunningApplication?
+    /// The last other app that was active, so focus can go back even when NotchMan was activated some other way
+    /// than `activateForTyping` (a menu, a sheet, a button that opens a window).
+    private static var lastOtherApp: NSRunningApplication?
+    /// NotchMan itself was in front (Settings, a popped-out chat) when the notch took the keyboard: go back there.
+    private static var returnToNotchMan = false
+    private static weak var returnWindow: NSWindow?
 
     /// Call when the user clicks into content that may open pop-ups needing the keyboard.
     public static func activateForTyping() {
@@ -24,15 +30,60 @@ public enum NotchFocus {
         NSApp.activate()
     }
 
-    /// Called when the notch closes: return focus to the app the user was in — unless one of NotchMan's regular
-    /// windows (Settings, a popped-out chat) is in front and should keep it.
+    /// Call when the notch's window takes the keyboard. Notes where focus should go when it closes: one of
+    /// NotchMan's own windows if NotchMan was already the app you were using, else the app you were in.
+    public static func notchTookKeyboard() {
+        returnToNotchMan = NSApp.isActive && previous == nil
+        returnWindow = returnToNotchMan ? NSApp.orderedWindows.first(where: isRegularWindow) : nil
+    }
+
+    /// Where focus goes when the notch closes.
+    enum ReturnTarget: Equatable {
+        /// The NotchMan window you were using before the notch.
+        case notchManWindow
+        /// The app you were in.
+        case otherApp
+        /// Leave it: NotchMan isn't active (the app you were in still is), or a NotchMan window is rightly in front.
+        case nothing
+    }
+
+    static func returnTarget(isActive: Bool, returnToNotchMan: Bool, hasReturnWindow: Bool, keyWindowKeepsFocus: Bool,
+                             hasOtherApp: Bool) -> ReturnTarget {
+        guard isActive else { return .nothing }
+        if returnToNotchMan, hasReturnWindow { return .notchManWindow }
+        if keyWindowKeepsFocus { return .nothing }
+        return hasOtherApp ? .otherApp : .nothing
+    }
+
+    /// Called when the notch closes: return focus to where you were before it — the app you were in, or the
+    /// NotchMan window you were using.
     public static func restore() {
-        guard let previous else { return }
-        self.previous = nil
-        guard NSApp.isActive else { return }
-        if let key = NSApp.keyWindow, key.isVisible, key.styleMask.contains(.titled) { return }
-        NSApp.yieldActivation(to: previous)
-        previous.activate()
+        let app = [previous, lastOtherApp].compactMap { $0 }.first { !$0.isTerminated }
+        let window = returnWindow.flatMap { $0.isVisible ? $0 : nil }
+        let target = returnTarget(isActive: NSApp.isActive, returnToNotchMan: returnToNotchMan,
+                                  hasReturnWindow: window != nil,
+                                  // Any titled window keeps it: Settings, a popped-out chat, an alert or file picker.
+                                  keyWindowKeepsFocus: NSApp.modalWindow != nil
+                                      || NSApp.keyWindow.map { $0.isVisible && $0.styleMask.contains(.titled) } ?? false,
+                                  hasOtherApp: app != nil)
+        previous = nil
+        returnToNotchMan = false
+        returnWindow = nil
+        switch target {
+        case .notchManWindow:
+            window?.makeKeyAndOrderFront(nil)
+        case .otherApp:
+            guard let app else { return }
+            NSApp.yieldActivation(to: app)
+            app.activate()
+        case .nothing:
+            break
+        }
+    }
+
+    /// Settings, a popped-out chat: a visible titled window (not the notch, a pop-up or a dialog).
+    private static func isRegularWindow(_ window: NSWindow) -> Bool {
+        window.isVisible && window.styleMask.contains(.titled) && !(window is NSPanel)
     }
 
     // MARK: - Pop-ups that need the keyboard
@@ -70,6 +121,13 @@ public enum NotchFocus {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             let id = app?.bundleIdentifier ?? "?"
             log.notice("App activated: \(id, privacy: .public)")
+            let activated = app
+            MainActor.assumeIsolated {
+                guard let activated, activated.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                      !systemHelperBundleIDs.contains(activated.bundleIdentifier ?? "") else { return }
+                lastOtherApp = activated
+                returnToNotchMan = false
+            }
         })
     }
 
@@ -163,3 +221,8 @@ public enum NotchFocus {
         return !helpers.isEmpty
     }
 }
+
+/// A view in the notch that takes every key itself (a terminal), so the notch's own keys — Esc to close, arrows and
+/// Return in lists — stay out of its way while it has focus. Text fields and web pages are recognized without it.
+@MainActor
+public protocol NotchTypingView: AnyObject {}

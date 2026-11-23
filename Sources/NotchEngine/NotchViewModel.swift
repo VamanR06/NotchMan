@@ -10,10 +10,19 @@ final class NotchViewModel {
     private(set) var pulsing = false
     var geometry: NotchGeometry
 
-    let apps: [any NotchApp]
+    /// The dock's apps; changes when a generated app is added or removed.
+    var apps: [any NotchApp] {
+        didSet {
+            if !apps.contains(where: { $0.id == selectedAppID }) { selectedAppID = apps.first?.id ?? "" }
+        }
+    }
 
     /// The All Apps grid is showing over the selected app.
     var isLauncherOpen = false
+    /// The command bar is showing over the selected app.
+    var isCommandBarShown = false
+    /// The hotkey opened the notch for the bar, so closing the bar closes the notch too.
+    @ObservationIgnored var barOpenedNotch = false
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
     var isPinned = false
@@ -30,12 +39,14 @@ final class NotchViewModel {
 
     private var isHeld: Bool { keyboardHeld || dragHeld || heldApps.contains(selectedAppID) }
 
-    /// The user is pointing at the notch, so it should take the keyboard (⌘1–9, arrows, Esc) from the app
-    /// they were in. Called once per opening; never for openings the user didn't ask for (meeting heads-up).
+    /// The user is pointing at the notch, so it takes the keyboard (to type in it, ⌘1–9, arrows, Esc) while the app
+    /// they were in stays active. Never for openings they didn't ask for (a meeting heads-up).
     @ObservationIgnored var onWantsKeyboard: (() -> Void)?
-    /// The notch closed; give the keyboard back.
+    /// The notch closed after it had the keyboard; give it back.
     @ObservationIgnored var onCollapse: (() -> Void)?
-    @ObservationIgnored private var tookKeyboard = false
+    /// The notch has the keyboard this opening (hovering, a click inside or the hotkey); the engine reports it through
+    /// `keyboardTaken()` when the window becomes key.
+    @ObservationIgnored private(set) var tookKeyboard = false
     /// After switching apps the shape can shrink out from under the cursor. While the cursor is still where
     /// the previous (larger) shape was, that doesn't count as leaving.
     @ObservationIgnored private var selectionGraceRect: CGRect?
@@ -60,6 +71,16 @@ final class NotchViewModel {
 
     @ObservationIgnored private var pendingCollapse: Task<Void, Never>?
     @ObservationIgnored private var pendingExpand: Task<Void, Never>?
+    /// Picks the app a hover opening should show (given the one shown last), or nil to stay. Set by the engine.
+    @ObservationIgnored var chooseOpening: ((String) async -> String?)?
+    @ObservationIgnored private var openingChoice: Task<Void, Never>?
+    /// The chosen app, waiting for the notch to finish opening.
+    @ObservationIgnored private var chosenApp: String?
+    /// When this opening started showing, and what it showed: a late or overruled choice is dropped.
+    @ObservationIgnored private var openedAt: Date?
+    @ObservationIgnored private var shownAtOpening: String?
+    /// How long after opening a choice may still switch the app (later it would pull the rug).
+    static let choiceWindow: TimeInterval = 1.5
     /// Set while an app-requested expansion is showing; cleared once the user hovers.
     @ObservationIgnored private var attentionExpansion = false
 
@@ -218,8 +239,23 @@ final class NotchViewModel {
     /// pushed against the top (as it is under the physical notch) reports y == maxY, which
     /// `CGRect.contains` treats as outside.
     func contains(_ point: CGPoint, slack: CGFloat = 0) -> Bool {
-        Self.contains(hitRect, point, slack: slack)
+        Self.contains(cachedHitRect, point, slack: slack)
     }
+
+    /// `hitRect` for mouse moves, which arrive from anywhere on screen many times a second: collapsed, working it out
+    /// asks every app for its chip, so it's reused for a moment (expanded it's cheap and always fresh).
+    private var cachedHitRect: CGRect {
+        guard state == .collapsed else { return hitRect }
+        let now = Date()
+        if let cache = hitCache, cache.transient == (transient != nil), now.timeIntervalSince(cache.at) < 0.3 {
+            return cache.rect
+        }
+        let rect = hitRect
+        hitCache = (rect, now, transient != nil)
+        return rect
+    }
+
+    @ObservationIgnored private var hitCache: (rect: CGRect, at: Date, transient: Bool)?
 
     static func contains(_ hitRect: CGRect, _ point: CGPoint, slack: CGFloat) -> Bool {
         var rect = hitRect.insetBy(dx: -slack, dy: -slack)
@@ -245,6 +281,7 @@ final class NotchViewModel {
             if contains(point, slack: 4) {
                 guard pendingExpand == nil else { return }
                 apps.forEach { $0.notchWillOpen() }
+                startChoosingOpening()
                 pendingExpand = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(Self.hoverDelay))
                     guard !Task.isCancelled else { return }
@@ -256,6 +293,8 @@ final class NotchViewModel {
             } else {
                 pendingExpand?.cancel()
                 pendingExpand = nil
+                openingChoice?.cancel()
+                openingChoice = nil
             }
         case .expanded:
             // Same slack as the collapsed hover target, so the two states can't fight over the edge.
@@ -277,6 +316,10 @@ final class NotchViewModel {
     }
 
     /// A click outside the notch (seen by the global monitor) closes a held notch; pinned ones stay.
+    /// You're typing in the open notch: its window keeps taking clicks even where it's empty, so a click meant
+    /// for it can't fall through to the app behind while NotchMan is busy (a click on the empty part closes it).
+    var holdsClicks: Bool { state == .expanded && keyboardHeld && !isPinned }
+
     func clickedOutside(at point: CGPoint) {
         guard state == .expanded, isHeld, !isPinned, !contains(point, slack: 4) else { return }
         collapse()
@@ -285,11 +328,14 @@ final class NotchViewModel {
     /// Shows the app that claims this opening, now and once a moment later (its check may still be running),
     /// unless the user has picked an app themselves by then.
     private func offerOpening() {
+        openedAt = Date()
+        shownAtOpening = selectedAppID
         claimOpening()
-        let shown = selectedAppID
+        applyChosenApp()
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
-            guard let self, self.state == .expanded, self.selectedAppID == shown else { return }
+            // Still showing what the opening showed (or what was chosen for it): you haven't picked an app yourself.
+            guard let self, self.state == .expanded, self.selectedAppID == self.shownAtOpening else { return }
             self.claimOpening()
         }
     }
@@ -298,10 +344,56 @@ final class NotchViewModel {
         if let app = apps.first(where: \.claimsNotchOnOpen), app.id != selectedAppID { select(app.id) }
     }
 
+    /// Asks which app fits as the hover starts, so the answer is usually back by the time the notch is open.
+    private func startChoosingOpening() {
+        openingChoice?.cancel()
+        chosenApp = nil
+        guard let chooseOpening else { return }
+        let shown = selectedAppID
+        openingChoice = Task { [weak self] in
+            let choice = await chooseOpening(shown)
+            guard let self, !Task.isCancelled else { return }
+            self.chosenApp = choice
+            self.applyChosenApp()
+        }
+    }
+
+    /// Shows the chosen app once the notch is open — unless an app claimed the opening, you've switched apps
+    /// yourself, or it's been open too long for a switch to feel like part of opening.
+    private func applyChosenApp(now: Date = Date()) {
+        guard let choice = chosenApp, state == .expanded, let openedAt,
+              now.timeIntervalSince(openedAt) <= Self.choiceWindow, selectedAppID == shownAtOpening,
+              !apps.contains(where: \.claimsNotchOnOpen), choice != selectedAppID,
+              apps.contains(where: { $0.id == choice }) else { return }
+        chosenApp = nil
+        select(choice)
+        shownAtOpening = choice
+    }
+
     private func takeKeyboard() {
         guard state == .expanded, !tookKeyboard else { return }
-        tookKeyboard = true
         onWantsKeyboard?()
+    }
+
+    /// The notch's window stopped being key while open (you clicked another app, a pop-up took it): hovering or
+    /// clicking takes it back, and closing has nothing to hand back.
+    func keyboardLost() {
+        tookKeyboard = false
+    }
+
+    /// The notch's window became key (hovering, a click inside, or the hotkey), so closing must hand the keyboard back.
+    func keyboardTaken() {
+        guard state == .expanded else { return }
+        tookKeyboard = true
+    }
+
+    /// A key was typed in the notch: you're using it, so moving the mouse away no longer closes it (Esc, the hotkey
+    /// or a click outside does), as with the hotkey.
+    func userTyped() {
+        guard state == .expanded else { return }
+        keyboardHeld = true
+        pendingCollapse?.cancel()
+        pendingCollapse = nil
     }
 
     func expand() {
@@ -318,6 +410,12 @@ final class NotchViewModel {
         dragHeld = false
         selectionGraceRect = nil
         isLauncherOpen = false
+        isCommandBarShown = false
+        barOpenedNotch = false
+        openingChoice?.cancel()
+        openingChoice = nil
+        chosenApp = nil
+        openedAt = nil
         let hadKeyboard = tookKeyboard
         tookKeyboard = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { state = .collapsed }
@@ -342,6 +440,7 @@ final class NotchViewModel {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
             selectedAppID = appID
             isLauncherOpen = false
+            isCommandBarShown = false
         }
     }
 

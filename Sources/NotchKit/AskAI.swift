@@ -60,6 +60,11 @@ public final class AskAI {
     public func ask(_ item: String, service: String, project: AskProject?) {
         deliver?(.chatPrompt(prompt(for: item), service: service, url: project?.url))
     }
+
+    /// Opens a new chat with exactly `text` typed in (no template); with `submit`, sends it too.
+    public func send(_ text: String, service: String, submit: Bool = false) {
+        deliver?(.chatPrompt(text, service: service, submit: submit))
+    }
 }
 
 /// Menu entries for asking about `item`; use inside an existing `.contextMenu`.
