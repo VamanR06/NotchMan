@@ -375,6 +375,12 @@ final class NotchViewModel {
         onWantsKeyboard?()
     }
 
+    /// The notch's window stopped being key while open (you clicked another app, a pop-up took it): hovering or
+    /// clicking takes it back, and closing has nothing to hand back.
+    func keyboardLost() {
+        tookKeyboard = false
+    }
+
     /// The notch's window became key (hovering, a click inside, or the hotkey), so closing must hand the keyboard back.
     func keyboardTaken() {
         guard state == .expanded else { return }

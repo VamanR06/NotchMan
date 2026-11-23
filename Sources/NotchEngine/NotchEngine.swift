@@ -238,6 +238,13 @@ public final class NotchEngine {
                 NotchFocus.notchTookKeyboard()
             }
         })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak model] _ in
+            MainActor.assumeIsolated {
+                guard let model, model.state == .expanded else { return }
+                model.keyboardLost()
+            }
+        })
         model.onCollapse = { [weak panel] in
             guard let panel, panel.isKeyWindow else { return }
             panel.makeFirstResponder(nil)
@@ -321,6 +328,16 @@ public final class NotchEngine {
         if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { [weak self] event in
             let isClick = event.type == .leftMouseDown
             let clickedNotch = isClick && event.window is NotchPanel
+            // A click in the open notch while its window isn't key: make it key before the click is delivered. Inside
+            // the notch, scroll views and text fields don't take a "first click" in a window that isn't key, so
+            // otherwise every click on a session's rows or message box was spent just on that, and did nothing.
+            if clickedNotch, let panel = event.window as? NotchPanel, !panel.isKeyWindow {
+                MainActor.assumeIsolated {
+                    if self?.notches.values.contains(where: { $0.panel === panel && $0.model.state == .expanded }) == true {
+                        panel.makeKey()
+                    }
+                }
+            }
             if isClick {
                 let window = event.window.map { String(describing: type(of: $0)) } ?? "none"
                 // Which view the click lands on, innermost first, and who has the keyboard: a click the notch gets
