@@ -6,6 +6,13 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-11-23
+
+### Fixed
+- **Two displays:** an open notch could stop taking clicks — they went to the app behind — while it kept drawing.
+  A notch window left over from a display change (a monitor waking or reconnecting) is now closed, and a click
+  that falls through repairs the notch under it. Each case is logged.
+
 ## [1.2.0] — 2026-11-22
 
 ### Added
