@@ -305,8 +305,19 @@ struct AgentSessionView: View {
         liveReply = nil
         var sawSpinner = false
         var idleSince: Date?
-        var quietPolls = 0
+        var spinnerGoneAt: Date?
+        var seenOutput = -1
+        var lastPass = Date.distantPast
         while !Task.isCancelled {
+            // Re-read as soon as Claude redraws (a menu answering a key shows within a frame or two), else every
+            // 0.4s for the clock-driven parts (the spinner going, the live text settling).
+            try? await Task.sleep(for: .milliseconds(40))
+            let output = terminal.claude.outputCount
+            let since = Date().timeIntervalSince(lastPass)
+            // A menu answers keys at once; otherwise streaming output is read at most ~7 times a second.
+            guard (output != seenOutput && since >= (menuOpen ? 0 : 0.15)) || since >= 0.4 else { continue }
+            seenOutput = output
+            lastPass = Date()
             let lines = terminal.isRunning ? terminal.claude.screenLines : []
             let prompt = ClaudePrompt.parse(lines)
             if prompt != claudePrompt { withAnimation(.easeOut(duration: 0.15)) { claudePrompt = prompt } }
@@ -319,8 +330,9 @@ struct AgentSessionView: View {
             let spinner = AgentTerminal.showsSpinner(lines)
             if spinner { sawSpinner = true }
             // Idle only after the spinner has been gone for a moment (it can blink between steps).
-            quietPolls = spinner ? 0 : quietPolls + 1
-            let busy: Bool? = terminal.isRunning && sawSpinner ? (spinner || quietPolls < 3) : nil
+            spinnerGoneAt = spinner ? nil : (spinnerGoneAt ?? Date())
+            let quiet = spinnerGoneAt.map { Date().timeIntervalSince($0) >= 1.2 } ?? false
+            let busy: Bool? = terminal.isRunning && sawSpinner ? (spinner || !quiet) : nil
             if busy != screenBusy {
                 screenBusy = busy
                 if let busy, busy != agentBusy { Task { await app.agentMonitor?.refresh() } }
@@ -354,7 +366,6 @@ struct AgentSessionView: View {
                 next = Date().timeIntervalSince(idleSince!) < 3 ? current : nil
             }
             if next != liveReply { liveReply = next }
-            try? await Task.sleep(for: .milliseconds(400))
         }
     }
 
@@ -465,9 +476,14 @@ struct AgentSessionView: View {
                         suggestions = []
                         return .handled
                     }
+                    guard terminal.isRunning else { return .ignored }
                     // Esc while Claude works stops it, as in its terminal.
-                    guard isWorking, terminal.isRunning else { return .ignored }
-                    interrupt()
+                    if isWorking {
+                        interrupt()
+                        return .handled
+                    }
+                    // Idle, Esc goes to Claude too: twice opens its rewind list, as in its terminal.
+                    terminal.claude.view.send(data: [0x1B][...])
                     return .handled
                 }
         }
@@ -594,6 +610,12 @@ struct AgentSessionView: View {
     private func stepHistory(back: Bool) -> Bool {
         let history = promptHistory
         guard !history.isEmpty, draft.isEmpty || historyIndex != nil else { return false }
+        // In a message of several lines, ↑ / ↓ move between its lines first; only from the first line (↑) or the
+        // last (↓) do they go through your earlier prompts, as in Claude's terminal.
+        if draft.contains("\n"), let caret = ComposerSuggestions.caret(in: draft) {
+            if back, draft[..<caret].contains("\n") { return false }
+            if !back, draft[caret...].contains("\n") { return false }
+        }
         if back {
             if historyIndex == nil { draftBeforeHistory = draft }
             let next = max(0, (historyIndex ?? history.count) - 1)

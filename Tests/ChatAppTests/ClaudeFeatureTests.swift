@@ -83,6 +83,16 @@ import Testing
         #expect(parser.todos.map(\.status) == [.inProgress, .pending])
     }
 
+    @Test func finishedPlanItemsClearWithYourNextPrompt() {
+        var parser = TranscriptParser()
+        let lines = [
+            #"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"content":"Done step","status":"completed"},{"content":"Open step","status":"pending"}]}}]}}"#,
+            #"{"type":"user","uuid":"u1","message":{"role":"user","content":"next thing"}}"#,
+        ]
+        parser.feed(Data((lines.joined(separator: "\n") + "\n").utf8))
+        #expect(parser.todos.map(\.title) == ["Open step"], "done steps drop off; open ones stay")
+    }
+
     @Test func suggestionsForSlashAndAt() {
         #expect(ComposerSuggestions.token(in: "/comp")?.kind == .command)
         #expect(ComposerSuggestions.token(in: "/compact now") == nil, "past the command name")

@@ -135,6 +135,7 @@ struct TranscriptParser: Sendable {
                 if let prompt = Self.prompt(text) {
                     append(id: uuid, time: time, .prompt(prompt))
                     turnOpen = true
+                    clearFinishedTodos()
                 }
             }
             return
@@ -153,6 +154,7 @@ struct TranscriptParser: Sendable {
                 } else if let prompt = Self.prompt(text) {
                     append(id: id, time: time, .prompt(prompt))
                     turnOpen = true
+                    clearFinishedTodos()
                 }
             case "tool_use":
                 guard let toolID = block["id"] as? String, let name = block["name"] as? String else { continue }
@@ -201,6 +203,11 @@ struct TranscriptParser: Sendable {
         default:
             return
         }
+    }
+
+    /// A new prompt starts a new stretch of work: steps already done drop off the plan (open ones stay).
+    private mutating func clearFinishedTodos() {
+        todos.removeAll { $0.status == .completed }
     }
 
     /// You pressed Esc. If Claude hadn't done anything for your prompt yet, it goes back to the input box in Claude

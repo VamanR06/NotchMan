@@ -23,6 +23,8 @@ final class TerminalSession: Identifiable {
     @ObservationIgnored var directory: String?
     /// Watch the output for `git clone` (shells); off for Claude's own terminal, whose stream is long and busy.
     @ObservationIgnored var detectsClones = true
+    /// Goes up with every chunk the program writes, so a reader can tell the screen changed without polling slowly.
+    @ObservationIgnored private(set) var outputCount = 0
     @ObservationIgnored let view: NotchTerminalView
     @ObservationIgnored private let events: TerminalEvents
     @ObservationIgnored private var cloneDetector = CloneDetector()
@@ -98,6 +100,7 @@ final class TerminalSession: Identifiable {
     /// git prints "Cloning into 'name'..." as a clone starts; the name is relative to where it ran (this
     /// terminal's folder, as `cd` and `git clone` on one line still leave the shell in the new folder).
     private func output(_ bytes: ArraySlice<UInt8>) {
+        outputCount &+= 1
         guard detectsClones else { return }
         for name in cloneDetector.feed(String(decoding: bytes, as: UTF8.self)) {
             let base = URL(fileURLWithPath: workingDirectory ?? NSHomeDirectory())
