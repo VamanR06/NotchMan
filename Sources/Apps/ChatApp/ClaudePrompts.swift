@@ -267,6 +267,9 @@ struct ClaudeScreen: Equatable {
 
     let lines: [Line]
     let keys: [ClaudeKey]
+    /// Where Claude's keyboard focus is: in the highlighted list, or (as /permissions and /resume open) still on
+    /// the tabs or the search box above it — the first ↓ moves into the list then, without moving the highlight.
+    var listFocused = true
 
     var title: String? { lines.first?.text.trimmingCharacters(in: .whitespaces) }
 
@@ -277,13 +280,28 @@ struct ClaudeScreen: Equatable {
         return Array(repeating: delta > 0 ? ClaudeKey.down : ClaudeKey.up, count: abs(delta)).flatMap { $0 } + [0x0D]
     }
 
-    static func parse(_ screen: [String]) -> ClaudeScreen? {
+    /// `cursorLine` is the text of the line Claude's cursor is on (where its focus is), when known.
+    static func parse(_ screen: [String], cursorLine: String? = nil) -> ClaudeScreen? {
         let nonEmpty = screen.indices.filter { !screen[$0].trimmingCharacters(in: .whitespaces).isEmpty }
         // The footer: one of the last lines, made of key hints ("↑/↓ to navigate · Enter to select · Esc to close").
-        guard let footer = nonEmpty.suffix(3).last(where: { isFooter(screen[$0]) }) else { return nil }
-        guard let top = screen[..<footer].lastIndex(where: { line in
+        // A long list can push it off the bottom; then a "▔" top edge with no input box under it still marks a
+        // menu, driven with the usual keys.
+        let footer: Int
+        var defaultKeys: [ClaudeKey]?
+        if let found = nonEmpty.suffix(3).last(where: { isFooter(screen[$0]) }) {
+            footer = found
+        } else if let edge = screen.lastIndex(where: { $0.filter { $0 == "▔" }.count >= 20 }),
+                  !screen[edge...].contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("⏵") || $0.contains("? for shortcuts") }),
+                  screen[edge...].contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }) {
+            footer = screen.count
+            defaultKeys = ClaudeKey.hints(in: "↑/↓ to navigate · Enter to select · Esc to close")
+        } else {
+            return nil
+        }
+        // Its top edge; when a long list has pushed that off the screen, the menu starts at the top of the screen.
+        let top = screen[..<footer].lastIndex(where: { line in
             line.filter { $0 == "▔" }.count >= 20 || ClaudePrompt.isRule(line.trimmingCharacters(in: .whitespaces))
-        }) else { return nil }
+        }) ?? -1
         var body = screen[(top + 1)..<footer].map { line -> String in
             var text = line
             while text.last == " " { text.removeLast() }
@@ -325,7 +343,8 @@ struct ClaudeScreen: Equatable {
             lines[index].row = row
             lines[index].isSelected = index == bestSelected
         }
-        return ClaudeScreen(lines: lines, keys: ClaudeKey.hints(in: screen[footer]))
+        let focused = cursorLine.map { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") } ?? true
+        return ClaudeScreen(lines: lines, keys: defaultKeys ?? ClaudeKey.hints(in: screen[footer]), listFocused: best.isEmpty || focused)
     }
 
     /// A footer of key hints, not Claude's ordinary footer under its input ("esc to interrupt", "? for shortcuts").
@@ -351,8 +370,18 @@ struct ClaudeScreenCard: View {
                     VStack(alignment: .leading, spacing: 1) {
                         ForEach(screen.lines) { line in
                             if let row = line.row {
-                                ScreenRow(text: line.text, isSelected: line.isSelected) { press(screen.keys(forRow: row)) }
-                                    .id(line.id)
+                                ScreenRow(text: line.text, isSelected: line.isSelected, isFocused: screen.listFocused) {
+                                    press(screen.keys(forRow: row))
+                                }
+                                .id(line.id)
+                            } else if line.text.contains("⌕") {
+                                // The search box: lit while it has the focus (type to search).
+                                Text(line.text)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(screen.listFocused ? 0.5 : 0.95))
+                                    .lineLimit(1).truncationMode(.tail)
+                                    .padding(.horizontal, 6)
+                                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(screen.listFocused ? 0 : 0.25)))
                             } else {
                                 Text(line.text.isEmpty ? " " : line.text)
                                     .font(.system(size: 11, weight: line.id == 0 ? .semibold : .regular, design: .monospaced))
@@ -364,9 +393,12 @@ struct ClaudeScreenCard: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .scrollIndicators(.never)
                 .frame(maxHeight: 240)
                 .fixedSize(horizontal: false, vertical: true)
                 .onAppear { if let selected = screen.lines.first(where: \.isSelected) { proxy.scrollTo(selected.id, anchor: .center) } }
+                // Follow the highlight as the keyboard moves it.
+                .onChange(of: screen.lines.first(where: \.isSelected)?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
             }
             HStack(spacing: 6) {
                 ForEach(screen.keys) { key in
@@ -388,6 +420,8 @@ struct ClaudeScreenCard: View {
 private struct ScreenRow: View {
     let text: String
     let isSelected: Bool
+    /// The focus is in the list (else the highlighted row is only outlined).
+    var isFocused = true
     let action: () -> Void
     @State private var hovering = false
 
@@ -399,7 +433,8 @@ private struct ScreenRow: View {
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 5).fill(isSelected ? Color.accentColor.opacity(0.35) : .white.opacity(hovering ? 0.08 : 0)))
+                .background(RoundedRectangle(cornerRadius: 5).fill(isSelected && isFocused ? Color.accentColor.opacity(0.35) : .white.opacity(hovering ? 0.08 : 0)))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.accentColor.opacity(isSelected && !isFocused ? 0.5 : 0)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -441,6 +476,7 @@ struct ClaudePromptCard: View {
                         }
                     }
                 }
+                .scrollIndicators(.never)
                 .frame(maxHeight: 220)
                 .fixedSize(horizontal: false, vertical: true)
                 .onAppear { if let selected = prompt.options.first(where: \.isSelected) { proxy.scrollTo(selected.id, anchor: .center) } }

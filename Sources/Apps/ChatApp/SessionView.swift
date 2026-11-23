@@ -114,7 +114,15 @@ struct AgentSessionView: View {
             }
         }
         .onDisappear { pasteMonitor.stop() }
-        .onAppear { refreshSuggestions() }
+        .onAppear {
+            refreshSuggestions()
+            // Claude's terminal runs hidden behind this view: give it room, so its menus (/permissions' long list)
+            // fit on its screen. The Terminal tab sizes it to the pane again when shown.
+            let view = terminal.claude.view
+            if view.window == nil, view.frame.height < 900 {
+                view.setFrameSize(NSSize(width: max(view.frame.width, 680), height: 1000))
+            }
+        }
         .onChange(of: menuOpen) { _, open in
             // A menu opened (yours, or Claude asking): put the keyboard on it.
             if open { composerFocused = true }
@@ -323,7 +331,8 @@ struct AgentSessionView: View {
             if prompt != claudePrompt { withAnimation(.easeOut(duration: 0.15)) { claudePrompt = prompt } }
             let mode = ClaudeMode.parse(lines)
             if mode != claudeMode { claudeMode = mode }
-            let screen = prompt == nil ? ClaudeScreen.parse(lines) : nil
+            let cursor = terminal.claude.cursor
+            let screen = prompt == nil ? ClaudeScreen.parse(lines, cursorLine: lines.indices.contains(cursor.row) ? lines[cursor.row] : nil) : nil
             if screen != claudeScreen { withAnimation(.easeOut(duration: 0.15)) { claudeScreen = screen } }
             let shells = ClaudeFooter.shells(lines)
             if shells != backgroundShells { backgroundShells = shells }

@@ -30,6 +30,34 @@ import Testing
         #expect(menu.keys.map(\.label) == ["↑", "↓", "View", "Close"])
     }
 
+    /// /permissions with a long list, from a real Claude Code: its footer pushed off the bottom of the screen.
+    @Test func aMenuWhoseFooterScrolledOff() throws {
+        let screen = [
+            top,
+            "  Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace",
+            "  ╭──────────────────────────────╮",
+            "  │ ⌕ Search…                    │",
+            "  ╰──────────────────────────────╯",
+            "    ↑ 4 more",
+            "    Bash(npm install *)",
+            "  ❯ Bash(python split_dataset/summarize.py -f",
+            "      split_dataset/tf_idf/test_predictions_table_log_reg.csv)",
+            "    ↓ 29 more",
+        ]
+        let menu = try #require(ClaudeScreen.parse(screen, cursorLine: "  ❯ Bash(python split_dataset/summarize.py -f"))
+        #expect(menu.listFocused)
+        #expect(menu.keys.map(\.label) == ["↑", "↓", "Select", "Close"])
+    }
+
+    @Test func focusStartsOnTheSearchBox() throws {
+        let screen = [top, "  Permissions  Allow   Ask", "  │ ⌕ Search…  │", "  ❯ Add a new rule…", "    Bash(git init *)",
+                      "  ↓ to navigate · ←/→ to switch · / to search · Esc to close"]
+        let opening = try #require(ClaudeScreen.parse(screen, cursorLine: "  Permissions  Allow   Ask"))
+        #expect(!opening.listFocused, "the first ↓ moves into the list without moving the highlight")
+        let inList = try #require(ClaudeScreen.parse(screen, cursorLine: "  ❯ Add a new rule…"))
+        #expect(inList.listFocused)
+    }
+
     @Test func statusHasNoListJustText() throws {
         let screen = [top, "  Settings  Status   Config   Usage   Stats", "", "  Version:           2.1.330",
                       "  Model:             haiku (claude-haiku-5-5)", "  ←/→ to switch · Esc to close"]
