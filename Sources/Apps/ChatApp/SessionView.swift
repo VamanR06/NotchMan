@@ -7,7 +7,13 @@ import SwiftUI
 struct AgentSessionView: View {
     let app: ChatApp
     @Bindable var terminal: AgentTerminal
-    @State private var draft = ""
+    @State private var draft: String
+
+    init(app: ChatApp, terminal: AgentTerminal, draft: String = "") {
+        self.app = app
+        self.terminal = terminal
+        _draft = State(initialValue: draft)
+    }
     @State private var preview: FilePreview?
     @FocusState private var composerFocused: Bool
     /// Images going with the next message (pasted with ⌘V or dropped on the session).
@@ -84,6 +90,7 @@ struct AgentSessionView: View {
             }
         }
         .onDisappear { pasteMonitor.stop() }
+        .onAppear { refreshSuggestions() }
         .environment(\.commandRunner, CommandRunner(
             run: { [terminal] command in terminal.runInShell(command) },
             runInTerminal: { [terminal] command in ShellCommand.openInTerminal(command, in: terminal.agent.cwd) },
@@ -310,27 +317,29 @@ struct AgentSessionView: View {
 
     // MARK: - Composer
 
+    /// Claude Code's input box (a rule above and below) with the suggestions over it, then a slim footer of controls
+    /// under it — the mode, background shells, Stop and the ⋯ menu — like the footer under Claude's own input. The
+    /// controls never sit beside the text, so a long message isn't hidden behind them.
     private var composer: some View {
-        VStack(spacing: 0) {
-            if !images.isEmpty {
-                AttachmentStrip(images: images) { url in images.removeAll { $0 == url } }
-            }
-            composerLine
-        }
-        .overlay(alignment: .topLeading) {
+        VStack(spacing: 4) {
             if !suggestions.isEmpty {
+                // In the layout, not floating: it takes space from the conversation and can't spill off the notch.
                 SuggestionList(suggestions: suggestions, selected: suggestionIndex, pick: take)
-                    .frame(maxWidth: 460)
-                    .padding(.leading, 26)
-                    .alignmentGuide(.top) { $0[.bottom] + 4 }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
             }
+            VStack(spacing: 0) {
+                if !images.isEmpty {
+                    AttachmentStrip(images: images) { url in images.removeAll { $0 == url } }
+                }
+                composerLine
+            }
+            .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
+            composerFooter
         }
-        .zIndex(1)
         .onChange(of: draft) { _, _ in refreshSuggestions() }
         .onChange(of: ProjectFiles.shared.files[terminal.agent.cwd]?.count) { _, _ in refreshSuggestions() }
-        // Claude Code's input box: a rule above and below.
-        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
     }
 
     private var composerLine: some View {
@@ -340,7 +349,8 @@ struct AgentSessionView: View {
                       text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Self.mono)
-                .lineLimit(1...4)
+                .lineLimit(1...6)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .focused($composerFocused)
                 .disabled(!terminal.isRunning)
                 .onSubmit(send)
@@ -386,6 +396,14 @@ struct AgentSessionView: View {
                     terminal.claude.view.send(data: [0x1B][...])
                     return .handled
                 }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture { composerFocused = true }
+    }
+
+    private var composerFooter: some View {
+        HStack(spacing: 10) {
             if QuickCommands.shared.commands(for: terminal.agent.cwd).isEmpty && !addingQuickCommand {
                 Button { withAnimation(.easeOut(duration: 0.15)) { addingQuickCommand = true } } label: {
                     Image(systemName: "bolt").font(.system(size: 10, weight: .medium))
@@ -438,16 +456,17 @@ struct AgentSessionView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .help("Claude Code's permission mode — click to switch (Shift-Tab)")
                 }
-                if !draft.isEmpty || !images.isEmpty {
-                    Text("↩ send").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
-                }
+                Spacer(minLength: 0)
+                Text(draft.isEmpty && images.isEmpty ? "⌘V image · / commands · @ files" : "↩ send")
+                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.3))
+                    .lineLimit(1)
             } else {
+                Spacer(minLength: 0)
                 Button("Reattach") { app.reattach(terminal) }.controlSize(.small)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onTapGesture { composerFocused = true }
+        .padding(.horizontal, 12)
+        .frame(height: 18)
     }
 
     private func send() {
