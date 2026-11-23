@@ -323,7 +323,17 @@ public final class NotchEngine {
             let clickedNotch = isClick && event.window is NotchPanel
             if isClick {
                 let window = event.window.map { String(describing: type(of: $0)) } ?? "none"
-                Self.log.notice("Click in NotchMan: window=\(window, privacy: .public)")
+                // Which view the click lands on, innermost first, and who has the keyboard: a click the notch gets
+                // but nothing answers is something on top swallowing it.
+                var chain: [String] = []
+                var view = event.window?.contentView?.hitTest(event.locationInWindow)
+                while let current = view, chain.count < 6 {
+                    chain.append(String(describing: type(of: current)).prefix(60).description)
+                    view = current.superview
+                }
+                let responder = event.window?.firstResponder.map { String(describing: type(of: $0)).prefix(60).description } ?? "none"
+                let modal = NSApp.modalWindow.map { String(describing: type(of: $0)) } ?? "none"
+                Self.log.notice("Click in NotchMan: window=\(window, privacy: .public) hit=\(chain.joined(separator: " < "), privacy: .public) responder=\(responder, privacy: .public) modal=\(modal, privacy: .public) key=\(event.window?.isKeyWindow ?? false, privacy: .public)")
             }
             MainActor.assumeIsolated {
                 // A click on the empty part of a notch window that's holding clicks (see `holdsClicks`): outside.
