@@ -224,6 +224,7 @@ extension ChatApp {
             case .prompt(let text): ["role": "user", "text": String(text.prefix(500))]
             case .reply(let text): ["role": "agent", "text": String(text.prefix(500))]
             case .tool(let call): ["role": "tool", "text": "\(call.name): \(StuckRules.key(call).prefix(200))"]
+            case .recap, .notice, .command: nil
             }
         }
         let object: [String: Any] = ["tool": request.toolName, "call": request.summary, "project": request.project,

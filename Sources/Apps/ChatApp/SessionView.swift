@@ -30,11 +30,15 @@ struct AgentSessionView: View {
     @State private var claudePrompt: ClaudePrompt?
     /// Claude Code's permission mode from its footer ("Auto mode", "Plan mode").
     @State private var claudeMode: String?
+    /// You pressed Esc while Claude worked: if it hadn't answered yet, your prompt comes back to the box (as Claude
+    /// Code puts it back into its own input), and its row leaves the conversation.
+    @State private var interruptedAt: Date?
+    @State private var withdrawn: String?
     /// Going back through your earlier prompts with ↑ in the message box: how far back, and what you'd typed first.
     @State private var historyIndex: Int?
     @State private var draftBeforeHistory = ""
     /// A view Claude opened over its input (a background task's details), shown as a card.
-    @State private var claudePanel: ClaudePanel?
+    @State private var claudeScreen: ClaudeScreen?
     /// Background shells Claude's footer says are still running.
     @State private var backgroundShells = 0
     /// "/" commands and "@" files offered for what's being typed, and the highlighted one.
@@ -47,7 +51,9 @@ struct AgentSessionView: View {
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
     /// Working, by the session file (a turn is open until Claude's last message of it lands), else by Claude's
     /// spinner in its attached terminal, else by what `claude agents` last said — which can stay "busy" after a turn.
-    private var isWorking: Bool { transcript.turnOpen ?? screenBusy ?? agentBusy }
+    /// Working, by Claude's spinner in its attached terminal once it's been seen there (current to the moment, and it
+    /// goes the instant you press Esc); else by the session file's turn markers; else by `claude agents`.
+    private var isWorking: Bool { screenBusy ?? transcript.turnOpen ?? agentBusy }
     private var agentBusy: Bool { terminal.agent.status == "busy" || terminal.agent.phase == .working }
 
     var body: some View {
@@ -55,15 +61,24 @@ struct AgentSessionView: View {
             if !transcript.todos.isEmpty, isWorking || transcript.todos.contains(where: { $0.status != .completed }) {
                 PlanStrip(todos: transcript.todos).transition(.opacity)
             }
-            ZStack {
+            ZStack(alignment: .bottomLeading) {
                 conversation
                 if let preview {
                     FilePreviewOverlay(preview: preview) { withAnimation(.easeOut(duration: 0.15)) { self.preview = nil } }
                         .id(preview.id)
                 }
+                // Over the bottom of the conversation, just above the message box: inside the notch, and the box
+                // keeps its size.
+                if !suggestions.isEmpty {
+                    SuggestionList(suggestions: suggestions, selected: suggestionIndex, pick: take)
+                        .frame(maxWidth: 480, alignment: .leading)
+                        .padding(.leading, 8).padding(.bottom, 6)
+                        .shadow(color: .black.opacity(0.5), radius: 12, y: 4)
+                        .transition(.opacity)
+                }
             }
-            if let claudePanel, claudePrompt == nil {
-                ClaudePanelCard(panel: claudePanel) { keys in terminal.claude.view.send(data: keys[...]) }
+            if let claudeScreen, claudePrompt == nil {
+                ClaudeScreenCard(screen: claudeScreen) { keys in terminal.claude.view.send(data: keys[...]) }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let claudePrompt {
@@ -72,6 +87,8 @@ struct AgentSessionView: View {
                     if option.isTextEntry { composerFocused = true }
                 } cancel: {
                     terminal.claude.view.send(data: ClaudePrompt.cancelKey[...])
+                } press: { keys in
+                    terminal.claude.view.send(data: keys[...])
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -91,6 +108,10 @@ struct AgentSessionView: View {
         }
         .onDisappear { pasteMonitor.stop() }
         .onAppear { refreshSuggestions() }
+        .onChange(of: transcript.withdrawnPrompt) { _, text in
+            guard let text, text != withdrawn else { return }
+            restore(text)
+        }
         .environment(\.commandRunner, CommandRunner(
             run: { [terminal] command in terminal.runInShell(command) },
             runInTerminal: { [terminal] command in ShellCommand.openInTerminal(command, in: terminal.agent.cwd) },
@@ -131,7 +152,9 @@ struct AgentSessionView: View {
         let prompts = items.compactMap { item -> PromptMark? in
             if case .prompt(let id, let text) = item { PromptMark(id: id, text: text) } else { nil }
         }
-        let shown = items.suffix(shownCount)
+        var shownItems = items
+        if let withdrawn, case .prompt(_, let text)? = shownItems.last, text == withdrawn { shownItems.removeLast() }
+        let shown = shownItems.suffix(shownCount)
         let hidden = items.count - shown.count
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
@@ -194,7 +217,7 @@ struct AgentSessionView: View {
             .background(RoundedRectangle(cornerRadius: 10).fill(.black))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1)))
             .overlay(alignment: .trailing) {
-                if prompts.count > 1 {
+                if prompts.count > 1, claudePrompt == nil, claudeScreen == nil {
                     PromptRail(prompts: prompts, current: follow ? prompts.last?.id : visiblePrompt) { id in
                         follow = false
                         unseenBelow = false
@@ -271,26 +294,44 @@ struct AgentSessionView: View {
         liveReply = nil
         var sawSpinner = false
         var idleSince: Date?
+        var quietPolls = 0
         while !Task.isCancelled {
             let lines = terminal.isRunning ? terminal.claude.screenLines : []
             let prompt = ClaudePrompt.parse(lines)
             if prompt != claudePrompt { withAnimation(.easeOut(duration: 0.15)) { claudePrompt = prompt } }
             let mode = ClaudeMode.parse(lines)
             if mode != claudeMode { claudeMode = mode }
-            let panel = prompt == nil ? ClaudePanel.parse(lines) : nil
-            if panel != claudePanel { withAnimation(.easeOut(duration: 0.15)) { claudePanel = panel } }
+            let screen = prompt == nil ? ClaudeScreen.parse(lines) : nil
+            if screen != claudeScreen { withAnimation(.easeOut(duration: 0.15)) { claudeScreen = screen } }
             let shells = ClaudeFooter.shells(lines)
             if shells != backgroundShells { backgroundShells = shells }
             let spinner = AgentTerminal.showsSpinner(lines)
             if spinner { sawSpinner = true }
-            let busy: Bool? = terminal.isRunning && sawSpinner ? spinner : nil
+            // Idle only after the spinner has been gone for a moment (it can blink between steps).
+            quietPolls = spinner ? 0 : quietPolls + 1
+            let busy: Bool? = terminal.isRunning && sawSpinner ? (spinner || quietPolls < 3) : nil
             if busy != screenBusy {
                 screenBusy = busy
                 if let busy, busy != agentBusy { Task { await app.agentMonitor?.refresh() } }
             }
 
-            let recent = transcript.entries.suffix(12).compactMap { entry -> String? in
-                if case .reply(let text) = entry.kind { text } else { nil }
+            // What the session file already has, so the live text never repeats it (replies, the recap, notices).
+            let recent = transcript.entries.suffix(16).compactMap { entry -> String? in
+                switch entry.kind {
+                case .reply(let text), .recap(let text), .notice(let text): text
+                case .command(_, let output): output
+                default: nil
+                }
+            }
+            // After Esc: Claude puts an unanswered prompt back in its input box. Take it into the message box (and
+            // out of Claude's, so it isn't sent twice).
+            if let pressed = interruptedAt {
+                if Date().timeIntervalSince(pressed) > 5 {
+                    interruptedAt = nil
+                } else if !spinner, let text = AgentTerminal.promptText(lines), !AgentTerminal.isPlaceholder(text) {
+                    restore(text)
+                    interruptedAt = nil
+                }
             }
             var next: String?
             if isWorking, terminal.isRunning, let live = AgentTerminal.liveReply(terminal.claude.recentLines()) {
@@ -304,6 +345,20 @@ struct AgentSessionView: View {
             if next != liveReply { liveReply = next }
             try? await Task.sleep(for: .milliseconds(400))
         }
+    }
+
+    /// Esc while Claude works, from the message box or the Stop button.
+    private func interrupt() {
+        terminal.claude.view.send(data: [0x1B][...])
+        interruptedAt = Date()
+    }
+
+    /// Your interrupted prompt, back in the message box (and out of Claude's input, so it isn't typed twice).
+    private func restore(_ text: String) {
+        withdrawn = text
+        if draft.isEmpty { draft = text }
+        terminal.claude.view.send(data: [0x15][...])  // ⌃U: clear Claude's input line
+        composerFocused = true
     }
 
     private func previewFile(_ path: String) {
@@ -322,12 +377,6 @@ struct AgentSessionView: View {
     /// controls never sit beside the text, so a long message isn't hidden behind them.
     private var composer: some View {
         VStack(spacing: 4) {
-            if !suggestions.isEmpty {
-                // In the layout, not floating: it takes space from the conversation and can't spill off the notch.
-                SuggestionList(suggestions: suggestions, selected: suggestionIndex, pick: take)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
             VStack(spacing: 0) {
                 if !images.isEmpty {
                     AttachmentStrip(images: images) { url in images.removeAll { $0 == url } }
@@ -393,7 +442,7 @@ struct AgentSessionView: View {
                     }
                     // Esc while Claude works stops it, as in its terminal.
                     guard isWorking, terminal.isRunning else { return .ignored }
-                    terminal.claude.view.send(data: [0x1B][...])
+                    interrupt()
                     return .handled
                 }
         }
@@ -414,7 +463,7 @@ struct AgentSessionView: View {
             }
             if terminal.isRunning {
                 if isWorking {
-                    Button { terminal.claude.view.send(data: [0x1B][...]) } label: {
+                    Button { interrupt() } label: {
                         Label("Stop", systemImage: "stop.fill").font(.system(size: 10, weight: .medium))
                     }
                     .buttonStyle(.plain)
@@ -483,9 +532,10 @@ struct AgentSessionView: View {
     private func refreshSuggestions() {
         guard draft != dismissedFor else { suggestions = []; return }
         dismissedFor = nil
-        let token = ComposerSuggestions.token(in: draft)
+        let caret = ComposerSuggestions.caret(in: draft)
+        let token = ComposerSuggestions.token(in: draft, caret: caret)
         let files = token?.kind == .file ? ProjectFiles.shared.files(in: terminal.agent.cwd) : []
-        let next = ComposerSuggestions.suggestions(for: draft, folder: terminal.agent.cwd, files: files)
+        let next = ComposerSuggestions.suggestions(for: draft, caret: caret, folder: terminal.agent.cwd, files: files)
         if next != suggestions {
             suggestions = next
             suggestionIndex = 0
@@ -503,7 +553,7 @@ struct AgentSessionView: View {
     }
 
     private func take(_ suggestion: ComposerSuggestion) {
-        draft = ComposerSuggestions.apply(suggestion, to: draft)
+        draft = ComposerSuggestions.apply(suggestion, to: draft, caret: ComposerSuggestions.caret(in: draft))
         dismissedFor = draft
         suggestions = []
         composerFocused = true
@@ -739,7 +789,85 @@ private struct SessionRow: View, Equatable {
             Gutter(mark: "⎿", color: .white.opacity(0.3)) {
                 ToolStepsRow(calls: calls, preview: preview)
             }
+        case .recap(_, let text):
+            Gutter(mark: "※", color: .white.opacity(0.35)) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recap").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                        .textCase(.uppercase)
+                    Text(text).font(.system(size: 11.5)).italic().foregroundStyle(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+            }
+            .padding(.top, 6)
+        case .notices(_, let texts):
+            NoticesRow(texts: texts)
+        case .command(_, let name, let output):
+            CommandRow(name: name, output: output)
         }
+    }
+}
+
+/// Claude Code's own notices (a hook or mod reloading) as one small line; click to list them.
+private struct NoticesRow: View {
+    let texts: [String]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "info.circle").font(.system(size: 9))
+                    Text(texts.count == 1 ? "1 notice from Claude Code" : "\(texts.count) notices from Claude Code")
+                        .font(.system(size: 10))
+                    Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .foregroundStyle(.white.opacity(0.35))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
+                    Text(text).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.white.opacity(0.5))
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+                .padding(.leading, 14)
+            }
+        }
+        .padding(.leading, 20)
+    }
+}
+
+/// A slash command you ran, like a prompt, with what it printed underneath (long output folds).
+private struct CommandRow: View {
+    let name: String
+    let output: String?
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Gutter(mark: "❯", color: .white.opacity(0.55)) {
+                Text(name).font(AgentSessionView.mono).foregroundStyle(Color(red: 1, green: 0.78, blue: 0.55))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let output {
+                let lines = output.components(separatedBy: "\n")
+                Gutter(mark: "⎿", color: .white.opacity(0.3)) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(expanded || lines.count <= 8 ? output : lines.prefix(8).joined(separator: "\n"))
+                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.white.opacity(0.65))
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        if lines.count > 8 {
+                            Button(expanded ? "Show less" : "Show all \(lines.count) lines") {
+                                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                            }
+                            .buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.top, 6)
     }
 }
 
@@ -765,10 +893,17 @@ enum SessionItem: Identifiable, Equatable {
     case prompt(id: String, String)
     case reply(id: String, String)
     case steps(id: String, [ToolCall])
+    /// Claude Code's recap, above the prompt you came back with.
+    case recap(id: String, String)
+    /// Claude Code's own notices (hooks, mods reloading) in a row, as one quiet line.
+    case notices(id: String, [String])
+    /// A slash command and what it printed.
+    case command(id: String, String, output: String?)
 
     var id: String {
         switch self {
-        case .prompt(let id, _), .reply(let id, _), .steps(let id, _): id
+        case .prompt(let id, _), .reply(let id, _), .steps(let id, _), .recap(let id, _), .notices(let id, _),
+             .command(let id, _, _): id
         }
     }
 
@@ -785,6 +920,14 @@ enum SessionItem: Identifiable, Equatable {
                 } else {
                     items.append(.steps(id: entry.id, [call]))
                 }
+            case .recap(let text): items.append(.recap(id: entry.id, text))
+            case .notice(let text):
+                if case .notices(let id, let texts)? = items.last {
+                    items[items.count - 1] = .notices(id: id, texts + [text])
+                } else {
+                    items.append(.notices(id: entry.id, [text]))
+                }
+            case .command(let name, let output): items.append(.command(id: entry.id, name, output: output))
             }
         }
         return items

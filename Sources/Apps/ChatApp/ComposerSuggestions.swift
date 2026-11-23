@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -16,19 +17,24 @@ struct ComposerSuggestion: Identifiable, Equatable {
 enum ComposerSuggestions {
     /// The word being completed: the whole box when it starts with "/" and has no space yet, else the last word if it
     /// starts with "@".
-    static func token(in draft: String) -> (kind: ComposerSuggestion.Kind, query: String, range: Range<String.Index>)? {
-        if draft.hasPrefix("/"), !draft.contains(where: \.isWhitespace) {
-            return (.command, String(draft.dropFirst()), draft.startIndex..<draft.endIndex)
+    /// `caret` is where the cursor is (the end when nil): "@" can be typed anywhere in the message, not just last.
+    static func token(in draft: String, caret: String.Index? = nil) -> (kind: ComposerSuggestion.Kind, query: String, range: Range<String.Index>)? {
+        let caret = caret.map { min($0, draft.endIndex) } ?? draft.endIndex
+        let before = draft[..<caret]
+        if before.hasPrefix("/"), !before.contains(where: \.isWhitespace) {
+            let end = draft[caret...].firstIndex(where: \.isWhitespace) ?? draft.endIndex
+            return (.command, String(draft[draft.index(after: draft.startIndex)..<end]), draft.startIndex..<end)
         }
-        let start = draft.lastIndex(where: \.isWhitespace).map(draft.index(after:)) ?? draft.startIndex
-        let word = draft[start...]
-        guard word.hasPrefix("@") else { return nil }
-        return (.file, String(word.dropFirst()), start..<draft.endIndex)
+        let start = before.lastIndex(where: \.isWhitespace).map(draft.index(after:)) ?? draft.startIndex
+        guard draft[start...].hasPrefix("@") else { return nil }
+        // The word runs to the next space after the cursor.
+        let end = draft[caret...].firstIndex(where: \.isWhitespace) ?? draft.endIndex
+        return (.file, String(draft[draft.index(after: start)..<caret]), start..<end)
     }
 
     @MainActor
-    static func suggestions(for draft: String, folder: String, files: [String]) -> [ComposerSuggestion] {
-        guard let token = token(in: draft) else { return [] }
+    static func suggestions(for draft: String, caret: String.Index? = nil, folder: String, files: [String]) -> [ComposerSuggestion] {
+        guard let token = token(in: draft, caret: caret) else { return [] }
         switch token.kind {
         case .command:
             var scored: [(SlashCommands.Command, Double)] = []
@@ -54,9 +60,22 @@ enum ComposerSuggestions {
     }
 
     /// The draft with the word being typed replaced by `suggestion`.
-    static func apply(_ suggestion: ComposerSuggestion, to draft: String) -> String {
-        guard let token = token(in: draft) else { return draft }
-        return draft.replacingCharacters(in: token.range, with: suggestion.insert)
+    static func apply(_ suggestion: ComposerSuggestion, to draft: String, caret: String.Index? = nil) -> String {
+        guard let token = token(in: draft, caret: caret) else { return draft }
+        var insert = suggestion.insert
+        // Mid-message, don't double the space that follows.
+        if token.range.upperBound < draft.endIndex, draft[token.range.upperBound].isWhitespace, insert.hasSuffix(" ") {
+            insert.removeLast()
+        }
+        return draft.replacingCharacters(in: token.range, with: insert)
+    }
+
+    /// Where the cursor is in the message box being edited, as an index into `draft`.
+    @MainActor static func caret(in draft: String) -> String.Index? {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.string == draft else { return nil }
+        let location = editor.selectedRange().location
+        guard location != NSNotFound, location <= (draft as NSString).length else { return nil }
+        return String.Index(utf16Offset: location, in: draft)
     }
 
     /// Higher is better; nil when it doesn't match. A name starting with the query beats one containing it, which
@@ -218,15 +237,15 @@ struct SuggestionList: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(index == selected ? 0.1 : 0)))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(index == selected ? Color.accentColor.opacity(0.35) : .clear))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(4)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.1)))
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.13)))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(.white.opacity(0.1)))
     }
 }

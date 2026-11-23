@@ -32,10 +32,10 @@ import Testing
             "",
             "  ← to go back · x to stop · Enter/Space to close · Esc to close",
         ]
-        let panel = try #require(ClaudePanel.parse(screen))
-        #expect(panel.lines.first == "Sleep for 40 seconds in background")
-        #expect(panel.actions.map(\.label) == ["Go back", "Stop", "Close"])
-        #expect(panel.actions.first { $0.label == "Stop" }?.keys == Array("x".utf8))
+        let panel = try #require(ClaudeScreen.parse(screen))
+        #expect(panel.title == "Sleep for 40 seconds in background")
+        #expect(panel.keys.map(\.label) == ["Go back", "Stop", "Close"])
+        #expect(panel.keys.first { $0.label == "Stop" }?.keys == Array("x".utf8))
         #expect(ClaudePrompt.parse(screen) == nil, "a panel isn't a prompt")
     }
 

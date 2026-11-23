@@ -10,6 +10,12 @@ struct TranscriptEntry: Identifiable, Equatable {
         case reply(String)
         /// A tool Claude used, with its result once it's back.
         case tool(ToolCall)
+        /// Claude Code's recap of the session, written when you come back to it (above your next prompt).
+        case recap(String)
+        /// A notice from Claude Code itself, like a hook or mod reloading.
+        case notice(String)
+        /// A slash command you ran ("/compact"), and what it printed.
+        case command(String, output: String?)
     }
 
     let id: String
@@ -66,6 +72,8 @@ struct TranscriptParser: Sendable {
     private(set) var turnOpen: Bool?
     /// Claude's plan as it stands, from its to-do / task tools.
     private(set) var todos: [TodoItem] = []
+    /// The last prompt you took back with Esc before Claude answered.
+    private(set) var withdrawnPrompt: String?
     /// TaskCreate calls waiting for their result, which carries the task's number.
     private var pendingTasks: [String: String] = [:]
     private var partial = Data()
@@ -89,8 +97,16 @@ struct TranscriptParser: Sendable {
             title = aiTitle
             return
         }
-        if type == "system", line["subtype"] as? String == "turn_duration" {
-            turnOpen = false
+        if type == "system" {
+            let content = (line["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let id = line["uuid"] as? String ?? UUID().uuidString
+            let time = (line["timestamp"] as? String).flatMap(UsageScanner.parseDate)
+            switch line["subtype"] as? String {
+            case "turn_duration": turnOpen = false
+            case "away_summary" where !content.isEmpty: append(id: id, time: time, .recap(content))
+            case "informational" where !content.isEmpty: append(id: id, time: time, .notice(Self.plain(content)))
+            default: break
+            }
             return
         }
         // Subagents' own conversations and Claude Code's bookkeeping messages aren't part of the session as you see it.
@@ -103,7 +119,19 @@ struct TranscriptParser: Sendable {
         }
         if let text = message["content"] as? String {
             if type == "user" {
-                if text.hasPrefix("[Request interrupted") { turnOpen = false }
+                if text.hasPrefix("[Request interrupted") { interrupted() }
+                if let name = text.firstMatch(of: /<command-name>([^<]*)<\/command-name>/)?.output.1 {
+                    let args = text.firstMatch(of: /<command-args>([^<]*)<\/command-args>/)?.output.1 ?? ""
+                    append(id: uuid, time: time, .command((name + " " + args).trimmingCharacters(in: .whitespaces), output: nil))
+                    return
+                }
+                if let output = text.firstMatch(of: /<local-command-stdout>([\s\S]*)<\/local-command-stdout>/)?.output.1,
+                   let index = entries.lastIndex(where: { if case .command = $0.kind { true } else { false } }),
+                   case .command(let name, nil) = entries[index].kind {
+                    let plain = Self.plain(String(output)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    entries[index].kind = .command(name, output: plain.isEmpty ? nil : plain)
+                    return
+                }
                 if let prompt = Self.prompt(text) {
                     append(id: uuid, time: time, .prompt(prompt))
                     turnOpen = true
@@ -121,7 +149,7 @@ struct TranscriptParser: Sendable {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { append(id: id, time: time, .reply(trimmed)) }
                 } else if text.hasPrefix("[Request interrupted") {
-                    turnOpen = false
+                    interrupted()
                 } else if let prompt = Self.prompt(text) {
                     append(id: id, time: time, .prompt(prompt))
                     turnOpen = true
@@ -173,6 +201,21 @@ struct TranscriptParser: Sendable {
         default:
             return
         }
+    }
+
+    /// You pressed Esc. If Claude hadn't done anything for your prompt yet, it goes back to the input box in Claude
+    /// Code — so it leaves the conversation here too.
+    private mutating func interrupted() {
+        turnOpen = false
+        if case .prompt(let text)? = entries.last?.kind {
+            withdrawnPrompt = text
+            entries.removeLast()
+        }
+    }
+
+    /// Text without terminal colour codes.
+    static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
     }
 
     /// Streamed replies are logged more than once with the same ids.
@@ -248,6 +291,8 @@ final class SessionTranscript {
     private(set) var turnOpen: Bool?
     /// Claude's plan, from its to-do / task tools.
     private(set) var todos: [TodoItem] = []
+    /// The last prompt you took back with Esc before Claude answered (the session view returns it to the box).
+    private(set) var withdrawnPrompt: String?
     /// False until the transcript file is found.
     private(set) var isLoaded = false
 
@@ -289,6 +334,7 @@ final class SessionTranscript {
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
         if parser.todos != todos { todos = parser.todos }
+        if parser.withdrawnPrompt != withdrawnPrompt { withdrawnPrompt = parser.withdrawnPrompt }
         isLoaded = true
     }
 
@@ -310,6 +356,7 @@ final class SessionTranscript {
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
         if parser.todos != todos { todos = parser.todos }
+        if parser.withdrawnPrompt != withdrawnPrompt { withdrawnPrompt = parser.withdrawnPrompt }
         isLoaded = true
     }
 

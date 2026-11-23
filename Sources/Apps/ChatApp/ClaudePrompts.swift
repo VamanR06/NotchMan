@@ -22,6 +22,8 @@ struct ClaudePrompt: Equatable {
     /// What it's asking: a heading and the question or explanation.
     let title: [String]
     let options: [Option]
+    /// Other keys its footer offers ("s to use this session only"), beyond picking and cancelling.
+    var extraKeys: [ClaudeKey] = []
 
     /// The keys that pick `option`: its number where Claude shows one; else arrows from the highlighted option, then
     /// Return.
@@ -62,13 +64,17 @@ struct ClaudePrompt: Equatable {
             if !text.isEmpty { title.insert(cleanTitle(text), at: 0) }
             index -= 1
         }
-        return ClaudePrompt(title: title.filter { !$0.isEmpty }, options: options)
+        let extra = ClaudeKey.hints(in: lines[footer]).filter { key in
+            !key.keys.elementsEqual([0x1B]) && !key.keys.elementsEqual([0x0D]) && !["↑", "↓"].contains(key.label)
+        }
+        return ClaudePrompt(title: title.filter { !$0.isEmpty }, options: options, extraKeys: extra)
     }
 
     /// "❯ 1. Red" / "  2. Green", each maybe followed by more-indented description lines; a rule may split the list.
     private static func numberedOptions(_ block: [String]) -> ([Option], Int)? {
         var found: [(line: Int, number: Int, label: String, selected: Bool, column: Int)] = []
         var index = block.count - 1
+        var trailing = 0  // non-blank lines under the list before its last option
         while index >= 0 {
             let line = block[index]
             let text = line.trimmingCharacters(in: .whitespaces)
@@ -78,8 +84,10 @@ struct ClaudePrompt: Equatable {
                 // A gap or rule inside the list.
             } else if let lowest = found.first, indent(line) > lowest.column - 1, index > lowest.line - 4 {
                 // A description under an option (more indented than its number).
-            } else if found.isEmpty, indent(line) >= 3, index >= block.count - 3 {
-                // A description under the last option.
+            } else if found.isEmpty, trailing < 4 {
+                // A description under the last option, or extra lines under the list (/model's "▸ More models",
+                // its effort and fast-mode lines).
+                trailing += 1
             } else {
                 break
             }
@@ -104,8 +112,10 @@ struct ClaudePrompt: Equatable {
         guard let marked = block.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯ ") }),
               let marker = block[marked].firstIndex(of: "❯") else { return nil }
         let column = block[marked].distance(from: block[marked].startIndex, to: marker) + 2
+        // "❯ ✔ Auto" puts the current choice's mark where the others' text starts.
+        let marked2 = block[marked].dropFirst(column).hasPrefix("✔ ")
         func isSibling(_ line: String) -> Bool {
-            indent(line) == column && !line.trimmingCharacters(in: .whitespaces).isEmpty
+            !line.trimmingCharacters(in: .whitespaces).isEmpty && (indent(line) == column || (marked2 && indent(line) == column + 2))
         }
         func isBlank(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespaces).isEmpty }
         // Siblings above and below, across blank lines (the rewind list spaces its entries out).
@@ -195,67 +205,199 @@ enum ClaudeFooter {
     static let manageKeys: [[UInt8]] = [[0x1B, 0x5B, 0x42], [0x0D]]
 }
 
-/// A view Claude opens over its input (a background task's details, the task list): a top border of "▔", its text, and
-/// a footer of key hints ("← to go back · x to stop · Enter/Space to close · Esc to close"), turned into buttons.
-struct ClaudePanel: Equatable {
-    struct Action: Equatable, Identifiable {
-        let label: String
-        let keys: [UInt8]
-        var id: String { label }
-    }
+/// The keys a footer hint names ("Esc to close", "←/→ to switch", "s to use this session only"), as buttons.
+struct ClaudeKey: Equatable, Identifiable {
+    let label: String
+    /// What it does, for the tooltip.
+    let help: String
+    let keys: [UInt8]
+    var id: String { label + help }
 
-    let lines: [String]
-    let actions: [Action]
+    static let up: [UInt8] = [0x1B, 0x5B, 0x41], down: [UInt8] = [0x1B, 0x5B, 0x42]
+    static let left: [UInt8] = [0x1B, 0x5B, 0x44], right: [UInt8] = [0x1B, 0x5B, 0x43]
 
-    static func parse(_ lines: [String]) -> ClaudePanel? {
-        guard let footer = lines.lastIndex(where: { $0.contains("Esc to close") }),
-              // Its top edge: a row of "▔", or the rule over Claude's input it replaced.
-              let top = lines[..<footer].lastIndex(where: { ClaudePrompt.isRule($0.trimmingCharacters(in: .whitespaces)) })
-        else { return nil }
-        let body = lines[(top + 1)..<footer].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        var actions: [Action] = []
-        for hint in lines[footer].components(separatedBy: "·") {
-            let parts = hint.trimmingCharacters(in: .whitespaces).components(separatedBy: " to ")
-            guard parts.count == 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespaces), action = parts[1].trimmingCharacters(in: .whitespaces)
-            let bytes: [UInt8]? = switch key.lowercased() {
-            case "esc": [0x1B]
-            case "←": [0x1B, 0x5B, 0x44]
-            case "enter", "enter/space": [0x0D]
-            case "↑/↓": nil
-            default: key.count == 1 ? Array(key.utf8) : nil
-            }
-            guard let bytes, !actions.contains(where: { $0.label.lowercased() == action.lowercased() }) else { continue }
-            actions.append(Action(label: action.prefix(1).uppercased() + action.dropFirst(), keys: bytes))
-        }
-        if lines[footer].contains("↑/↓") {
-            actions.insert(contentsOf: [Action(label: "↑", keys: [0x1B, 0x5B, 0x41]), Action(label: "↓", keys: [0x1B, 0x5B, 0x42])], at: 0)
-        }
-        return body.isEmpty ? nil : ClaudePanel(lines: body, actions: actions)
-    }
-}
-
-/// A panel Claude opened, as a card: its text and a button per key hint.
-struct ClaudePanelCard: View {
-    let panel: ClaudePanel
-    let press: ([UInt8]) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(panel.lines.prefix(14).joined(separator: "\n"))
-                .font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.85))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-            HStack(spacing: 6) {
-                ForEach(panel.actions) { action in
-                    Button(action.label) { press(action.keys) }
-                        .controlSize(.small)
+    /// Every "KEY to ACTION" in a footer, in order. Arrows become one button each way.
+    static func hints(in footer: String) -> [ClaudeKey] {
+        var keys: [ClaudeKey] = []
+        for hint in footer.components(separatedBy: "·") {
+            let text = hint.trimmingCharacters(in: .whitespaces)
+            guard let range = text.range(of: " to ") else { continue }
+            let key = String(text[..<range.lowerBound]), action = String(text[range.upperBound...])
+            let title = action.prefix(1).uppercased() + action.dropFirst()
+            switch key.lowercased() {
+            case "↑/↓": keys += [ClaudeKey(label: "↑", help: title, keys: up), ClaudeKey(label: "↓", help: title, keys: down)]
+            case "←/→": keys += [ClaudeKey(label: "←", help: title, keys: left), ClaudeKey(label: "→", help: title, keys: right)]
+            case "↑": keys.append(ClaudeKey(label: "↑", help: title, keys: up))
+            case "↓": keys.append(ClaudeKey(label: "↓", help: title, keys: down))
+            case "←": keys.append(ClaudeKey(label: title, help: "←", keys: left))
+            case "→": keys.append(ClaudeKey(label: title, help: "→", keys: right))
+            case "esc": keys.append(ClaudeKey(label: title, help: "Esc", keys: [0x1B]))
+            case "enter", "enter/space": keys.append(ClaudeKey(label: title, help: "Return", keys: [0x0D]))
+            case "space": keys.append(ClaudeKey(label: title, help: "Space", keys: [0x20]))
+            case "tab": keys.append(ClaudeKey(label: title, help: "Tab", keys: [0x09]))
+            default:
+                if key.lowercased().hasPrefix("ctrl+"), let letter = key.lowercased().last, let ascii = letter.asciiValue, letter.isLetter {
+                    keys.append(ClaudeKey(label: title, help: key, keys: [ascii - 96]))
+                } else if key.count == 1 {
+                    keys.append(ClaudeKey(label: title, help: key, keys: Array(key.utf8)))
                 }
             }
         }
+        var seen = Set<String>()
+        return keys.filter { seen.insert($0.label).inserted }  // "Enter/Space to close" and "Esc to close": one Close
+    }
+}
+
+/// Any screen Claude Code opens over its input — /model, /config, /permissions, /mcp, /memory, /hooks, /status, /usage,
+/// /effort, /theme, /export, /resume, a background task — read off the terminal: a "▔" top edge (or the rule over the
+/// input it replaced), its lines, and a footer of key hints. Shown as a card that mirrors it: rows to click (the
+/// highlighted "❯" one and its siblings), and a button per hint.
+struct ClaudeScreen: Equatable {
+    struct Line: Equatable, Identifiable {
+        let id: Int
+        let text: String
+        /// A row of the highlighted list: clicking moves the highlight here, then presses Return.
+        var row: Int?
+        var isSelected = false
+    }
+
+    let lines: [Line]
+    let keys: [ClaudeKey]
+
+    var title: String? { lines.first?.text.trimmingCharacters(in: .whitespaces) }
+
+    /// The keys that pick row `row`: arrows from the highlighted row, then Return.
+    func keys(forRow row: Int) -> [UInt8] {
+        let current = lines.first(where: \.isSelected)?.row ?? 0
+        let delta = row - current
+        return Array(repeating: delta > 0 ? ClaudeKey.down : ClaudeKey.up, count: abs(delta)).flatMap { $0 } + [0x0D]
+    }
+
+    static func parse(_ screen: [String]) -> ClaudeScreen? {
+        let nonEmpty = screen.indices.filter { !screen[$0].trimmingCharacters(in: .whitespaces).isEmpty }
+        // The footer: one of the last lines, made of key hints ("↑/↓ to navigate · Enter to select · Esc to close").
+        guard let footer = nonEmpty.suffix(3).last(where: { isFooter(screen[$0]) }) else { return nil }
+        guard let top = screen[..<footer].lastIndex(where: { line in
+            line.filter { $0 == "▔" }.count >= 20 || ClaudePrompt.isRule(line.trimmingCharacters(in: .whitespaces))
+        }) else { return nil }
+        var body = screen[(top + 1)..<footer].map { line -> String in
+            var text = line
+            while text.last == " " { text.removeLast() }
+            return text
+        }
+        while body.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { body.removeFirst() }
+        while body.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { body.removeLast() }
+        guard !body.isEmpty else { return nil }
+        // Common indent off, blank runs folded to one.
+        let indent = body.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map { $0.prefix { $0 == " " }.count }.min() ?? 0
+        var trimmed: [String] = []
+        for line in body {
+            let text = String(line.dropFirst(min(indent, line.prefix { $0 == " " }.count)))
+            if text.isEmpty, trimmed.last?.isEmpty == true { continue }
+            trimmed.append(text)
+        }
+        var lines = trimmed.enumerated().map { Line(id: $0.offset, text: $0.element) }
+        // The highlighted list: the "❯" line with the most siblings (lines whose text starts in its column).
+        var best: [Int] = []
+        var bestSelected: Int?
+        for (index, line) in trimmed.enumerated() {
+            guard let marker = line.firstIndex(of: "❯"), line[..<marker].allSatisfy({ $0 == " " }) else { continue }
+            let markerColumn = line.distance(from: line.startIndex, to: marker)
+            let afterMarker = line[line.index(after: marker)...].drop { $0 == " " }
+            let column = line.distance(from: line.startIndex, to: afterMarker.startIndex)
+            func isSibling(_ other: String) -> Bool {
+                let lead = other.prefix { $0 == " " }.count
+                guard lead < other.count, !other.dropFirst(lead).hasPrefix("❯") else { return false }
+                return lead == column || lead == markerColumn + 2 || lead == column + 2
+            }
+            var rows = [index]
+            var up = index - 1
+            while up >= 0, isSibling(trimmed[up]) || trimmed[up].isEmpty { if !trimmed[up].isEmpty { rows.insert(up, at: 0) }; up -= 1 }
+            var down = index + 1
+            while down < trimmed.count, isSibling(trimmed[down]) || trimmed[down].isEmpty { if !trimmed[down].isEmpty { rows.append(down) }; down += 1 }
+            if rows.count > best.count { best = rows; bestSelected = index }
+        }
+        for (row, index) in best.enumerated() {
+            lines[index].row = row
+            lines[index].isSelected = index == bestSelected
+        }
+        return ClaudeScreen(lines: lines, keys: ClaudeKey.hints(in: screen[footer]))
+    }
+
+    /// A footer of key hints, not Claude's ordinary footer under its input ("esc to interrupt", "? for shortcuts").
+    static func isFooter(_ line: String) -> Bool {
+        let text = line.trimmingCharacters(in: .whitespaces)
+        guard text.contains(" to "), !text.contains("shift+tab"), !text.contains("? for shortcuts"),
+              !text.contains("esc to interrupt") else { return false }
+        return text.contains("Esc to") || text.contains("Enter to") || text.contains("to navigate")
+            || text.contains("to switch") || text.contains("to close")
+    }
+}
+
+/// A Claude Code screen as a card: its text with the list rows clickable, and a button per key hint. Tall screens
+/// scroll inside the card.
+struct ClaudeScreenCard: View {
+    let screen: ClaudeScreen
+    let press: ([UInt8]) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(screen.lines) { line in
+                            if let row = line.row {
+                                ScreenRow(text: line.text, isSelected: line.isSelected) { press(screen.keys(forRow: row)) }
+                                    .id(line.id)
+                            } else {
+                                Text(line.text.isEmpty ? " " : line.text)
+                                    .font(.system(size: 11, weight: line.id == 0 ? .semibold : .regular, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(line.id == 0 ? 0.95 : 0.7))
+                                    .lineLimit(1).truncationMode(.tail)
+                                    .padding(.horizontal, 6)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 240)
+                .fixedSize(horizontal: false, vertical: true)
+                .onAppear { if let selected = screen.lines.first(where: \.isSelected) { proxy.scrollTo(selected.id, anchor: .center) } }
+            }
+            HStack(spacing: 6) {
+                ForEach(screen.keys) { key in
+                    Button(key.label) { press(key.keys) }
+                        .controlSize(.small)
+                        .help(key.help)
+                }
+                Spacer(minLength: 0)
+            }
+        }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.09)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.12)))
+    }
+}
+
+private struct ScreenRow: View {
+    let text: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(text.replacingOccurrences(of: "❯", with: " "))
+                .font(.system(size: 11, weight: isSelected ? .semibold : .regular, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.95))
+                .lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 5).fill(isSelected ? Color.accentColor.opacity(0.35) : .white.opacity(hovering ? 0.08 : 0)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -265,6 +407,8 @@ struct ClaudePromptCard: View {
     let prompt: ClaudePrompt
     let answer: (ClaudePrompt.Option) -> Void
     let cancel: () -> Void
+    /// Any other key the prompt offers.
+    var press: ([UInt8]) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -282,9 +426,24 @@ struct ClaudePromptCard: View {
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
                     .lineLimit(4).fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(prompt.options) { option in
-                    PromptOptionRow(option: option) { answer(option) }
+            // A long list (the rewind list grows with every prompt) scrolls inside the card.
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(prompt.options) { option in
+                            PromptOptionRow(option: option) { answer(option) }.id(option.id)
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+                .fixedSize(horizontal: false, vertical: true)
+                .onAppear { if let selected = prompt.options.first(where: \.isSelected) { proxy.scrollTo(selected.id, anchor: .center) } }
+            }
+            if !prompt.extraKeys.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(prompt.extraKeys) { key in
+                        Button(key.label) { press(key.keys) }.controlSize(.small).help(key.help)
+                    }
                 }
             }
         }

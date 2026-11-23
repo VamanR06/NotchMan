@@ -387,6 +387,11 @@ final class AgentTerminal: Identifiable {
         return text.isEmpty ? nil : text
     }
 
+    /// Claude's hint in an empty input box ("Try "edit <filepath> to…"").
+    static func isPlaceholder(_ text: String) -> Bool {
+        text.hasPrefix("Try \"") || text.hasPrefix("Try '")
+    }
+
     /// A bit of the message to look for in the box afterwards (one line only; a paste shows as "[Pasted text…]").
     static func submitProbe(for text: String) -> String? {
         guard !text.contains("\n") else { return nil }
