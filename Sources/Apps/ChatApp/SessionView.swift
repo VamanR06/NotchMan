@@ -27,6 +27,15 @@ struct AgentSessionView: View {
     /// Going back through your earlier prompts with ↑ in the message box: how far back, and what you'd typed first.
     @State private var historyIndex: Int?
     @State private var draftBeforeHistory = ""
+    /// A view Claude opened over its input (a background task's details), shown as a card.
+    @State private var claudePanel: ClaudePanel?
+    /// Background shells Claude's footer says are still running.
+    @State private var backgroundShells = 0
+    /// "/" commands and "@" files offered for what's being typed, and the highlighted one.
+    @State private var suggestions: [ComposerSuggestion] = []
+    @State private var suggestionIndex = 0
+    /// The draft the suggestions were closed for (Esc), so they don't reopen until it changes.
+    @State private var dismissedFor: String?
 
     private var transcript: SessionTranscript { terminal.transcript }
     private var approvals: [ApprovalRequest] { app.approvals.filter { $0.sessionID == terminal.agent.id } }
@@ -37,12 +46,19 @@ struct AgentSessionView: View {
 
     var body: some View {
         VStack(spacing: 6) {
+            if !transcript.todos.isEmpty, isWorking || transcript.todos.contains(where: { $0.status != .completed }) {
+                PlanStrip(todos: transcript.todos).transition(.opacity)
+            }
             ZStack {
                 conversation
                 if let preview {
                     FilePreviewOverlay(preview: preview) { withAnimation(.easeOut(duration: 0.15)) { self.preview = nil } }
                         .id(preview.id)
                 }
+            }
+            if let claudePanel, claudePrompt == nil {
+                ClaudePanelCard(panel: claudePanel) { keys in terminal.claude.view.send(data: keys[...]) }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let claudePrompt {
                 ClaudePromptCard(prompt: claudePrompt) { option in
@@ -254,6 +270,10 @@ struct AgentSessionView: View {
             if prompt != claudePrompt { withAnimation(.easeOut(duration: 0.15)) { claudePrompt = prompt } }
             let mode = ClaudeMode.parse(lines)
             if mode != claudeMode { claudeMode = mode }
+            let panel = prompt == nil ? ClaudePanel.parse(lines) : nil
+            if panel != claudePanel { withAnimation(.easeOut(duration: 0.15)) { claudePanel = panel } }
+            let shells = ClaudeFooter.shells(lines)
+            if shells != backgroundShells { backgroundShells = shells }
             let spinner = AgentTerminal.showsSpinner(lines)
             if spinner { sawSpinner = true }
             let busy: Bool? = terminal.isRunning && sawSpinner ? spinner : nil
@@ -297,6 +317,17 @@ struct AgentSessionView: View {
             }
             composerLine
         }
+        .overlay(alignment: .topLeading) {
+            if !suggestions.isEmpty {
+                SuggestionList(suggestions: suggestions, selected: suggestionIndex, pick: take)
+                    .frame(maxWidth: 460)
+                    .padding(.leading, 26)
+                    .alignmentGuide(.top) { $0[.bottom] + 4 }
+            }
+        }
+        .zIndex(1)
+        .onChange(of: draft) { _, _ in refreshSuggestions() }
+        .onChange(of: ProjectFiles.shared.files[terminal.agent.cwd]?.count) { _, _ in refreshSuggestions() }
         // Claude Code's input box: a rule above and below.
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(composerFocused ? 0.3 : 0.15)).frame(height: 1) }
@@ -319,10 +350,37 @@ struct AgentSessionView: View {
                     app.backToOverview()
                     return .handled
                 }
-                // ↑ / ↓ go through your earlier prompts, like in Claude's own terminal.
-                .onKeyPress(.upArrow) { stepHistory(back: true) ? .handled : .ignored }
-                .onKeyPress(.downArrow) { stepHistory(back: false) ? .handled : .ignored }
+                // ↑ / ↓ move through the suggestions when they're showing, else through your earlier prompts.
+                .onKeyPress(.upArrow) {
+                    if !suggestions.isEmpty { suggestionIndex = max(0, suggestionIndex - 1); return .handled }
+                    return stepHistory(back: true) ? .handled : .ignored
+                }
+                .onKeyPress(.downArrow) {
+                    if !suggestions.isEmpty { suggestionIndex = min(suggestions.count - 1, suggestionIndex + 1); return .handled }
+                    return stepHistory(back: false) ? .handled : .ignored
+                }
+                // Tab takes a suggestion; Shift-Tab switches Claude's mode, as in its terminal.
+                .onKeyPress(keys: [.tab]) { press in
+                    if press.modifiers.contains(.shift) {
+                        guard terminal.isRunning else { return .ignored }
+                        terminal.claude.view.send(data: ClaudeMode.cycleKey[...])
+                        return .handled
+                    }
+                    guard suggestions.indices.contains(suggestionIndex) else { return .ignored }
+                    take(suggestions[suggestionIndex])
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    guard suggestions.indices.contains(suggestionIndex) else { return .ignored }
+                    take(suggestions[suggestionIndex])
+                    return .handled
+                }
                 .onKeyPress(.escape) {
+                    if !suggestions.isEmpty {
+                        dismissedFor = draft
+                        suggestions = []
+                        return .handled
+                    }
                     // Esc while Claude works stops it, as in its terminal.
                     guard isWorking, terminal.isRunning else { return .ignored }
                     terminal.claude.view.send(data: [0x1B][...])
@@ -345,6 +403,31 @@ struct AgentSessionView: View {
                     .foregroundStyle(.white.opacity(0.55))
                     .help("Interrupt Claude (Esc)")
                 }
+                if backgroundShells > 0 {
+                    Button { openBackgroundTasks() } label: {
+                        Label("\(backgroundShells) shell\(backgroundShells == 1 ? "" : "s")", systemImage: "terminal")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .help("Background shells Claude started — click to see or stop them")
+                }
+                Menu {
+                    Button("Rewind…") { terminal.claude.view.send(data: ClaudePrompt.rewindKeys[...]) }
+                        .disabled(isWorking)
+                    Button("Background tasks") { openBackgroundTasks() }
+                        .disabled(isWorking)
+                    Divider()
+                    Button("Compact conversation") { terminal.sendToClaude("/compact") }
+                    Button("Show context usage") { terminal.sendToClaude("/context") }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 11, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.white.opacity(0.5))
+                .help("Rewind to an earlier prompt, background tasks, compact")
                 if let claudeMode {
                     Button { terminal.claude.view.send(data: ClaudeMode.cycleKey[...]) } label: {
                         Text(claudeMode).font(.system(size: 10, weight: .medium))
@@ -355,8 +438,9 @@ struct AgentSessionView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .help("Claude Code's permission mode — click to switch (Shift-Tab)")
                 }
-                Text(draft.isEmpty && images.isEmpty ? "⌘V image" : "↩ send")
-                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
+                if !draft.isEmpty || !images.isEmpty {
+                    Text("↩ send").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
+                }
             } else {
                 Button("Reattach") { app.reattach(terminal) }.controlSize(.small)
             }
@@ -373,6 +457,37 @@ struct AgentSessionView: View {
         draft = ""
         images = []
         historyIndex = nil
+    }
+
+    /// Recomputes the "/" and "@" suggestions for the draft (on each edit, not each redraw: there can be thousands
+    /// of files to match).
+    private func refreshSuggestions() {
+        guard draft != dismissedFor else { suggestions = []; return }
+        dismissedFor = nil
+        let token = ComposerSuggestions.token(in: draft)
+        let files = token?.kind == .file ? ProjectFiles.shared.files(in: terminal.agent.cwd) : []
+        let next = ComposerSuggestions.suggestions(for: draft, folder: terminal.agent.cwd, files: files)
+        if next != suggestions {
+            suggestions = next
+            suggestionIndex = 0
+        }
+    }
+
+    /// Claude's background-task view: ↓ to its footer entry, then Return (one keystroke each, as typed).
+    private func openBackgroundTasks() {
+        let session = terminal.claude
+        session.view.send(data: ClaudeFooter.manageKeys[0][...])
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            session.view.send(data: ClaudeFooter.manageKeys[1][...])
+        }
+    }
+
+    private func take(_ suggestion: ComposerSuggestion) {
+        draft = ComposerSuggestions.apply(suggestion, to: draft)
+        dismissedFor = draft
+        suggestions = []
+        composerFocused = true
     }
 
     /// Your earlier prompts, oldest first.

@@ -17,6 +17,14 @@ struct TranscriptEntry: Identifiable, Equatable {
     var kind: Kind
 }
 
+/// One item of Claude's plan for the turn (TodoWrite, or TaskCreate / TaskUpdate).
+struct TodoItem: Equatable, Sendable, Identifiable {
+    enum Status: String, Sendable { case pending, inProgress = "in_progress", completed }
+    let id: String
+    var title: String
+    var status: Status
+}
+
 /// A tool call and (once it arrives) its result.
 struct ToolCall: Equatable {
     enum Detail: Equatable {
@@ -56,6 +64,10 @@ struct TranscriptParser: Sendable {
     /// Whether Claude is mid-turn, as the file says: a prompt opens a turn, and Claude's last message of it
     /// (`stop_reason: end_turn`, then a `turn_duration` line) closes it. Nil until the file shows either.
     private(set) var turnOpen: Bool?
+    /// Claude's plan as it stands, from its to-do / task tools.
+    private(set) var todos: [TodoItem] = []
+    /// TaskCreate calls waiting for their result, which carries the task's number.
+    private var pendingTasks: [String: String] = [:]
     private var partial = Data()
     private var toolIndex: [String: Int] = [:]
     private var seen = Set<String>()
@@ -117,10 +129,15 @@ struct TranscriptParser: Sendable {
             case "tool_use":
                 guard let toolID = block["id"] as? String, let name = block["name"] as? String else { continue }
                 let input = block["input"] as? [String: Any] ?? [:]
+                trackPlan(tool: name, id: toolID, input: input)
                 let call = ToolCall(id: toolID, name: name, summary: Self.summary(name: name, input: input),
                                     detail: Self.detail(name: name, input: input))
                 if append(id: id, time: time, .tool(call)) { toolIndex[toolID] = entries.count - 1 }
             case "tool_result":
+                if let toolID = block["tool_use_id"] as? String, let subject = pendingTasks.removeValue(forKey: toolID),
+                   let number = Self.resultText(block["content"]).firstMatch(of: /Task #(\w+)/)?.output.1 {
+                    todos.append(TodoItem(id: String(number), title: subject, status: .pending))
+                }
                 guard let toolID = block["tool_use_id"] as? String, let index = toolIndex[toolID],
                       case .tool(var call) = entries[index].kind else { continue }
                 call.result = Self.resultText(block["content"])
@@ -129,6 +146,32 @@ struct TranscriptParser: Sendable {
             default:
                 continue  // thinking, images, …
             }
+        }
+    }
+
+    /// TodoWrite replaces the whole list; TaskCreate adds one (numbered once its result is back); TaskUpdate changes
+    /// one's status or title.
+    private mutating func trackPlan(tool: String, id: String, input: [String: Any]) {
+        switch tool {
+        case "TodoWrite":
+            guard let items = input["todos"] as? [[String: Any]] else { return }
+            todos = items.enumerated().map { index, item in
+                TodoItem(id: item["id"] as? String ?? "\(index)",
+                         title: item["content"] as? String ?? item["activeForm"] as? String ?? "",
+                         status: (item["status"] as? String).flatMap(TodoItem.Status.init(rawValue:)) ?? .pending)
+            }
+        case "TaskCreate":
+            if let subject = input["subject"] as? String ?? input["description"] as? String { pendingTasks[id] = subject }
+        case "TaskUpdate":
+            guard let taskID = (input["taskId"] as? String) ?? (input["taskId"] as? Int).map(String.init),
+                  let index = todos.firstIndex(where: { $0.id == taskID }) else { return }
+            if let status = input["status"] as? String {
+                if status == "deleted" { todos.remove(at: index); return }
+                if let parsed = TodoItem.Status(rawValue: status) { todos[index].status = parsed }
+            }
+            if let subject = input["subject"] as? String { todos[index].title = subject }
+        default:
+            return
         }
     }
 
@@ -203,6 +246,8 @@ final class SessionTranscript {
     private(set) var title: String?
     /// Claude is mid-turn, per the file (nil until it says); see `TranscriptParser.turnOpen`.
     private(set) var turnOpen: Bool?
+    /// Claude's plan, from its to-do / task tools.
+    private(set) var todos: [TodoItem] = []
     /// False until the transcript file is found.
     private(set) var isLoaded = false
 
@@ -243,6 +288,7 @@ final class SessionTranscript {
         if parser.entries != entries { entries = parser.entries }
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
+        if parser.todos != todos { todos = parser.todos }
         isLoaded = true
     }
 
@@ -263,6 +309,7 @@ final class SessionTranscript {
         if parser.entries != entries { entries = parser.entries }
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
+        if parser.todos != todos { todos = parser.todos }
         isLoaded = true
     }
 

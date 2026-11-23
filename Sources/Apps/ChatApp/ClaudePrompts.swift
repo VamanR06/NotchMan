@@ -107,19 +107,34 @@ struct ClaudePrompt: Equatable {
         func isSibling(_ line: String) -> Bool {
             indent(line) == column && !line.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        func isBlank(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Siblings above and below, across blank lines (the rewind list spaces its entries out).
         var lines = [marked]
         var index = marked - 1
-        while index >= 0, isSibling(block[index]) { lines.insert(index, at: 0); index -= 1 }
+        while index >= 0, isSibling(block[index]) || isBlank(block[index]) {
+            if !isBlank(block[index]) { lines.insert(index, at: 0) }
+            index -= 1
+        }
         index = marked + 1
-        while index < block.count, isSibling(block[index]) { lines.append(index); index += 1 }
+        while index < block.count, isSibling(block[index]) || isBlank(block[index]) {
+            if !isBlank(block[index]) { lines.append(index) }
+            index += 1
+        }
         guard lines.count >= 2 else { return nil }
-        let options = lines.enumerated().map { position, line in
+        var options: [Option] = []
+        for line in lines {
             let text = block[line].trimmingCharacters(in: .whitespaces)
             let selected = line == marked
-            return Option(index: position, number: nil,
-                          label: selected ? String(text.dropFirst(2)).trimmingCharacters(in: .whitespaces) : text,
-                          detail: nil, isSelected: selected)
+            // In the rewind list each prompt has a line under it saying what code changed since: that's its detail.
+            if !selected, let last = options.last, last.detail == nil, isChangeSummary(text) {
+                options[options.count - 1].detail = text
+                continue
+            }
+            options.append(Option(index: options.count, number: nil,
+                                  label: selected ? String(text.dropFirst(2)).trimmingCharacters(in: .whitespaces) : text,
+                                  detail: nil, isSelected: selected))
         }
+        guard options.count >= 2 else { return nil }
         return (options, lines[0])
     }
 
@@ -132,8 +147,16 @@ struct ClaudePrompt: Equatable {
 
     private static func indent(_ line: String) -> Int { line.prefix { $0 == " " }.count }
 
+    /// "No code changes", "2 files changed +14 -3".
+    static func isChangeSummary(_ text: String) -> Bool {
+        text == "No code changes" || text.firstMatch(of: /^\d+ files? changed/) != nil
+    }
+
+    /// Esc twice from an idle input box: Claude's rewind list.
+    static let rewindKeys: [UInt8] = [0x1B, 0x1B]
+
     static func isRule(_ text: String) -> Bool {
-        text.count >= 8 && text.allSatisfy { "─━═╌┄-".contains($0) }
+        text.count >= 8 && text.allSatisfy { "─━═╌┄▔▁-".contains($0) }
     }
 
     /// "☐ Color" → "Color" (AskUserQuestion's tab), and the box-drawing frame some prompts sit in.
@@ -144,19 +167,95 @@ struct ClaudePrompt: Equatable {
     }
 }
 
-/// Claude Code's permission mode, from its footer ("⏵⏵ auto mode on (shift+tab to cycle)"); Shift-Tab changes it.
+/// Claude Code's permission mode, from its footer: "⏵⏵ auto mode on (shift+tab to cycle)", "⏸ manual mode on · ? for
+/// shortcuts", "⏵⏵ accept edits on · 1 shell". Shift-Tab goes Auto → Manual → Accept edits → Plan → Auto.
 enum ClaudeMode {
     static let cycleKey: [UInt8] = [0x1B, 0x5B, 0x5A]
 
     static func parse(_ lines: [String]) -> String? {
         for line in lines.suffix(6).reversed() {
-            guard let range = line.range(of: "(shift+tab to cycle)") else { continue }
-            let mode = line[..<range.lowerBound]
-                .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "⏵⏸·")))
-                .replacingOccurrences(of: " on", with: "")
-            return mode.isEmpty ? nil : mode.prefix(1).uppercased() + mode.dropFirst()
+            guard let match = line.firstMatch(of: /([A-Za-z][A-Za-z ]*?(?: mode| edits| permissions)) on\b/) else { continue }
+            let mode = String(match.output.1).trimmingCharacters(in: .whitespaces)
+            return mode.prefix(1).uppercased() + mode.dropFirst()
         }
         return nil
+    }
+}
+
+/// What Claude's footer says is running in the background ("1 shell · ← 1 agent · ↓ to manage").
+enum ClaudeFooter {
+    /// Background shells still running; ↓ from an empty input box highlights "enter to view tasks", then Return opens it.
+    static func shells(_ lines: [String]) -> Int {
+        for line in lines.suffix(6).reversed() {
+            if let match = line.firstMatch(of: /(\d+) shells?\b/) { return Int(match.output.1) ?? 0 }
+        }
+        return 0
+    }
+
+    static let manageKeys: [[UInt8]] = [[0x1B, 0x5B, 0x42], [0x0D]]
+}
+
+/// A view Claude opens over its input (a background task's details, the task list): a top border of "▔", its text, and
+/// a footer of key hints ("← to go back · x to stop · Enter/Space to close · Esc to close"), turned into buttons.
+struct ClaudePanel: Equatable {
+    struct Action: Equatable, Identifiable {
+        let label: String
+        let keys: [UInt8]
+        var id: String { label }
+    }
+
+    let lines: [String]
+    let actions: [Action]
+
+    static func parse(_ lines: [String]) -> ClaudePanel? {
+        guard let footer = lines.lastIndex(where: { $0.contains("Esc to close") }),
+              // Its top edge: a row of "▔", or the rule over Claude's input it replaced.
+              let top = lines[..<footer].lastIndex(where: { ClaudePrompt.isRule($0.trimmingCharacters(in: .whitespaces)) })
+        else { return nil }
+        let body = lines[(top + 1)..<footer].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var actions: [Action] = []
+        for hint in lines[footer].components(separatedBy: "·") {
+            let parts = hint.trimmingCharacters(in: .whitespaces).components(separatedBy: " to ")
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces), action = parts[1].trimmingCharacters(in: .whitespaces)
+            let bytes: [UInt8]? = switch key.lowercased() {
+            case "esc": [0x1B]
+            case "←": [0x1B, 0x5B, 0x44]
+            case "enter", "enter/space": [0x0D]
+            case "↑/↓": nil
+            default: key.count == 1 ? Array(key.utf8) : nil
+            }
+            guard let bytes, !actions.contains(where: { $0.label.lowercased() == action.lowercased() }) else { continue }
+            actions.append(Action(label: action.prefix(1).uppercased() + action.dropFirst(), keys: bytes))
+        }
+        if lines[footer].contains("↑/↓") {
+            actions.insert(contentsOf: [Action(label: "↑", keys: [0x1B, 0x5B, 0x41]), Action(label: "↓", keys: [0x1B, 0x5B, 0x42])], at: 0)
+        }
+        return body.isEmpty ? nil : ClaudePanel(lines: body, actions: actions)
+    }
+}
+
+/// A panel Claude opened, as a card: its text and a button per key hint.
+struct ClaudePanelCard: View {
+    let panel: ClaudePanel
+    let press: ([UInt8]) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(panel.lines.prefix(14).joined(separator: "\n"))
+                .font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            HStack(spacing: 6) {
+                ForEach(panel.actions) { action in
+                    Button(action.label) { press(action.keys) }
+                        .controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.12)))
     }
 }
 
