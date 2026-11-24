@@ -129,12 +129,18 @@ import Testing
     @Test func rendersDraftStates() throws {
         let info = PageInfo(job: .init(id: 1, company: "Acme Robotics", title: "Software Engineer Intern", url: nil),
                             resume: .init(id: 2, name: "Resume.pdf"), cover_letter: nil)
+        let resume = FileManager.default.temporaryDirectory.appending(path: "render-\(UUID().uuidString).pdf")
+        try Data("%PDF-1.4".utf8).write(to: resume)
         let match = PageMatch(tab: BrowserTabRef(url: URL(string: "https://boards.greenhouse.io/acme/jobs/1")!, bundleID: "", browser: "Chrome"),
-                              info: info)
-        var report = AutofillReport(filled: 14, needsYou: ["Why Acme? — Write this answer", "A project you're proud of — Write this answer"])
-        report.attached = ["Resume"]
-        let blank = [DraftItem(key: "why", label: "Why do you want to work at Acme Robotics?", required: true),
+                              info: info, resumeFile: resume)
+        var blank = [DraftItem(key: "why", label: "Why do you want to work at Acme Robotics?", required: true),
                      DraftItem(key: "project", label: "Tell us about a project you're proud of.", required: true)]
+        var report = AutofillReport(filled: 14, needsYou: blank.map { "\($0.label) — Write this answer" } + ["I certify this is accurate"],
+                                    check: ["School: pick it from the list"])
+        report.attached = ["Resume"]
+        report.draftable = blank
+        #expect(report.summary == "14 filled · 2 to write · 1 needs you · 1 to check")
+        blank[1].note = "use the rover path planner, under 100 words"
         var written = blank
         written[0].text = "Acme's work on warehouse robots that pick irregular items is the problem I most want to work on. At Initech I built the parser that turned sensor logs into test fixtures, which cut our debugging time in half, and I'd like to bring that habit of building tools for the team to Acme's controls group."
         written[1].text = "I wrote a path planner for my university's rover team in Rust, replacing a Python prototype that couldn't keep up at full speed."
@@ -163,6 +169,18 @@ import Testing
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../build/dev").standardizedFileURL
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try png.write(to: dir.appending(path: "answer-drafts.png"))
+    }
+
+    @Test func notesGoUnderTheirQuestionAndWin() {
+        var noted = questions
+        noted[0].note = "use the rover planner, 3 sentences"
+        let prompt = AnswerDrafter.userPrompt(questions: noted, context: context)
+        #expect(prompt.contains("q1: Why do you want to work at Acme?\n    My notes for this answer: use the rover planner, 3 sentences\nq2: Anything else? (optional)"))
+        #expect(prompt.contains("follow them, even over the general guidance"))
+        #expect(!AnswerDrafter.userPrompt(questions: questions, context: context).contains("My notes"),
+                "no notes, no note lines")
+        noted[0].note = "   "
+        #expect(!AnswerDrafter.userPrompt(questions: noted, context: context).contains("My notes"), "a blank note is no note")
     }
 
     @Test func dashesBecomeNormalPunctuation() {

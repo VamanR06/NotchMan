@@ -10,7 +10,7 @@ public final class JobsApp: NotchApp {
     public let iconSystemName = "briefcase"
     public var expandedHeight: CGFloat {
         guard pageMatch != nil else { return unlinkedPage != nil ? 230 : 190 }
-        return isDrafting || drafts.contains(where: { !$0.text.isEmpty }) ? 340 : 250
+        return drafts.isEmpty ? 250 : 340
     }
 
     private(set) var board = JobBoard.empty
@@ -59,6 +59,7 @@ public final class JobsApp: NotchApp {
         BrowserTab.startTracking()
         opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
         marksAppliedOnSubmit = context.defaults.object(forKey: "marksAppliedOnSubmit") as? Bool ?? true
+        draftNotes = context.defaults.dictionary(forKey: "draftNotes") as? [String: String] ?? [:]
         draftEngine = context.defaults.string(forKey: "draftEngine").flatMap(DraftEngine.init) ?? .claude
         draftClaudeModel = context.defaults.string(forKey: "draftClaudeModel") ?? "haiku"
         draftModel = context.defaults.string(forKey: "draftModel") ?? AnswerDrafter.defaultModel
@@ -178,7 +179,12 @@ public final class JobsApp: NotchApp {
         didSet {
             guard autofillReport != oldValue else { return }
             draftTask?.cancel()
-            drafts = autofillReport?.draftable ?? []
+            let jobID = pageMatch?.job.id
+            drafts = (autofillReport?.draftable ?? []).map { item in
+                var item = item
+                if let jobID { item.note = draftNotes[Self.noteKey(jobID: jobID, label: item.label)] ?? "" }
+                return item
+            }
             draftError = nil
         }
     }
@@ -488,11 +494,17 @@ public final class JobsApp: NotchApp {
         }
     }
 
-    // MARK: - Drafting open answers (Ollama on this Mac)
+    // MARK: - Drafting open answers (Claude or Ollama)
 
-    /// The last Autofill's open-ended questions, with their drafts.
+    /// The last Autofill's open-ended questions, with their drafts and your notes.
     private(set) var drafts: [DraftItem] = []
-    private(set) var isDrafting = false
+    /// Questions being drafted right now (all of them, or the one you redrafted).
+    private(set) var draftingKeys: Set<String> = []
+    var isDrafting: Bool { !draftingKeys.isEmpty }
+    /// Your notes per question, by job and question text, kept across Autofills and launches.
+    @ObservationIgnored private var draftNotes: [String: String] = [:]
+
+    static func noteKey(jobID: Int, label: String) -> String { "\(jobID)|\(label)" }
     private(set) var draftError: String?
     /// What writes drafts: Claude through your `claude` command (default), or Ollama.
     var draftEngine = DraftEngine.claude {
@@ -531,19 +543,41 @@ public final class JobsApp: NotchApp {
 
     /// Drafts every open question in one request, to Claude or Ollama. Runs only when asked.
     func draftAnswers() {
-        guard let match = pageMatch, !isDrafting, !drafts.isEmpty else { return }
-        isDrafting = true
+        draft(keys: drafts.map(\.key))
+    }
+
+    /// Redrafts one question (with its note), leaving the other drafts alone.
+    func redraft(_ key: String) {
+        draft(keys: [key])
+    }
+
+    /// Your pointers for one answer; used by the next draft of it.
+    func setNote(_ key: String, note: String) {
+        guard let i = drafts.firstIndex(where: { $0.key == key }) else { return }
+        drafts[i].note = note
+        guard let jobID = pageMatch?.job.id else { return }
+        let noteKey = Self.noteKey(jobID: jobID, label: drafts[i].label)
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        draftNotes[noteKey] = trimmed.isEmpty ? nil : note
+        context?.defaults.set(draftNotes, forKey: "draftNotes")
+    }
+
+    private func draft(keys: [String]) {
+        let wanted = Set(keys)
+        guard let match = pageMatch, !isDrafting, !wanted.isEmpty else { return }
+        let questions = drafts.filter { wanted.contains($0.key) }
+        guard !questions.isEmpty else { return }
+        draftingKeys = wanted
         draftError = nil
-        for i in drafts.indices {
+        for i in drafts.indices where wanted.contains(drafts[i].key) {
             drafts[i].text = ""
             drafts[i].inserted = false
         }
         context?.holdOpen(true)
-        let questions = drafts
         let settings = draftSettings
         draftTask = Task {
             defer {
-                isDrafting = false
+                draftingKeys = []
                 context?.holdOpen(false)
             }
             do {
@@ -553,7 +587,7 @@ public final class JobsApp: NotchApp {
                 case .ollama: drafter.draft(questions: questions, context: job, settings: settings)
                 }
                 for try await answers in stream {
-                    for i in drafts.indices {
+                    for i in drafts.indices where wanted.contains(drafts[i].key) {
                         if let text = answers[drafts[i].key] { drafts[i].text = text }
                     }
                 }
@@ -615,7 +649,7 @@ public final class JobsApp: NotchApp {
         pageMatch = match
         autofillReport = report
         self.drafts = drafts
-        isDrafting = drafting
+        draftingKeys = drafting ? Set(drafts.filter { $0.text.isEmpty || !$0.text.hasSuffix(".") }.map(\.key)) : []
         documentsLoadedAt = Date()  // no JobManager to ask
     }
 

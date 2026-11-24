@@ -179,12 +179,22 @@ struct AutofillReport: Equatable {
 
     var summary: String {
         if let problem { return problem }
-        var parts = ["Filled \(filled) field\(filled == 1 ? "" : "s")"]
-        if !attached.isEmpty { parts.append("attached \(attached.joined(separator: ", "))") }
-        if !needsYou.isEmpty { parts.append("\(needsYou.count) need\(needsYou.count == 1 ? "s" : "") you") }
+        var parts = ["\(filled) filled"]
+        if !draftable.isEmpty { parts.append("\(draftable.count) to write") }
+        let others = otherNeeds.count
+        if others > 0 { parts.append("\(others) need\(others == 1 ? "s" : "") you") }
         if !check.isEmpty { parts.append("\(check.count) to check") }
         return parts.joined(separator: " · ")
     }
+
+    /// What needs you besides the open questions (which have their own rows): attestations, unknown facts.
+    var otherNeeds: [String] {
+        let open = Set(draftable.map(\.label))
+        return needsYou.filter { line in !open.contains(where: { line == $0 || line.hasPrefix($0 + " — ") }) }
+    }
+
+    /// Whether Details has anything to show.
+    var hasDetails: Bool { !otherNeeds.isEmpty || !check.isEmpty || workExperience != nil || !attached.isEmpty }
 
     /// Builds the report from JobManager's plan and the filler's results.
     static func from(plans: [FieldPlan], results: [FillResult]) -> AutofillReport {

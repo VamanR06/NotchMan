@@ -6,6 +6,23 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-24
+
+### Added
+- **Notes on answer drafts:** give any open question your own pointers ("use the rover project, 3 sentences,
+  mention ROS"). Hover a question and click the note button, type, and Return redrafts just that question. The note
+  goes with the question to Claude, which follows it over the general guidance. Notes are kept per job and question,
+  across Autofills and launches.
+- **Redraft one question** (↻ on hover) without touching the others.
+
+### Changed
+- **A calmer This Page card (Jobs):** one header row (the job, the documents it has, one paperclip menu for picking
+  the resume and cover letter, Autofill), one status line ("14 filled · 2 to write · 1 needs you"), with Draft
+  answers and a Details toggle beside it, then the questions. The Safari icon, the "No cover letter" placeholder,
+  the separate open-questions row, and the work-experience line (now in Details) are gone. Questions are listed as
+  soon as Autofill finishes, so notes can go in before drafting. Insert stays visible; note, redraft and copy show
+  on hover.
+
 ## [1.4.0] — 2026-11-24
 
 ### Changed

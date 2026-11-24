@@ -53,7 +53,8 @@ import Testing
         #expect(report.attached == ["Resume/CV"])
         #expect(report.needsYou == ["Why us? — Write this answer"])
         #expect(report.check.count == 1)
-        #expect(report.summary == "Filled 2 fields · attached Resume/CV · 1 needs you · 1 to check")
+        #expect(report.summary == "2 filled · 1 to write · 1 to check")
+        #expect(report.otherNeeds.isEmpty, "the open question has its own row, not a Details line")
         #expect(AutofillReport(problem: "No form").summary == "No form")
     }
 

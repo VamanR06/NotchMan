@@ -15,6 +15,8 @@ struct DraftItem: Equatable, Identifiable, Sendable {
     var text = ""
     /// Typed into the page's field.
     var inserted = false
+    /// Your pointers for this answer ("use the rover project, under 100 words"), sent with the question.
+    var note = ""
 
     var id: String { key }
 }
@@ -333,8 +335,14 @@ struct AnswerDrafter: Sendable {
         var parts = ["Role: \(context.title) at \(context.company)" + (context.location.map { " (\($0))" } ?? "")]
         parts.append("Job description:\n" + (context.posting.isEmpty ? "(none saved; go by the role and company)" : context.posting))
         parts.append("My resume:\n" + (context.resume ?? "(no resume attached; keep to what the role suggests and use placeholders for my specifics)"))
-        let list = zip(ids(questions), questions).map { id, q in "\(id): \(q.label)" + (q.required ? "" : " (optional)") }
+        let list = zip(ids(questions), questions).map { id, q in
+            let note = q.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(id): \(q.label)" + (q.required ? "" : " (optional)") + (note.isEmpty ? "" : "\n    My notes for this answer: \(note)")
+        }
         parts.append("Questions:\n" + list.joined(separator: "\n"))
+        if questions.contains(where: { !$0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            parts.append("Where I left notes under a question, follow them, even over the general guidance (length, focus, what to mention).")
+        }
         let shape = ids(questions).map { "\"\($0)\": \"…\"" }.joined(separator: ", ")
         parts.append("Reply with only a JSON object, no code fence and nothing else: {\(shape)}")
         return parts.joined(separator: "\n\n")

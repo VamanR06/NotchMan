@@ -54,190 +54,280 @@ struct JobsView: View {
     }
 }
 
-/// The tracked job open in the browser: its resume and cover letter to drag onto the page, and Autofill.
+/// The tracked job open in the browser: one header row (the job, its documents, Autofill), one status line, then
+/// the form's open questions with their drafts.
 struct ThisPageCard: View {
     let app: JobsApp
     let match: PageMatch
     @State private var showDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Image(systemName: "safari")
-                    .foregroundStyle(.white.opacity(0.6))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(match.job.company).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    Text(sourceLine).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
-                }
-                Spacer(minLength: 6)
-                DocumentTile(app: app, kind: .resume, document: match.info.resume, file: match.resumeFile)
-                DocumentTile(app: app, kind: .cover_letter, document: match.info.cover_letter, file: match.coverLetterFile)
-                if app.isAutofilling {
-                    HStack(spacing: 5) {
-                        NotchSpinner(size: 10, lineWidth: 1.6)
-                        Text("Filling…").font(.system(size: 11, weight: .semibold))
-                        Button("Stop", action: app.stopAutofill)
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.orange)
-                    }
-                } else {
-                    Button(action: app.autofill) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "wand.and.stars")
-                            Text("Autofill")
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.accentColor))
-                        .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
-                }
-                if match.source == .tracked {
-                    Button(action: app.dismissPage) { Image(systemName: "xmark") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white.opacity(0.4))
-                        .help("Hide")
-                } else {
-                    Button(action: app.unlinkPage) { Image(systemName: "link.badge.plus").symbolVariant(.slash) }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white.opacity(0.5))
-                        .help("Not this job: forget the link for this page")
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            header
             if let report = app.autofillReport {
-                HStack(spacing: 6) {
-                    Image(systemName: report.problem == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(report.problem == nil ? .green : .orange)
-                    Text(report.summary).lineLimit(2)
-                    Spacer(minLength: 4)
-                    if let form = report.embeddedForm {
-                        Button("Open Form") { app.openEmbeddedForm(form) }.buttonStyle(.plain).foregroundStyle(.orange)
-                    }
-                    if !report.needsYou.isEmpty || !report.check.isEmpty {
-                        Button(showDetails ? "Hide" : "Details") { showDetails.toggle() }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
+                status(report)
+                if let error = app.draftError {
+                    Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
                 }
-                .font(.system(size: 10.5))
-                if let experience = report.workExperience {
-                    Label("Work experience: \(experience)", systemImage: "briefcase")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
-                        .help(experience)
-                }
-                if showDetails {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(report.needsYou, id: \.self) { Text("• \($0)") }
-                        ForEach(report.check, id: \.self) { Text("• Check \($0)").foregroundStyle(.orange.opacity(0.9)) }
-                    }
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
-                }
+                if showDetails { details(report) }
                 if !app.drafts.isEmpty {
-                    DraftsPanel(app: app)
+                    DraftList(app: app)
                 }
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.07)))
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.06)))
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(match.job.company).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(sourceLine).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            document(.resume, linked: match.info.resume != nil, file: match.resumeFile)
+            document(.cover_letter, linked: match.info.cover_letter != nil, file: match.coverLetterFile)
+            DocumentsMenu(app: app, resume: match.info.resume?.id, coverLetter: match.info.cover_letter?.id)
+            autofill
+            if match.source == .tracked {
+                Button(action: app.dismissPage) { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .help("Hide")
+            } else {
+                Button(action: app.unlinkPage) { Image(systemName: "link.badge.plus").symbolVariant(.slash) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.4))
+                    .help("Not this job: forget the link for this page")
+            }
+        }
+    }
+
+    /// Only documents the job has: draggable once downloaded.
+    @ViewBuilder
+    private func document(_ kind: DocumentKind, linked: Bool, file: URL?) -> some View {
+        if let file {
+            DocumentChip(kind: kind, file: file)
+        } else if linked {
+            NotchSpinner(size: 9, lineWidth: 1.4).help("Downloading the \(kind.label.lowercased())…")
+        }
+    }
+
+    @ViewBuilder
+    private var autofill: some View {
+        if app.isAutofilling {
+            HStack(spacing: 5) {
+                NotchSpinner(size: 9, lineWidth: 1.4)
+                Button("Stop", action: app.stopAutofill)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+            }
+            .font(.system(size: 11, weight: .semibold))
+        } else {
+            Button(action: app.autofill) {
+                Label("Autofill", systemImage: "wand.and.stars")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .help("Fills the form with your JobManager Profile and saved answers and attaches the resume. Never submits.")
+        }
+    }
+
+    // MARK: Status
+
+    private func status(_ report: AutofillReport) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: report.problem == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(report.problem == nil ? .green : .orange)
+            Text(report.summary).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+            Spacer(minLength: 4)
+            if let form = report.embeddedForm {
+                Button("Open Form") { app.openEmbeddedForm(form) }.buttonStyle(.plain).foregroundStyle(.orange)
+            }
+            if !app.drafts.isEmpty {
+                if app.isDrafting {
+                    NotchSpinner(size: 9, lineWidth: 1.4)
+                    Text("Writing…").foregroundStyle(.white.opacity(0.6))
+                    Button("Stop", action: app.stopDrafting).buttonStyle(.plain).foregroundStyle(.orange)
+                } else {
+                    let drafted = app.drafts.contains { !$0.text.isEmpty }
+                    Button(drafted ? "Redraft all" : "Draft answers", action: app.draftAnswers)
+                        .buttonStyle(.plain)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.accentColor)
+                        .help("Writes every open question with \(app.draftSettings.modelName), from the job description, the job's resume and your notes. Nothing goes into the page until you Insert.")
+                }
+            }
+            if report.hasDetails {
+                Button { showDetails.toggle() } label: {
+                    Image(systemName: "chevron.down").rotationEffect(.degrees(showDetails ? 180 : 0))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.45))
+                .help(showDetails ? "Hide details" : "What else needs you")
+            }
+        }
+        .font(.system(size: 10.5))
+    }
+
+    private func details(_ report: AutofillReport) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(report.otherNeeds, id: \.self) { Text($0) }
+            ForEach(report.check, id: \.self) { Text("Check \($0)").foregroundStyle(.orange.opacity(0.9)) }
+            if !report.attached.isEmpty { Text("Attached \(report.attached.joined(separator: ", "))") }
+            if let experience = report.workExperience { Text("Work experience: \(experience)") }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.white.opacity(0.6))
+        .lineLimit(1)
+        .padding(.leading, 17)
     }
 }
 
-/// The form's open questions ("Why us?"): drafted on request by a model in Ollama on this Mac, inserted one
-/// at a time. Nothing is typed into the page until you press Insert.
-private struct DraftsPanel: View {
+/// The form's open questions, each with its draft and your note. Most forms have one to three: shown in full.
+private struct DraftList: View {
     let app: JobsApp
-    @State private var editing: String?
-
-    private var hasDrafts: Bool { app.drafts.contains { !$0.text.isEmpty } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "text.bubble").foregroundStyle(.white.opacity(0.5))
-                Text("\(app.drafts.count) open question\(app.drafts.count == 1 ? "" : "s")")
-                    .foregroundStyle(.white.opacity(0.65))
-                Spacer(minLength: 4)
-                if app.isDrafting {
-                    NotchSpinner(size: 9, lineWidth: 1.4)
-                    Text("Drafting…").foregroundStyle(.white.opacity(0.65))
-                    Button("Stop", action: app.stopDrafting).buttonStyle(.plain).foregroundStyle(.orange)
-                } else {
-                    Button(hasDrafts ? "Redraft" : "Draft answers") {
-                        editing = nil
-                        app.draftAnswers()
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
-                    .help("Writes drafts with \(app.draftSettings.modelName) (\(app.draftEngine == .claude ? "Claude" : "Ollama on this Mac")), from the job description and the job's resume. Nothing goes into the page until you Insert.")
-                }
-            }
-            .font(.system(size: 10.5, weight: .medium))
-            if let error = app.draftError {
-                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
-            }
-            if hasDrafts || app.isDrafting {
-                // Most forms have one to three open questions: shown in full. More than that scroll.
-                if app.drafts.count > 3 {
-                    ScrollView { rows }.scrollIndicators(.never).frame(maxHeight: 140)
-                } else {
-                    rows
-                }
-            }
+        if app.drafts.count > 3 {
+            ScrollView { rows }.scrollIndicators(.never).frame(maxHeight: 170)
+        } else {
+            rows
         }
-        .padding(.top, 2)
     }
 
     private var rows: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(app.drafts) { draft in row(draft) }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(app.drafts) { draft in
+                Divider().overlay(.white.opacity(0.06))
+                DraftRow(app: app, draft: draft)
+            }
+        }
+    }
+}
+
+/// One open question: what it asks, your note, the draft. Insert is always there once there's a draft; note,
+/// redraft and copy show on hover.
+private struct DraftRow: View {
+    let app: JobsApp
+    let draft: DraftItem
+    @State private var hovering = false
+    @State private var editing = false
+    @State private var noteOpen = false
+    @FocusState private var noteFocused: Bool
+
+    private var writing: Bool { app.draftingKeys.contains(draft.key) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Text(draft.label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .help(draft.label)
+                if draft.inserted {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.green).help("Inserted")
+                }
+                Spacer(minLength: 4)
+                if hovering && !app.isDrafting {
+                    icon("text.bubble", help: draft.note.isEmpty ? "Add a note for this answer" : "Edit your note") {
+                        noteOpen = true
+                        noteFocused = true
+                    }
+                    icon("arrow.clockwise", help: "Redraft this one") { app.redraft(draft.key) }
+                    if !draft.text.isEmpty {
+                        icon("doc.on.doc", help: "Copy") { app.copyDraft(draft.key) }
+                    }
+                }
+                if !draft.text.isEmpty && !draft.inserted && !writing {
+                    Button("Insert") { app.insertDraft(draft.key) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .disabled(app.isDrafting)
+                }
+            }
+            if noteOpen || !draft.note.isEmpty {
+                note
+            }
+            answer
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+
+    /// Your note: a quiet line, a field while you're writing it.
+    @ViewBuilder
+    private var note: some View {
+        if noteOpen {
+            HStack(spacing: 5) {
+                Image(systemName: "text.bubble").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
+                TextField("Pointers for this answer, then Return to redraft", text: Binding(
+                    get: { draft.note }, set: { app.setNote(draft.key, note: $0) }))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .focused($noteFocused)
+                    .onSubmit {
+                        noteOpen = false
+                        app.redraft(draft.key)
+                    }
+                    .onExitCommand { noteOpen = false }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.06)))
+        } else {
+            Label(draft.note, systemImage: "text.bubble")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.accentColor.opacity(0.8))
+                .lineLimit(1)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    noteOpen = true
+                    noteFocused = true
+                }
+                .help("Your note for this answer. Click to edit")
         }
     }
 
-    private func row(_ draft: DraftItem) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Text(draft.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
-                Spacer(minLength: 4)
-                if draft.inserted {
-                    Image(systemName: "checkmark").foregroundStyle(.green).help("Inserted")
-                } else {
-                    Button("Insert") { app.insertDraft(draft.key) }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
-                        .disabled(app.isDrafting || draft.text.isEmpty)
-                }
-                Button { app.copyDraft(draft.key) } label: { Image(systemName: "doc.on.doc") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.5))
-                    .disabled(draft.text.isEmpty)
-                    .help("Copy")
-            }
-            .font(.system(size: 10, weight: .medium))
-            if editing == draft.key {
-                TextEditor(text: Binding(get: { draft.text }, set: { app.editDraft(draft.key, text: $0) }))
-                    .font(.system(size: 10.5))
-                    .scrollContentBackground(.hidden)
-                    .frame(height: 78)
-                    .padding(3)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.06)))
-            } else {
-                Text(draft.text.isEmpty ? (app.isDrafting ? "…" : "") : draft.text)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if !app.isDrafting && !draft.text.isEmpty { editing = draft.key } }
-                    .help("Click to edit")
-            }
+    @ViewBuilder
+    private var answer: some View {
+        if writing && draft.text.isEmpty {
+            Text("Writing…").font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.35))
+        } else if editing {
+            TextEditor(text: Binding(get: { draft.text }, set: { app.editDraft(draft.key, text: $0) }))
+                .font(.system(size: 10.5))
+                .scrollContentBackground(.hidden)
+                .frame(height: 78)
+                .padding(3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.05)))
+        } else if !draft.text.isEmpty {
+            Text(draft.text)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { if !writing { editing = true } }
+                .help("Click to edit")
         }
+    }
+
+    private func icon(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol) }
+            .buttonStyle(.plain)
+            .font(.system(size: 10))
+            .foregroundStyle(.white.opacity(0.5))
+            .help(help)
     }
 }
 
@@ -291,85 +381,66 @@ private struct UnlinkedPageRow: View {
     }
 }
 
-/// A document you can drag onto the page's upload box (or anywhere else), with a menu to choose which one.
-private struct DocumentTile: View {
-    let app: JobsApp
+/// A document the job has, to drag onto the page's upload box (or anywhere else).
+private struct DocumentChip: View {
     let kind: DocumentKind
-    let document: PageDocument?
-    let file: URL?
-
-    private var label: String { kind.label }
+    let file: URL
 
     var body: some View {
-        HStack(spacing: 2) {
-            tile
-            DocumentMenu(app: app, kind: kind, current: document?.id)
+        HStack(spacing: 3) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 15, height: 15)
+            Text(kind == .resume ? "Resume" : "Cover").font(.system(size: 10, weight: .medium))
         }
-    }
-
-    @ViewBuilder
-    private var tile: some View {
-        Group {
-            if let file {
-                HStack(spacing: 4) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 18, height: 18)
-                    Text(label).font(.system(size: 10, weight: .medium))
-                }
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.1)))
-                .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
-                .help("Drag \(file.lastPathComponent) onto the page's upload box")
-            } else if document != nil {
-                NotchSpinner(size: 10, lineWidth: 1.6).help("Downloading \(label.lowercased())…")
-            } else {
-                Text("No \(label.lowercased())")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .help("Link a \(label.lowercased()) to this job in JobManager")
-            }
-        }
+        .padding(.horizontal, 5).padding(.vertical, 2)
+        .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.09)))
+        .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
+        .help("Drag \(file.lastPathComponent) onto the page's upload box")
     }
 }
 
-/// Pick which resume (or cover letter) goes with this job: newest first, archived ones tucked away, or none.
-private struct DocumentMenu: View {
+/// Pick the job's resume and cover letter in one menu: newest first, archived ones tucked away, or none.
+private struct DocumentsMenu: View {
     let app: JobsApp
-    let kind: DocumentKind
-    let current: Int?
+    let resume: Int?
+    let coverLetter: Int?
 
     var body: some View {
-        let documents = app.documentChoices[kind] ?? []
         Menu {
-            let active = documents.filter { !$0.isArchived }
-            if active.isEmpty {
-                Text(documents.isEmpty ? "Loading…" : "No \(kind.label.lowercased())s yet")
-            }
-            ForEach(active) { document in
-                choice(document)
-            }
-            let archived = documents.filter(\.isArchived)
-            if !archived.isEmpty {
-                Menu("Archived") {
-                    ForEach(archived) { document in choice(document) }
-                }
-            }
-            if current != nil {
-                Divider()
-                Button("None") { app.choose(nil, as: kind) }
-            }
-            Divider()
-            Button("Open \(kind == .resume ? "Resumes" : "Cover Letters") in JobManager") { app.openDocuments(kind) }
+            section(.resume, current: resume)
+            section(.cover_letter, current: coverLetter)
         } label: {
-            Image(systemName: "chevron.down")
+            Image(systemName: "paperclip")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Choose the \(kind.label.lowercased()) for this job (it's linked to the job in JobManager, and Autofill attaches it)")
+        .help("Choose this job's resume and cover letter (linked in JobManager; Autofill attaches them)")
         .task { await app.loadDocumentChoices() }
     }
 
-    private func choice(_ document: JobDocument) -> some View {
+    @ViewBuilder
+    private func section(_ kind: DocumentKind, current: Int?) -> some View {
+        let documents = app.documentChoices[kind] ?? []
+        Section(kind.label) {
+            let active = documents.filter { !$0.isArchived }
+            if active.isEmpty {
+                Text(documents.isEmpty ? "Loading…" : "No \(kind.label.lowercased())s yet")
+            }
+            ForEach(active) { choice($0, as: kind, current: current) }
+            let archived = documents.filter(\.isArchived)
+            if !archived.isEmpty {
+                Menu("Archived") {
+                    ForEach(archived) { choice($0, as: kind, current: current) }
+                }
+            }
+            if current != nil {
+                Button("No \(kind.label.lowercased())") { app.choose(nil, as: kind) }
+            }
+            Button("Open \(kind == .resume ? "Resumes" : "Cover Letters") in JobManager") { app.openDocuments(kind) }
+        }
+    }
+
+    private func choice(_ document: JobDocument, as kind: DocumentKind, current: Int?) -> some View {
         Button {
             app.choose(document, as: kind)
         } label: {
