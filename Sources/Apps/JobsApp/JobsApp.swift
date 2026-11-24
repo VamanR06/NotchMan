@@ -59,6 +59,8 @@ public final class JobsApp: NotchApp {
         BrowserTab.startTracking()
         opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
         marksAppliedOnSubmit = context.defaults.object(forKey: "marksAppliedOnSubmit") as? Bool ?? true
+        draftEngine = context.defaults.string(forKey: "draftEngine").flatMap(DraftEngine.init) ?? .claude
+        draftClaudeModel = context.defaults.string(forKey: "draftClaudeModel") ?? "haiku"
         draftModel = context.defaults.string(forKey: "draftModel") ?? AnswerDrafter.defaultModel
         draftKeepAlive = context.defaults.string(forKey: "draftKeepAlive").flatMap(DraftKeepAlive.init) ?? .minute
         loadLinks()
@@ -492,6 +494,13 @@ public final class JobsApp: NotchApp {
     private(set) var drafts: [DraftItem] = []
     private(set) var isDrafting = false
     private(set) var draftError: String?
+    /// What writes drafts: Claude through your `claude` command (default), or Ollama.
+    var draftEngine = DraftEngine.claude {
+        didSet { context?.defaults.set(draftEngine.rawValue, forKey: "draftEngine") }
+    }
+    var draftClaudeModel = "haiku" {
+        didSet { context?.defaults.set(draftClaudeModel, forKey: "draftClaudeModel") }
+    }
     /// Ollama model that writes drafts.
     var draftModel = AnswerDrafter.defaultModel {
         didSet { context?.defaults.set(draftModel, forKey: "draftModel") }
@@ -500,6 +509,7 @@ public final class JobsApp: NotchApp {
         didSet { context?.defaults.set(draftKeepAlive.rawValue, forKey: "draftKeepAlive") }
     }
     @ObservationIgnored let drafter = AnswerDrafter()
+    @ObservationIgnored let claudeDrafter = ClaudeDrafter()
     @ObservationIgnored private var draftTask: Task<Void, Never>?
     /// The job's posting and resume text, read once per job (and resume).
     @ObservationIgnored private var draftContextCache: (key: String, context: DraftContext)?
@@ -515,10 +525,11 @@ public final class JobsApp: NotchApp {
 
     var draftSettings: DraftSettings {
         let model = draftModel.trimmingCharacters(in: .whitespaces)
-        return DraftSettings(model: model.isEmpty ? AnswerDrafter.defaultModel : model, keepAlive: draftKeepAlive)
+        return DraftSettings(engine: draftEngine, claudeModel: draftClaudeModel,
+                             model: model.isEmpty ? AnswerDrafter.defaultModel : model, keepAlive: draftKeepAlive)
     }
 
-    /// Drafts every open question in one request to Ollama. Runs only when asked: nothing is loaded before.
+    /// Drafts every open question in one request, to Claude or Ollama. Runs only when asked.
     func draftAnswers() {
         guard let match = pageMatch, !isDrafting, !drafts.isEmpty else { return }
         isDrafting = true
@@ -536,8 +547,12 @@ public final class JobsApp: NotchApp {
                 context?.holdOpen(false)
             }
             do {
-                let job = await draftContext(for: match)
-                for try await answers in drafter.draft(questions: questions, context: job, settings: settings) {
+                let job = await draftContext(for: match, engine: settings.engine)
+                let stream = switch settings.engine {
+                case .claude: claudeDrafter.draft(questions: questions, context: job, model: settings.claudeModel)
+                case .ollama: drafter.draft(questions: questions, context: job, settings: settings)
+                }
+                for try await answers in stream {
                     for i in drafts.indices {
                         if let text = answers[drafts[i].key] { drafts[i].text = text }
                     }
@@ -604,15 +619,15 @@ public final class JobsApp: NotchApp {
         documentsLoadedAt = Date()  // no JobManager to ask
     }
 
-    private func draftContext(for match: PageMatch) async -> DraftContext {
-        let key = "\(match.job.id)|\(match.resumeFile?.path ?? "")"
+    private func draftContext(for match: PageMatch, engine: DraftEngine) async -> DraftContext {
+        let key = "\(match.job.id)|\(match.resumeFile?.path ?? "")|\(engine.rawValue)"
         if let cached = draftContextCache, cached.key == key { return cached.context }
         let posting = try? await client.posting(jobID: match.job.id)
         let resume: String? = if let file = match.resumeFile {
             await Task.detached(priority: .userInitiated) { DraftContext.resumeText(from: file) }.value
         } else { nil }
         let context = DraftContext(company: match.job.company, title: match.job.title, location: posting?.location,
-                                   posting: posting?.description, resume: resume)
+                                   posting: posting?.description, resume: resume, limits: engine.limits)
         draftContextCache = (key, context)
         return context
     }

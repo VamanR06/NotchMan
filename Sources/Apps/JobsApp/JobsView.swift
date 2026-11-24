@@ -175,7 +175,7 @@ private struct DraftsPanel: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.accentColor)
-                    .help("Writes drafts with \(app.draftSettings.model) in Ollama on this Mac, from the job description and the job's resume. Nothing goes into the page until you Insert.")
+                    .help("Writes drafts with \(app.draftSettings.modelName) (\(app.draftEngine == .claude ? "Claude" : "Ollama on this Mac")), from the job description and the job's resume. Nothing goes into the page until you Insert.")
                 }
             }
             .font(.system(size: 10.5, weight: .medium))

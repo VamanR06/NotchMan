@@ -175,6 +175,58 @@ import Testing
         #expect(AnswerDrafter.defaultSystemPrompt.contains("Never use em dashes"))
     }
 
+    @Test func claudeRunsToolless_andStreams() {
+        let args = ClaudeDrafter.arguments(questions: questions, context: context, model: "haiku", system: "Be plain.")
+        func value(after flag: String) -> String? { args.firstIndex(of: flag).map { args[$0 + 1] } }
+        #expect(value(after: "--model") == "haiku")
+        #expect(value(after: "--system-prompt") == "Be plain.")
+        #expect(value(after: "--tools") == "", "no tools at all")
+        #expect(value(after: "--output-format") == "stream-json")
+        #expect(args.contains("--include-partial-messages") && args.contains("--no-session-persistence")
+                && args.contains("--strict-mcp-config") && args.contains("--disable-slash-commands"))
+        let prompt = value(after: "-p") ?? ""
+        #expect(prompt.hasSuffix(#"Reply with only a JSON object, no code fence and nothing else: {"q1": "…", "q2": "…"}"#))
+
+        var reader = ClaudeDrafter.StreamReader()
+        let lines = [
+            #"{"type":"system","subtype":"init"}"#,
+            #"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"{\"q1\": \"Robots"}}}"#,
+            #"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":" — fast\"}"}}}"#,
+            #"{"type":"result","is_error":false,"result":"{\"q1\": \"Robots — fast\"}"}"#,
+        ]
+        let changed = lines.map { reader.feed($0) }
+        #expect(changed == [false, true, true, false])
+        #expect(AnswerDrafter.answers(in: reader.text, questions: questions)["question_123"] == "Robots, fast")
+        #expect(reader.result == #"{"q1": "Robots — fast"}"#)
+        var failed = ClaudeDrafter.StreamReader()
+        _ = failed.feed(#"{"type":"result","is_error":true,"result":"Not logged in"}"#)
+        #expect(failed.error == "Not logged in")
+    }
+
+    /// Calls the real `claude` (costs a Haiku request): `NOTCHMAN_LIVE_CLAUDE=1 swift test --filter liveClaudeDraft`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["NOTCHMAN_LIVE_CLAUDE"] == "1"))
+    func liveClaudeDraft() async throws {
+        var updates = 0
+        var last: [String: String] = [:]
+        for try await answers in ClaudeDrafter().draft(questions: questions, context: context, model: "haiku") {
+            updates += 1
+            last = answers
+        }
+        let why = try #require(last["question_123"])
+        print("updates: \(updates)\nq1: \(why)\nq2: \(last["cover"] ?? "")")
+        #expect(why.split(separator: " ").count > 20)
+        #expect(!why.contains("\u{2014}"))
+    }
+
+    @Test func claudeReadsMoreOfThePostingThanASmallModel() {
+        let long = String(repeating: "word ", count: 3_000)
+        let claude = DraftContext(company: "A", title: "B", location: nil, posting: long, resume: nil, limits: DraftEngine.claude.limits)
+        let ollama = DraftContext(company: "A", title: "B", location: nil, posting: long, resume: nil, limits: DraftEngine.ollama.limits)
+        #expect(claude.posting.count > 10_000 && ollama.posting.count <= DraftContext.maxPosting + 2)
+        #expect(DraftSettings().engine == .claude && DraftSettings().modelName == "haiku")
+        #expect(DraftSettings(engine: .ollama).modelName == AnswerDrafter.defaultModel)
+    }
+
     @Test func modelNamesAndErrors() {
         #expect(AnswerDrafter.has("gemma3:4b", in: ["gemma3:4b", "llama3.2:latest"]))
         #expect(AnswerDrafter.has("llama3.2", in: ["llama3.2:latest"]))

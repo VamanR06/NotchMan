@@ -6,6 +6,15 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-11-24
+
+### Changed
+- **Answer drafts use Claude by default:** Haiku (or Sonnet) writes them through your own `claude` command, with
+  your Claude Code sign-in and no API key. It runs with no tools, no MCP servers and no saved session, from an empty
+  folder, so it only sees the job, its description, your resume and the questions. It reads the whole posting and
+  resume, not the trimmed copy a small local model gets. Two answers take about 5 seconds. Ollama is still there:
+  Settings → Jobs → Answer drafts → Write drafts with.
+
 ## [1.3.0] — 2026-11-24
 
 ### Added

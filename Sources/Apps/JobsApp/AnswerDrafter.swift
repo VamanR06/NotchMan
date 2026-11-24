@@ -34,9 +34,42 @@ enum DraftKeepAlive: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// What writes the drafts.
+enum DraftEngine: String, CaseIterable, Identifiable, Sendable {
+    /// Claude through your own `claude` command (Claude Code sign-in).
+    case claude
+    /// A model in Ollama on this Mac.
+    case ollama
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .claude: "Claude (your Claude Code account)"
+        case .ollama: "Ollama on this Mac"
+        }
+    }
+
+    /// How much of the posting and resume it reads: Claude has room for all of a normal one; a small local model
+    /// gets a trimmed copy.
+    var limits: (posting: Int, resume: Int) {
+        switch self {
+        case .claude: (12_000, 10_000)
+        case .ollama: (DraftContext.maxPosting, DraftContext.maxResume)
+        }
+    }
+}
+
 struct DraftSettings: Equatable, Sendable {
+    var engine = DraftEngine.claude
+    /// Claude model alias passed to `claude --model`.
+    var claudeModel = "haiku"
+    /// Ollama model.
     var model = AnswerDrafter.defaultModel
     var keepAlive = DraftKeepAlive.minute
+
+    /// What the card and its help name ("haiku", "gemma3:4b").
+    var modelName: String { engine == .claude ? claudeModel : model }
 }
 
 /// What the model knows about the job: who it's for, the posting, and the job's resume, trimmed to fit a small
@@ -51,12 +84,13 @@ struct DraftContext: Equatable, Sendable {
     let posting: String
     let resume: String?
 
-    init(company: String, title: String, location: String?, posting: String?, resume: String?) {
+    init(company: String, title: String, location: String?, posting: String?, resume: String?,
+         limits: (posting: Int, resume: Int) = (DraftContext.maxPosting, DraftContext.maxResume)) {
         self.company = company
         self.title = title
         self.location = location.flatMap { $0.isEmpty ? nil : $0 }
-        self.posting = Self.trimmed(posting ?? "", to: Self.maxPosting)
-        self.resume = resume.map { Self.trimmed($0, to: Self.maxResume) }.flatMap { $0.isEmpty ? nil : $0 }
+        self.posting = Self.trimmed(posting ?? "", to: limits.posting)
+        self.resume = resume.map { Self.trimmed($0, to: limits.resume) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Whitespace squeezed (PDF text is full of it), then cut at a word boundary.
@@ -274,7 +308,7 @@ struct AnswerDrafter: Sendable {
     /// The instructions above, as you've edited them in Settings → Prompts.
     static let prompt = EditablePrompt(
         id: "jobs.answerDrafts", group: "Jobs", title: "Answer drafts",
-        detail: "How the Ollama model writes answers to a form's open questions. The job, its description, your resume and the questions are sent after it. Dashes are turned into commas whatever this says.",
+        detail: "How Claude (or your Ollama model) writes answers to a form's open questions. The job, its description, your resume and the questions are sent after it. Dashes are turned into commas whatever this says.",
         defaultText: defaultSystemPrompt)
 
     /// Small models use dashes anyway: turn them into the punctuation a person would type.
@@ -301,6 +335,8 @@ struct AnswerDrafter: Sendable {
         parts.append("My resume:\n" + (context.resume ?? "(no resume attached; keep to what the role suggests and use placeholders for my specifics)"))
         let list = zip(ids(questions), questions).map { id, q in "\(id): \(q.label)" + (q.required ? "" : " (optional)") }
         parts.append("Questions:\n" + list.joined(separator: "\n"))
+        let shape = ids(questions).map { "\"\($0)\": \"…\"" }.joined(separator: ", ")
+        parts.append("Reply with only a JSON object, no code fence and nothing else: {\(shape)}")
         return parts.joined(separator: "\n\n")
     }
 

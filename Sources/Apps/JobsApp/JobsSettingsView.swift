@@ -7,6 +7,7 @@ struct JobsSettingsView: View {
     @State private var signingIn = false
     @State private var signInError: String?
     @State private var ollamaStatus: AnswerDrafter.Status?
+    @State private var claudeFound: Bool?
 
     var body: some View {
         Form {
@@ -57,29 +58,51 @@ struct JobsSettingsView: View {
             }
 
             Section {
-                TextField("Model", text: $app.draftModel, prompt: Text(AnswerDrafter.defaultModel))
-                Picker("Keep the model loaded", selection: $app.draftKeepAlive) {
-                    ForEach(DraftKeepAlive.allCases) { Text($0.label).tag($0) }
+                Picker("Write drafts with", selection: $app.draftEngine) {
+                    ForEach(DraftEngine.allCases) { Text($0.label).tag($0) }
                 }
-                LabeledContent("Ollama") {
-                    switch ollamaStatus {
-                    case nil: ProgressView().controlSize(.small)
-                    case .ready?: Label("Running · \(app.draftSettings.model) ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    case .missingModel?: Text("Run `ollama pull \(app.draftSettings.model)` in Terminal").foregroundStyle(.orange)
-                    case .notRunning?: Text("Not running. Install it from ollama.com or `brew install ollama`").foregroundStyle(.orange)
+                if app.draftEngine == .claude {
+                    Picker("Model", selection: $app.draftClaudeModel) {
+                        ForEach(ClaudeDrafter.models, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    LabeledContent("Claude Code") {
+                        switch claudeFound {
+                        case nil: ProgressView().controlSize(.small)
+                        case true?: Label("Found", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        case false?: Text("Not found. Install it from claude.com/claude-code").foregroundStyle(.orange)
+                        }
+                    }
+                } else {
+                    TextField("Model", text: $app.draftModel, prompt: Text(AnswerDrafter.defaultModel))
+                    Picker("Keep the model loaded", selection: $app.draftKeepAlive) {
+                        ForEach(DraftKeepAlive.allCases) { Text($0.label).tag($0) }
+                    }
+                    LabeledContent("Ollama") {
+                        switch ollamaStatus {
+                        case nil: ProgressView().controlSize(.small)
+                        case .ready?: Label("Running · \(app.draftSettings.model) ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        case .missingModel?: Text("Run `ollama pull \(app.draftSettings.model)` in Terminal").foregroundStyle(.orange)
+                        case .notRunning?: Text("Not running. Install it from ollama.com or `brew install ollama`").foregroundStyle(.orange)
+                        }
                     }
                 }
             } header: {
                 Text("Answer drafts")
             } footer: {
-                Text("After Autofill, a form's open questions (\"Why us?\") can be drafted by a model running in Ollama on this Mac, from the job description and the job's resume. Nothing leaves your Mac, and nothing goes into the page until you press Insert. The model only runs when you press Draft answers and unloads after the time above, so it uses no battery in between.")
+                Text(app.draftEngine == .claude
+                     ? "After Autofill, a form's open questions (\"Why us?\") get Draft answers. Claude writes them from the job description and the job's resume through your own claude command (your Claude Code sign-in, no API key), with no tools and nothing else of yours to read. It runs only when you press Draft answers. Nothing goes into the page until you press Insert. Edit the instructions in Settings → Prompts."
+                     : "After Autofill, a form's open questions (\"Why us?\") get Draft answers, written by a model in Ollama on this Mac from the job description and the job's resume. Nothing leaves your Mac. The model only runs when you press Draft answers and unloads after the time above. Nothing goes into the page until you press Insert.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            .task(id: app.draftSettings.model) {
-                ollamaStatus = nil
+            .task(id: "\(app.draftEngine.rawValue)|\(app.draftSettings.model)") {
                 try? await Task.sleep(for: .milliseconds(400))
                 guard !Task.isCancelled else { return }
-                ollamaStatus = await app.drafter.status(model: app.draftSettings.model)
+                if app.draftEngine == .claude {
+                    claudeFound = await ClaudeDrafter.findClaude() != nil
+                } else {
+                    ollamaStatus = nil
+                    ollamaStatus = await app.drafter.status(model: app.draftSettings.model)
+                }
             }
 
             Section {
