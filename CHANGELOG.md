@@ -6,6 +6,13 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-24
+
+### Added
+- **A resume to drag anywhere (Jobs):** the side column has a resume chip under the counts, on any page, tracked
+  job or not. Drag it onto any upload box; the chevron picks another resume (archived ones included). It starts on
+  your newest resume and remembers your pick. Picking here doesn't change any job's resume.
+
 ## [1.5.0] — 2026-11-24
 
 ### Added

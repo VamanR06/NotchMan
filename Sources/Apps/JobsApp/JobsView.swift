@@ -398,6 +398,70 @@ private struct DocumentChip: View {
     }
 }
 
+/// Any resume, ready to drag onto any application, whatever page is open: the chip drags, the chevron picks.
+/// Picking here doesn't change any job's resume.
+struct QuickResume: View {
+    let app: JobsApp
+
+    var body: some View {
+        HStack(spacing: 2) {
+            if let document = app.quickResume, let file = app.quickResumeFile {
+                HStack(spacing: 4) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 15, height: 15)
+                    Text(document.name.replacingOccurrences(of: ".pdf", with: "", options: [.caseInsensitive, .anchored, .backwards]))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .padding(.horizontal, 5).padding(.vertical, 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.09)))
+                .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
+                .help("Drag \(file.lastPathComponent) onto any upload box")
+            } else if app.quickResume != nil {
+                NotchSpinner(size: 9, lineWidth: 1.4).frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("No resume").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            picker
+        }
+        .task { await app.loadDocumentChoices() }
+    }
+
+    private var picker: some View {
+        let resumes = app.documentChoices[.resume] ?? []
+        return Menu {
+            let active = resumes.filter { !$0.isArchived }
+            if resumes.isEmpty { Text("Loading…") }
+            ForEach(active) { choice($0) }
+            let archived = resumes.filter(\.isArchived)
+            if !archived.isEmpty {
+                Menu("Archived") { ForEach(archived) { choice($0) } }
+            }
+            Divider()
+            Button("Open Resumes in JobManager") { app.openDocuments(.resume) }
+        } label: {
+            Image(systemName: "chevron.down")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Pick a resume to drag (doesn't change any job's resume)")
+    }
+
+    private func choice(_ document: JobDocument) -> some View {
+        Button { app.pickQuickResume(document) } label: {
+            if document.id == app.quickResume?.id {
+                Label(document.menuTitle, systemImage: "checkmark")
+            } else {
+                Text(document.menuTitle)
+            }
+        }
+    }
+}
+
 /// Pick the job's resume and cover letter in one menu: newest first, archived ones tucked away, or none.
 private struct DocumentsMenu: View {
     let app: JobsApp
@@ -561,6 +625,8 @@ private struct Pipeline: View {
                     ForEach(stages[start..<min(start + 3, stages.count)], id: \.self) { stat($0, counts) }
                 }
             }
+            QuickResume(app: app)
+                .padding(.top, 4)
             HStack(spacing: 8) {
                 Button { Task { await app.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh")

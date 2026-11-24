@@ -295,6 +295,47 @@ public final class JobsApp: NotchApp {
         for kind in [DocumentKind.resume, .cover_letter] {
             if let documents = try? await client.documents(kind) { documentChoices[kind] = documents }
         }
+        await prepareQuickResume()
+    }
+
+    // MARK: - Any resume, to drag onto any page
+
+    /// The resume in the side column, not tied to a job: the one you picked last, else your newest.
+    private(set) var quickResume: JobDocument?
+    /// It, saved locally (downloaded once), for dragging.
+    private(set) var quickResumeFile: URL?
+
+    /// Picks the side column's resume and fetches it for dragging. Doesn't touch any job.
+    func pickQuickResume(_ document: JobDocument) {
+        context?.defaults.set(document.id, forKey: "quickResumeID")
+        Task { await showQuickResume(document) }
+    }
+
+    /// After the resume list loads: the saved pick if it still exists, else the newest one that isn't archived.
+    private func prepareQuickResume() async {
+        let resumes = documentChoices[.resume] ?? []
+        let saved = context?.defaults.object(forKey: "quickResumeID") as? Int
+        guard let document = Self.quickResumeChoice(saved: saved, from: resumes) else { return }
+        if document.id != quickResume?.id || quickResumeFile == nil { await showQuickResume(document) }
+    }
+
+    static func quickResumeChoice(saved: Int?, from resumes: [JobDocument]) -> JobDocument? {
+        resumes.first { $0.id == saved } ?? resumes.first { !$0.isArchived } ?? resumes.first
+    }
+
+    private func showQuickResume(_ document: JobDocument) async {
+        quickResume = document
+        quickResumeFile = nil
+        let file = try? await client.download(document.pageDocument)
+        if quickResume?.id == document.id { quickResumeFile = file }
+    }
+
+    /// For render tests.
+    func useQuickResumeForTesting(_ document: JobDocument, file: URL?, choices: [JobDocument]) {
+        quickResume = document
+        quickResumeFile = file
+        documentChoices[.resume] = choices
+        documentsLoadedAt = Date()
     }
 
     /// Makes `document` the job's resume (or cover letter) in JobManager, then offers it here: dragging and
