@@ -6,6 +6,13 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-11-23
+
+### Changed
+- **More than one display:** the notches act as one. Opening a notch closes any other, switching apps or
+  Keep Open on one applies to all, a new display's notch starts on what the others show, and notification clicks
+  go to the notch already open instead of opening a second. Volume and brightness still show on the cursor's display.
+
 ## [1.2.2] — 2026-11-23
 
 ### Changed
