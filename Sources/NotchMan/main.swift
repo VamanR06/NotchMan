@@ -7,7 +7,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var engine: NotchEngine?
     private var mods: ModLibrary?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Set up before launch finishes, so the notification click macOS launched this copy for comes here.
+        if let running = SingleInstance.otherInstance() {
+            isDuplicate = true
+            SingleInstance.handOff(to: running)
+        }
+    }
+
+    /// Another NotchMan was already running: this copy only passes a notification click to it, then quits.
+    private var isDuplicate = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !isDuplicate else { return }
         let engine = NotchEngine(apps: AppRegistry.makeApps())
         engine.start()
         self.engine = engine
