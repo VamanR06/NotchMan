@@ -6,6 +6,20 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-11-23
+
+### Changed
+- **New agent:** start an agent in any folder, new or not, without Claude Code asking whether you trust it
+  (NotchMan records the trust in `~/.claude.json` the way Claude Code does). The folder menu leads with
+  "Choose or Make a Folder…", you can drop a folder from Finder onto the form, and folders you started agents in
+  stay under Recent.
+
+### Fixed
+- **Folder picker:** it opens above the notch instead of under it, the notch stays open behind it, and the
+  folder you pick sticks in the New agent form (it used to reset when the notch closed).
+- **Two notches:** clicking a notification could launch a second copy of NotchMan (another build on disk) with
+  its own notch. A second copy now passes the click to the running one and quits.
+
 ## [1.2.1] — 2026-11-23
 
 ### Fixed

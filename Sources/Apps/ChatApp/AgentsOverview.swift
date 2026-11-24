@@ -254,7 +254,7 @@ private struct ChatStrip: View {
             }
             Divider()
             Button("New Terminal in Folder…") {
-                if let path = ChatApp.chooseFolder(startingIn: app.shellFolder) { app.openShell(in: path) }
+                if let path = app.chooseFolder(startingIn: app.shellFolder) { app.openShell(in: path) }
             }
         }
     }
@@ -928,18 +928,20 @@ private struct AgentRow: View {
 }
 
 /// Prompt + project folder + mode → `claude --bg` in that folder. Return starts it (⌥Return for a new line).
+/// Any folder works, new or not: drop one from Finder or choose it, and Claude won't ask whether to trust it.
 private struct NewAgentForm: View {
-    let app: ChatApp
-    @State private var prompt = ""
-    @State private var folder = ""
+    @Bindable var app: ChatApp
     @State private var mode = AgentMode.plan
+    @State private var dropTargeted = false
+
+    private var folder: String { app.agentDraftFolder }
     @State private var starting = false
     @State private var status: String?
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("What should the new Claude Code agent do?", text: $prompt, axis: .vertical)
+            TextField("What should the new Claude Code agent do?", text: $app.agentDraftPrompt, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(.white)
@@ -950,19 +952,26 @@ private struct NewAgentForm: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.1)))
             HStack(spacing: 8) {
                 Menu {
-                    ForEach(app.agentMonitor.recentFolders, id: \.self) { path in
-                        Button(path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { folder = path }
+                    Button("Choose or Make a Folder…", action: chooseFolder)
+                    let recent = app.agentMonitor.recentFolders
+                    if !recent.isEmpty {
+                        Section("Recent") {
+                            ForEach(recent, id: \.self) { path in
+                                Button(path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                                    app.agentDraftFolder = path
+                                }
+                            }
+                        }
                     }
-                    Divider()
-                    Button("Choose Folder…", action: chooseFolder)
                 } label: {
-                    Label(folder.isEmpty ? "Project folder" : URL(fileURLWithPath: folder).lastPathComponent,
+                    Label(folder.isEmpty ? "Choose folder" : URL(fileURLWithPath: folder).lastPathComponent,
                           systemImage: "folder")
                         .font(.system(size: 11))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                .help(folder.isEmpty ? "Pick the folder the agent works in, or drop one here from Finder"
+                      : folder.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
                 Menu {
                     Picker("Mode", selection: $mode) {
                         ForEach(AgentMode.allCases) { mode in
@@ -982,7 +991,10 @@ private struct NewAgentForm: View {
                     Text(status).font(.system(size: 10)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                 }
                 Spacer()
-                Button("Cancel") { app.composingAgent = false }
+                Button("Cancel") {
+                    app.composingAgent = false
+                    app.agentDraftPrompt = ""
+                }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.6))
@@ -1001,33 +1013,47 @@ private struct NewAgentForm: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15)))
+        .background(RoundedRectangle(cornerRadius: 10)
+            .stroke(dropTargeted ? Color.accentColor : .white.opacity(0.15), lineWidth: dropTargeted ? 2 : 1))
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let path = urls.lazy.compactMap(Self.folder(of:)).first else { return false }
+            app.agentDraftFolder = path
+            focused = true
+            return true
+        } isTargeted: { dropTargeted = $0 }
         .onAppear {
-            folder = app.newAgentFolder ?? app.agentMonitor.recentFolders.first ?? ""
-            app.newAgentFolder = nil
+            if folder.isEmpty { app.agentDraftFolder = app.agentMonitor.recentFolders.first ?? "" }
             mode = app.agentMonitor.newAgentMode
             focused = true
         }
-        .onChange(of: app.newAgentFolder) { _, picked in
-            // New Agent Here on another folder while the form is already open.
-            guard let picked else { return }
-            folder = picked
-            app.newAgentFolder = nil
+        .onChange(of: app.agentDraftFolder) {
+            // New Agent Here on another folder, or a folder picked, while the form is open.
             focused = true
         }
     }
 
+    /// A dropped folder as is; a dropped file means the folder it's in.
+    static func folder(of url: URL) -> String? {
+        guard url.isFileURL else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+        return isDirectory.boolValue ? url.path : url.deletingLastPathComponent().path
+    }
+
     private var canStart: Bool {
-        !starting && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folder.isEmpty
+        !starting && !app.agentDraftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folder.isEmpty
     }
 
     private func chooseFolder() {
-        if let path = ChatApp.chooseFolder() { folder = path }
+        // Opens beside the current folder, where a new project usually goes (New Folder is in the picker).
+        let start = folder.isEmpty ? nil : URL(fileURLWithPath: folder).deletingLastPathComponent().path
+        if let path = app.chooseFolder(startingIn: start) { app.agentDraftFolder = path }
     }
 
     private func start() {
         guard canStart else { return }
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = app.agentDraftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = folder
         starting = true
         status = nil
         app.agentMonitor.newAgentMode = mode
@@ -1035,7 +1061,7 @@ private struct NewAgentForm: View {
             defer { starting = false }
             do {
                 try await app.agentMonitor.dispatch(prompt: text, in: folder, mode: mode)
-                prompt = ""
+                app.agentDraftPrompt = ""
                 app.composingAgent = false
             } catch {
                 status = error.localizedDescription

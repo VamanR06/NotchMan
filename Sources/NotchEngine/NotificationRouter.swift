@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import NotchKit
 import UserNotifications
 
@@ -15,6 +15,41 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
         self.onOpen = onOpen
         super.init()
         UNUserNotificationCenter.current().delegate = self
+        // A click another copy of NotchMan was launched for and passed over (see `SingleInstance`): a plain click.
+        handoff = DistributedNotificationCenter.default().addObserver(
+            forName: SingleInstance.handoffName, object: nil, queue: .main
+        ) { [weak self] note in
+            var payload: [String: String] = [:]
+            for case let (key as String, value as String) in note.userInfo ?? [:] { payload[key] = value }
+            payload.removeValue(forKey: "action")
+            payload.removeValue(forKey: "reply")
+            guard let self, let appID = payload.removeValue(forKey: Self.appKey) else { return }
+            MainActor.assumeIsolated {
+                NSApp.activate()
+                self.onOpen(appID, payload)
+            }
+        }
+    }
+
+    private var handoff: NSObjectProtocol?
+
+    deinit {
+        if let handoff { DistributedNotificationCenter.default().removeObserver(handoff) }
+    }
+
+    /// A clicked notification's info: its payload, the app that posted it, the button and any reply text.
+    static func userInfo(of response: UNNotificationResponse) -> [String: String]? {
+        var info: [String: String] = [:]
+        for case let (key as String, value as String) in response.notification.request.content.userInfo {
+            info[key] = value
+        }
+        guard info[appKey] != nil else { return nil }
+        let action = response.actionIdentifier
+        if action != UNNotificationDefaultActionIdentifier && action != UNNotificationDismissActionIdentifier {
+            info["action"] = action
+        }
+        if let reply = (response as? UNTextInputNotificationResponse)?.userText { info["reply"] = reply }
+        return info
     }
 
     func post(appID: String, _ notification: NotchNotification) {
@@ -92,16 +127,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        var payload: [String: String] = [:]
-        for case let (key as String, value as String) in response.notification.request.content.userInfo {
-            payload[key] = value
-        }
-        guard let appID = payload.removeValue(forKey: Self.appKey) else { return }
-        let action = response.actionIdentifier
-        if action != UNNotificationDefaultActionIdentifier && action != UNNotificationDismissActionIdentifier {
-            payload["action"] = action
-        }
-        if let reply = (response as? UNTextInputNotificationResponse)?.userText { payload["reply"] = reply }
+        guard var payload = Self.userInfo(of: response), let appID = payload.removeValue(forKey: Self.appKey) else { return }
         await onOpen(appID, payload)
     }
 }
