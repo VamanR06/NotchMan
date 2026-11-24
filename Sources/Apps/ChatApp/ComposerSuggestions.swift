@@ -251,9 +251,10 @@ struct SuggestionList: View {
 }
 
 /// Claude's plan for the turn, pinned above the conversation: one line with progress and the step underway; click to
-/// see every step.
+/// see every step. Untracked steps (an approved plan's, which Claude doesn't tick off) show without progress.
 struct PlanStrip: View {
     let todos: [TodoItem]
+    var tracked = true
     @State private var expanded = false
 
     var body: some View {
@@ -263,10 +264,15 @@ struct PlanStrip: View {
             Button { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "checklist").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
-                    Text("Plan \(done)/\(todos.count)").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
-                    ProgressView(value: Double(done), total: Double(max(todos.count, 1)))
-                        .progressViewStyle(.linear).tint(.green).frame(width: 50)
-                    if let current, !expanded {
+                    if tracked {
+                        Text("Plan \(done)/\(todos.count)").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
+                        ProgressView(value: Double(done), total: Double(max(todos.count, 1)))
+                            .progressViewStyle(.linear).tint(.green).frame(width: 50)
+                    } else {
+                        Text("Plan · \(todos.count) steps").font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    if tracked, let current, !expanded {
                         Text(current.title).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                     }
                     Spacer(minLength: 0)
@@ -278,12 +284,17 @@ struct PlanStrip: View {
             .buttonStyle(.plain)
             if expanded {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(todos) { todo in
+                    ForEach(Array(todos.enumerated()), id: \.element.id) { index, todo in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
-                            Image(systemName: todo.status == .completed ? "checkmark.circle.fill"
-                                  : todo.status == .inProgress ? "circle.dotted.circle" : "circle")
-                                .font(.system(size: 9.5))
-                                .foregroundStyle(todo.status == .completed ? Color.green : todo.status == .inProgress ? .orange : .white.opacity(0.4))
+                            if tracked {
+                                Image(systemName: todo.status == .completed ? "checkmark.circle.fill"
+                                      : todo.status == .inProgress ? "circle.dotted.circle" : "circle")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(todo.status == .completed ? Color.green : todo.status == .inProgress ? .orange : .white.opacity(0.4))
+                            } else {
+                                Text("\(index + 1).").font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.4)).frame(minWidth: 16, alignment: .trailing)
+                            }
                             Text(todo.title).font(.system(size: 11))
                                 .foregroundStyle(.white.opacity(todo.status == .completed ? 0.45 : 0.85))
                                 .strikethrough(todo.status == .completed, color: .white.opacity(0.3))

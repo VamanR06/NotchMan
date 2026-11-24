@@ -70,12 +70,19 @@ struct TranscriptParser: Sendable {
     /// Whether Claude is mid-turn, as the file says: a prompt opens a turn, and Claude's last message of it
     /// (`stop_reason: end_turn`, then a `turn_duration` line) closes it. Nil until the file shows either.
     private(set) var turnOpen: Bool?
-    /// Claude's plan as it stands, from its to-do / task tools.
+    /// Claude's plan as it stands, from its to-do / task tools — or, until Claude makes a list, the steps of the plan
+    /// you just approved.
     private(set) var todos: [TodoItem] = []
+    /// `todos` are the approved plan's steps, not Claude's own list: nothing ticks them off.
+    private(set) var todosFromPlan = false
     /// The last prompt you took back with Esc before Claude answered.
     private(set) var withdrawnPrompt: String?
     /// TaskCreate calls waiting for their result, which carries the task's number.
     private var pendingTasks: [String: String] = [:]
+    /// ExitPlanMode calls waiting for your answer, with their plan.
+    private var pendingPlans: [String: String] = [:]
+    /// Tool calls already counted toward the plan (Claude Code logs some lines twice).
+    private var plannedTools = Set<String>()
     private var partial = Data()
     private var toolIndex: [String: Int] = [:]
     private var seen = Set<String>()
@@ -106,6 +113,15 @@ struct TranscriptParser: Sendable {
             case "away_summary" where !content.isEmpty: append(id: id, time: time, .recap(content))
             case "informational" where !content.isEmpty: append(id: id, time: time, .notice(Self.plain(content)))
             default: break
+            }
+            return
+        }
+        if type == "attachment" {
+            // A message you sent while Claude was working goes in mid-turn, logged only as an attachment.
+            if line["isSidechain"] as? Bool != true, let attachment = line["attachment"] as? [String: Any],
+               let text = Self.queuedPrompt(attachment) {
+                append(id: line["uuid"] as? String ?? UUID().uuidString,
+                       time: (line["timestamp"] as? String).flatMap(UsageScanner.parseDate), .prompt(text))
             }
             return
         }
@@ -159,14 +175,21 @@ struct TranscriptParser: Sendable {
             case "tool_use":
                 guard let toolID = block["id"] as? String, let name = block["name"] as? String else { continue }
                 let input = block["input"] as? [String: Any] ?? [:]
-                trackPlan(tool: name, id: toolID, input: input)
+                if plannedTools.insert(toolID).inserted { trackPlan(tool: name, id: toolID, input: input) }
                 let call = ToolCall(id: toolID, name: name, summary: Self.summary(name: name, input: input),
                                     detail: Self.detail(name: name, input: input))
                 if append(id: id, time: time, .tool(call)) { toolIndex[toolID] = entries.count - 1 }
             case "tool_result":
                 if let toolID = block["tool_use_id"] as? String, let subject = pendingTasks.removeValue(forKey: toolID),
                    let number = Self.resultText(block["content"]).firstMatch(of: /Task #(\w+)/)?.output.1 {
-                    todos.append(TodoItem(id: String(number), title: subject, status: .pending))
+                    dropPlanSteps()
+                    if !todos.contains(where: { $0.id == String(number) }) {
+                        todos.append(TodoItem(id: String(number), title: subject, status: .pending))
+                    }
+                }
+                if let toolID = block["tool_use_id"] as? String, let plan = pendingPlans.removeValue(forKey: toolID),
+                   block["is_error"] as? Bool != true, Self.resultText(block["content"]).hasPrefix("User has approved") {
+                    planApproved(plan)
                 }
                 guard let toolID = block["tool_use_id"] as? String, let index = toolIndex[toolID],
                       case .tool(var call) = entries[index].kind else { continue }
@@ -185,6 +208,7 @@ struct TranscriptParser: Sendable {
         switch tool {
         case "TodoWrite":
             guard let items = input["todos"] as? [[String: Any]] else { return }
+            todosFromPlan = false
             todos = items.enumerated().map { index, item in
                 TodoItem(id: item["id"] as? String ?? "\(index)",
                          title: item["content"] as? String ?? item["activeForm"] as? String ?? "",
@@ -192,6 +216,8 @@ struct TranscriptParser: Sendable {
             }
         case "TaskCreate":
             if let subject = input["subject"] as? String ?? input["description"] as? String { pendingTasks[id] = subject }
+        case "ExitPlanMode":
+            if let plan = input["plan"] as? String { pendingPlans[id] = plan }
         case "TaskUpdate":
             guard let taskID = (input["taskId"] as? String) ?? (input["taskId"] as? Int).map(String.init),
                   let index = todos.firstIndex(where: { $0.id == taskID }) else { return }
@@ -207,7 +233,41 @@ struct TranscriptParser: Sendable {
 
     /// A new prompt starts a new stretch of work: steps already done drop off the plan (open ones stay).
     private mutating func clearFinishedTodos() {
+        dropPlanSteps()
         todos.removeAll { $0.status == .completed }
+    }
+
+    /// You approved a plan: its steps stand in as the to-do list until Claude makes its own (it often doesn't).
+    private mutating func planApproved(_ plan: String) {
+        guard todos.allSatisfy({ $0.status == .completed }) else { return }  // Claude's own list is still going
+        let steps = PlanSteps.steps(plan)
+        guard !steps.isEmpty else { return }
+        todos = steps.enumerated().map { TodoItem(id: "plan-\($0.offset)", title: $0.element, status: .pending) }
+        todosFromPlan = true
+    }
+
+    /// Claude's own list replaces the plan's steps.
+    private mutating func dropPlanSteps() {
+        guard todosFromPlan else { return }
+        todos = []
+        todosFromPlan = false
+    }
+
+    /// The text of a message you sent mid-turn (a `queued_command` attachment), or nil for anything else — including
+    /// background-task and subagent notices, which are queued the same way.
+    static func queuedPrompt(_ attachment: [String: Any]) -> String? {
+        guard attachment["type"] as? String == "queued_command" else { return nil }
+        if let origin = (attachment["origin"] as? [String: Any])?["kind"] as? String, origin != "human" { return nil }
+        if let mode = attachment["commandMode"] as? String, mode != "prompt" { return nil }
+        let text: String
+        if let string = attachment["prompt"] as? String {
+            text = string
+        } else if let blocks = attachment["prompt"] as? [[String: Any]] {
+            text = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+        } else {
+            return nil
+        }
+        return prompt(text)
     }
 
     /// You pressed Esc. If Claude hadn't done anything for your prompt yet, it goes back to the input box in Claude
@@ -289,15 +349,35 @@ struct TranscriptParser: Sendable {
 @MainActor @Observable
 final class SessionTranscript {
     private(set) var entries: [TranscriptEntry] = [] {
-        didSet { items = SessionItem.items(entries) }
+        didSet {
+            settlePending()
+            refreshItems()
+        }
     }
-    /// The entries as the session view shows them (tool calls grouped), worked out once per change.
+    /// The entries as the session view shows them (tool calls grouped), plus messages you sent that Claude Code
+    /// hasn't logged yet; worked out once per change.
     private(set) var items: [SessionItem] = []
+    /// Messages you sent (here or from a notification) that aren't in the file yet. One sent while Claude works is
+    /// logged only once Claude takes it in, at its next step — until then it shows from here, as in Claude's terminal.
+    @ObservationIgnored private var pending: [PendingPrompt] = []
+
+    private struct PendingPrompt {
+        let entry: TranscriptEntry
+        let key: String
+        /// How many entries there were when it was sent: its logged copy comes after them.
+        let after: Int
+        let sent: Date
+    }
+
+    /// How long a sent message shows without Claude Code logging it (it was dropped, or edited past recognition).
+    static let pendingLifetime: TimeInterval = 180
     private(set) var title: String?
     /// Claude is mid-turn, per the file (nil until it says); see `TranscriptParser.turnOpen`.
     private(set) var turnOpen: Bool?
     /// Claude's plan, from its to-do / task tools.
     private(set) var todos: [TodoItem] = []
+    /// `todos` are an approved plan's steps (nothing ticks them off), not Claude's own list.
+    private(set) var todosFromPlan = false
     /// The last prompt you took back with Esc before Claude answered (the session view returns it to the box).
     private(set) var withdrawnPrompt: String?
     /// False until the transcript file is found.
@@ -341,6 +421,7 @@ final class SessionTranscript {
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
         if parser.todos != todos { todos = parser.todos }
+        if parser.todosFromPlan != todosFromPlan { todosFromPlan = parser.todosFromPlan }
         if parser.withdrawnPrompt != withdrawnPrompt { withdrawnPrompt = parser.withdrawnPrompt }
         isLoaded = true
     }
@@ -350,6 +431,7 @@ final class SessionTranscript {
         guard let file, let handle = try? FileHandle(forReadingFrom: file) else { return }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
+        settlePending()
         if size < offset {  // rewritten: start over
             offset = 0
             parser = TranscriptParser()
@@ -363,8 +445,42 @@ final class SessionTranscript {
         if parser.title != title { title = parser.title }
         if parser.turnOpen != turnOpen { turnOpen = parser.turnOpen }
         if parser.todos != todos { todos = parser.todos }
+        if parser.todosFromPlan != todosFromPlan { todosFromPlan = parser.todosFromPlan }
         if parser.withdrawnPrompt != withdrawnPrompt { withdrawnPrompt = parser.withdrawnPrompt }
         isLoaded = true
+    }
+
+    /// Shows a message you just sent until Claude Code logs it. Slash commands are left out (they show as their own
+    /// rows once run).
+    func expect(_ text: String, now: Date = Date()) {
+        guard let prompt = TranscriptParser.prompt(text), !prompt.hasPrefix("/") else { return }
+        let entry = TranscriptEntry(id: "pending-" + UUID().uuidString, time: now, kind: .prompt(prompt))
+        pending.append(PendingPrompt(entry: entry, key: Self.matchKey(prompt), after: entries.count, sent: now))
+        refreshItems()
+    }
+
+    /// Drops sent messages that are now in the file, or that have waited too long.
+    private func settlePending(now: Date = Date()) {
+        guard !pending.isEmpty else { return }
+        let before = pending.count
+        pending.removeAll { sent in
+            if now.timeIntervalSince(sent.sent) > Self.pendingLifetime { return true }
+            return entries[min(sent.after, entries.count)...].contains { entry in
+                guard case .prompt(let text) = entry.kind else { return false }
+                let key = Self.matchKey(text)
+                return key.hasPrefix(sent.key) || sent.key.hasPrefix(key)
+            }
+        }
+        if pending.count != before { refreshItems() }
+    }
+
+    private func refreshItems() {
+        items = SessionItem.items(entries + pending.map(\.entry))
+    }
+
+    /// Letters and digits from the start of a message: Claude Code may log it with image markers or trimmed.
+    private static func matchKey(_ text: String) -> String {
+        String(String(text.unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(Character.init)).lowercased().prefix(40))
     }
 
     /// Claude's last reply in a session (read from the end of its transcript), for notifications.

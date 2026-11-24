@@ -61,8 +61,11 @@ struct AgentSessionView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            if !transcript.todos.isEmpty, isWorking || transcript.todos.contains(where: { $0.status != .completed }) {
-                PlanStrip(todos: transcript.todos).transition(.opacity)
+            // An approved plan's steps (nothing ticks them off) show while Claude works on them; Claude's own list
+            // stays while any of it is left.
+            if !transcript.todos.isEmpty,
+               isWorking || (!transcript.todosFromPlan && transcript.todos.contains { $0.status != .completed }) {
+                PlanStrip(todos: transcript.todos, tracked: !transcript.todosFromPlan).transition(.opacity)
             }
             ZStack(alignment: .bottomLeading) {
                 conversation
