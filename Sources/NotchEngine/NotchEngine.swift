@@ -41,9 +41,13 @@ public final class NotchEngine {
     private var dragChangeCount = 0
     private var mouseWasDown = false
 
+    /// Prompts from outside the apps (notch-app authoring), listed in Settings → Prompts after the apps' own.
+    public var extraPrompts: [EditablePrompt] = []
+
     public init(apps: [any NotchApp]) {
         self.apps = apps
         self.settings = SettingsWindowController(apps: apps)
+        settings.extraPrompts = { [weak self] in self?.extraPrompts ?? [] }
     }
 
     public func start() {

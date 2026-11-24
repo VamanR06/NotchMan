@@ -53,15 +53,23 @@ enum ClaudeFallback {
     }
 
     static func prompt(question: String, frontmostApp: String?) -> String {
-        """
-        You're answering a request typed into NotchMan's command bar (a small panel in the Mac's notch). Reply in a \
-        few sentences of plain text, no headings. You can read and look things up but not change anything here; if \
-        it needs changes made, say what to do or suggest starting a Claude Code agent for it.
-        \(frontmostApp.map { "The user is in \($0)." } ?? "")
-
-        Request: \(question)
-        """
+        answerPrompt.render(["app": frontmostApp.map { "The user is in \($0)." } ?? "", "request": question])
     }
+
+    /// What Claude (or Codex) reads to answer the command bar, as you've edited it in Settings → Prompts.
+    static let answerPrompt = EditablePrompt(
+        id: "chat.commandBarAnswer", group: "Command bar", title: "Answering a request",
+        detail: "When you ask Claude or ChatGPT something from the command bar (⌥Space), this is what it reads.",
+        placeholders: [.init("request", "what you typed"),
+                       .init("app", "\"The user is in Safari.\" (empty when unknown)", required: false)],
+        defaultText: """
+            You're answering a request typed into NotchMan's command bar (a small panel in the Mac's notch). Reply in a \
+            few sentences of plain text, no headings. You can read and look things up but not change anything here; if \
+            it needs changes made, say what to do or suggest starting a Claude Code agent for it.
+            {app}
+
+            Request: {request}
+            """)
 
     /// Where an agent for a request starts: the project of the most recently started session (its main folder, not a
     /// worktree), else your home folder.

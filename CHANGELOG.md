@@ -9,6 +9,10 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 ## [1.3.0] — 2026-11-24
 
 ### Added
+- **Settings → Prompts:** every prompt NotchMan sends to a model, in one place, each editable with Restore Default:
+  answer drafts (Jobs), answering a command-bar request, why an agent looks stuck, explaining a permission request,
+  and the guide and repair note for making notch apps. Edits apply from the next request. `{placeholders}` are
+  filled in when sent, and a required one you delete is added at the end.
 - **Answer drafts (Jobs):** after Autofill, a form's open questions ("Why us?", "A project you're proud of")
   get **Draft answers** on the This Page card. A model in Ollama on this Mac writes them from the job's saved
   description and its resume (read locally with PDFKit), streaming in as it writes. Click a draft to edit it,

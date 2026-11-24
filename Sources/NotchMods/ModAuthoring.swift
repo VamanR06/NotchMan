@@ -1,4 +1,5 @@
 import Foundation
+import NotchKit
 
 /// What Claude reads to write a notch app: the API, the elements, the rules, an example, and the reply format.
 public enum ModAuthoring {
@@ -88,12 +89,29 @@ public enum ModAuthoring {
     then ```javascript with the whole script.
     """#
 
+    /// The guide and the repair note, as you've edited them in Settings → Prompts.
+    public static let guidePrompt = EditablePrompt(
+        id: "mods.guide", group: "Notch apps", title: "How to write a notch app",
+        detail: "Claude reads this before making or changing an app you describe; your request (and the app's current code, for a change) follows it. Keep the \"Your reply\" section: NotchMan reads the json and javascript blocks.",
+        defaultText: guide)
+
+    public static let repairNote = EditablePrompt(
+        id: "mods.repair", group: "Notch apps", title: "Fixing an app that didn't load",
+        detail: "Sent back to Claude, in the same conversation, when the app it wrote fails to load.",
+        placeholders: [.init("problem", "the error NotchMan hit")],
+        defaultText: """
+            That app didn't load in NotchMan: {problem}
+            Fix it and reply with the whole manifest and script again, in the same two blocks and nothing else.
+            """)
+
+    public static var prompts: [EditablePrompt] { [guidePrompt, repairNote] }
+
     public static func newAppPrompt(_ request: String) -> String {
-        guide + "\n\n## The app to make\n" + request
+        guidePrompt.text + "\n\n## The app to make\n" + request
     }
 
     public static func changePrompt(_ request: String, manifest: String, script: String) -> String {
-        guide + """
+        guidePrompt.text + """
 
 
         ## The app as it is
@@ -112,10 +130,7 @@ public enum ModAuthoring {
     }
 
     public static func repairPrompt(_ problem: String) -> String {
-        """
-        That app didn't load in NotchMan: \(problem)
-        Fix it and reply with the whole manifest and script again, in the same two blocks and nothing else.
-        """
+        repairNote.render(["problem": problem])
     }
 
     /// The manifest and script from a reply: the first ```json block and the first ```javascript (or ```js) block.

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import NotchKit
 import PDFKit
 
 // Drafting answers to a form's open-ended questions ("Why us?") with a model in Ollama on this Mac.
@@ -221,7 +222,8 @@ struct AnswerDrafter: Sendable {
     /// Question ids the model answers under: short and predictable, whatever the form's own keys look like.
     static func ids(_ questions: [DraftItem]) -> [String] { questions.indices.map { "q\($0 + 1)" } }
 
-    static func requestBody(questions: [DraftItem], context: DraftContext, settings: DraftSettings, think: Bool = true) -> Data {
+    static func requestBody(questions: [DraftItem], context: DraftContext, settings: DraftSettings, think: Bool = true,
+                            system: String = prompt.text) -> Data {
         let ids = ids(questions)
         var body: [String: Any] = [
             "model": settings.model,
@@ -239,7 +241,7 @@ struct AnswerDrafter: Sendable {
                 "temperature": 0.6,
             ],
             "messages": [
-                ["role": "system", "content": systemPrompt],
+                ["role": "system", "content": system],
                 ["role": "user", "content": userPrompt(questions: questions, context: context)],
             ],
         ]
@@ -248,7 +250,7 @@ struct AnswerDrafter: Sendable {
         return (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])) ?? Data()
     }
 
-    static let systemPrompt = """
+    static let defaultSystemPrompt = """
         You draft answers to open-ended questions on a job application, written as the applicant in the first \
         person. Make each answer specific to this company and role, using the job description. Use only facts \
         from the resume: never invent employers, projects, numbers, or skills. If an answer needs a detail the \
@@ -268,6 +270,12 @@ struct AnswerDrafter: Sendable {
         Aim for 80 to 150 words per answer, or fewer when the question asks for less. Answer every question id \
         in the JSON.
         """
+
+    /// The instructions above, as you've edited them in Settings → Prompts.
+    static let prompt = EditablePrompt(
+        id: "jobs.answerDrafts", group: "Jobs", title: "Answer drafts",
+        detail: "How the Ollama model writes answers to a form's open questions. The job, its description, your resume and the questions are sent after it. Dashes are turned into commas whatever this says.",
+        defaultText: defaultSystemPrompt)
 
     /// Small models use dashes anyway: turn them into the punctuation a person would type.
     static func humanized(_ text: String) -> String {

@@ -172,7 +172,7 @@ import Testing
         #expect(AnswerDrafter.humanized("pages 3–5 and a well-known co-op") == "pages 3-5 and a well-known co-op")
         let streamed = AnswerDrafter.answers(in: #"{"q1":"Fast — and right"}"#, questions: questions)
         #expect(streamed["question_123"] == "Fast, and right")
-        #expect(AnswerDrafter.systemPrompt.contains("Never use em dashes"))
+        #expect(AnswerDrafter.defaultSystemPrompt.contains("Never use em dashes"))
     }
 
     @Test func modelNamesAndErrors() {

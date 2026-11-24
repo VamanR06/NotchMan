@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isDuplicate else { return }
         let engine = NotchEngine(apps: AppRegistry.makeApps())
+        engine.extraPrompts = ModAuthoring.prompts
         engine.start()
         self.engine = engine
         // Notch apps Claude made: added to the dock after the built-in ones, kept in step with their folders.

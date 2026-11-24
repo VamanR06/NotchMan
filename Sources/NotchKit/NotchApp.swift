@@ -59,6 +59,9 @@ public protocol NotchApp: AnyObject {
     /// A key pressed while the notch has the keyboard and no text field is typing. Return true if used
     /// (↑/↓/Return in lists, ⌘N for quick add, …).
     func handleKey(_ event: NSEvent) -> Bool
+
+    /// The prompts this app sends to models, editable in Settings → Prompts.
+    var prompts: [EditablePrompt] { get }
 }
 
 public extension NotchApp {
@@ -76,6 +79,7 @@ public extension NotchApp {
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}
     func handleKey(_ event: NSEvent) -> Bool { false }
+    var prompts: [EditablePrompt] { [] }
 }
 
 /// An app's current state for choosing what the notch opens to.

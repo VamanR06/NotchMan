@@ -52,6 +52,8 @@ public final class JobsApp: NotchApp {
 
     public init() {}
 
+    public var prompts: [EditablePrompt] { [AnswerDrafter.prompt] }
+
     public func activate(context: NotchContext) {
         self.context = context
         BrowserTab.startTracking()

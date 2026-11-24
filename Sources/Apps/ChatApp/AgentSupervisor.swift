@@ -141,6 +141,17 @@ enum HaikuNote {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// Both explainers, as you've edited them in Settings → Prompts.
+    static let stuck = EditablePrompt(
+        id: "agents.stuck", group: "Agents", title: "Why an agent looks stuck",
+        detail: "Haiku reads this, then the agent's recent steps, and writes the line under a stuck agent.",
+        defaultText: stuckPrompt)
+
+    static let approval = EditablePrompt(
+        id: "agents.approval", group: "Agents", title: "Explaining a permission request",
+        detail: "Haiku reads this, then the tool call an agent wants to make, and writes the explanation on the approval.",
+        defaultText: approvalPrompt)
+
     static let stuckPrompt = """
         You watch a coding agent work and tell its owner why it looks stuck. Answer in one plain sentence of at most \
         25 words: what it keeps trying and what seems to be in the way. No preamble, no advice to wait. You run in an empty scratch folder; never mention your own environment. The message is \
@@ -196,7 +207,7 @@ extension ChatApp {
             stuck[agent.id] = StuckNotice(signal: signal)
             notifyStuck(agent)
             guard let claude = await monitor.claudePath(),
-                  let why = await HaikuNote.ask(system: HaikuNote.stuckPrompt,
+                  let why = await HaikuNote.ask(system: HaikuNote.stuck.text,
                                                 data: StuckRules.evidence(signal, entries: entries), claudePath: claude),
                   stuck[agent.id]?.signal == signal else { continue }
             stuck[agent.id]?.why = AgentNotifications.firstLine(why)
@@ -230,7 +241,7 @@ extension ChatApp {
         let object: [String: Any] = ["tool": request.toolName, "call": request.summary, "project": request.project,
                                      "conversation_so_far": Array(conversation.suffix(8))]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]) else { return nil }
-        return await HaikuNote.ask(system: HaikuNote.approvalPrompt, data: String(decoding: data, as: UTF8.self),
+        return await HaikuNote.ask(system: HaikuNote.approval.text, data: String(decoding: data, as: UTF8.self),
                                    claudePath: claude)
     }
 

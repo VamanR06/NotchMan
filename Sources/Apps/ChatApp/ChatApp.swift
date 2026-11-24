@@ -191,6 +191,8 @@ public final class ChatApp: NotchApp {
 
     public init() {}
 
+    public var prompts: [EditablePrompt] { [ClaudeFallback.answerPrompt, HaikuNote.stuck, HaikuNote.approval] }
+
     public func activate(context: NotchContext) {
         self.context = context
         coordinator.logger = context.logger

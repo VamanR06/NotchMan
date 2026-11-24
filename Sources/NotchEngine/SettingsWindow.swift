@@ -8,6 +8,7 @@ final class SettingsModel {
     var selection: String = SettingsModel.generalID
     static let generalID = "_general"
     static let intelligenceID = "_intelligence"
+    static let promptsID = "_prompts"
 }
 
 @MainActor
@@ -15,6 +16,7 @@ final class SettingsWindowController {
     private let apps: [any NotchApp]
     private let model = SettingsModel()
     private var window: NSWindow?
+    var extraPrompts: () -> [EditablePrompt] = { [] }
 
     init(apps: [any NotchApp]) {
         self.apps = apps
@@ -39,7 +41,8 @@ final class SettingsWindowController {
         )
         window.title = "NotchMan Settings"
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(apps: apps, model: model))
+        let prompts = apps.flatMap(\.prompts) + extraPrompts()
+        window.contentView = NSHostingView(rootView: SettingsView(apps: apps, prompts: prompts, model: model))
         window.center()
         return window
     }
@@ -47,6 +50,7 @@ final class SettingsWindowController {
 
 private struct SettingsView: View {
     let apps: [any NotchApp]
+    let prompts: [EditablePrompt]
     @Bindable var model: SettingsModel
 
     private var configurableApps: [any NotchApp] {
@@ -58,6 +62,7 @@ private struct SettingsView: View {
             List(selection: $model.selection) {
                 Label("General", systemImage: "gearshape").tag(SettingsModel.generalID)
                 Label("Intelligence", systemImage: "sparkles").tag(SettingsModel.intelligenceID)
+                Label("Prompts", systemImage: "text.quote").tag(SettingsModel.promptsID)
                 Section("Apps") {
                     ForEach(configurableApps, id: \.id) { app in
                         Label(app.name, systemImage: app.iconSystemName).tag(app.id)
@@ -73,6 +78,8 @@ private struct SettingsView: View {
                         view
                     } else if model.selection == SettingsModel.intelligenceID {
                         IntelligenceSettingsView()
+                    } else if model.selection == SettingsModel.promptsID {
+                        PromptsSettingsView(prompts: prompts)
                     } else {
                         GeneralSettingsView()
                     }
