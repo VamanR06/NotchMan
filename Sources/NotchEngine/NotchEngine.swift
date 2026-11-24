@@ -598,7 +598,7 @@ public final class NotchEngine {
     private func commandRan(revealing appID: String?) {
         guard let notch = notches.values.first(where: { $0.model.isCommandBarShown }) else { return }
         if let appID {
-            notch.model.select(appID)
+            notch.model.userSelect(appID)
             notch.panel.makeFirstResponder(notch.panel.contentView)
         } else {
             closeFromKeyboard(notch)
@@ -622,7 +622,7 @@ public final class NotchEngine {
             guard digit <= apps.count else { return true }
             // Switching by keyboard: keep the notch open until Esc or a click outside, wherever the mouse is.
             notch.model.keyboardHeld = true
-            notch.model.select(apps[digit - 1].id)
+            notch.model.userSelect(apps[digit - 1].id)
             return true
         }
         guard !Self.isTyping(panel.firstResponder) else { return false }

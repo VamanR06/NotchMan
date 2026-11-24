@@ -452,6 +452,12 @@ final class NotchViewModel {
         }
     }
 
+    /// A switch you made (dock, ⌘-number, a command): apps hear about it, so one that claims openings can yield.
+    func userSelect(_ appID: String) {
+        apps.forEach { $0.userSwitched(to: appID) }
+        select(appID)
+    }
+
     func select(_ appID: String) {
         if state == .expanded, appID != selectedAppID {
             // Remember the larger of the old shape and any earlier grace area, so quick switches chain.

@@ -41,6 +41,9 @@ public protocol NotchApp: AnyObject {
     /// When the notch opens by hover, the first app that claims it is shown instead of the last one used
     /// (e.g. Jobs while the browser shows a tracked job). Checked at opening and once shortly after.
     var claimsNotchOnOpen: Bool { get }
+    /// You switched the open notch to `appID` yourself (dock, ⌘-number, a command), not NotchMan. An app that
+    /// claims openings should stop claiming for what you moved away from.
+    func userSwitched(to appID: String)
 
     /// Files dragged to the notch open this app (the first one that accepts them) so it can take the drop.
     var acceptsFileDrags: Bool { get }
@@ -75,6 +78,7 @@ public extension NotchApp {
     var relevance: NotchRelevance? { nil }
     func notchWillOpen() {}
     var claimsNotchOnOpen: Bool { false }
+    func userSwitched(to appID: String) {}
     func deactivate() {}
     func makeSettingsView() -> AnyView? { nil }
     func receive(_ message: NotchMessage) {}

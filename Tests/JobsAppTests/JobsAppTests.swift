@@ -193,3 +193,25 @@ private let now = Date(timeIntervalSince1970: 1_792_497_600)
         #expect(templates.first?.projectURL == nil)
     }
 }
+
+@MainActor @Suite struct JobsClaimTests {
+    @Test func movingAwayFromJobsOnAJobPageStopsTheClaimForThatJob() {
+        #expect(JobsApp.claims(enabled: true, overBrowser: true, jobID: 7, declined: nil))
+        #expect(!JobsApp.claims(enabled: true, overBrowser: true, jobID: 7, declined: 7), "you moved away on this job")
+        #expect(JobsApp.claims(enabled: true, overBrowser: true, jobID: 8, declined: 7), "a different job claims again")
+        #expect(!JobsApp.claims(enabled: false, overBrowser: true, jobID: 7, declined: nil))
+        #expect(!JobsApp.claims(enabled: true, overBrowser: false, jobID: 7, declined: nil))
+        #expect(!JobsApp.claims(enabled: true, overBrowser: true, jobID: nil, declined: nil))
+    }
+
+    @Test func yourSwitchesSetAndClearTheDecline() {
+        let app = JobsApp()
+        let info = PageInfo(job: .init(id: 7, company: "Acme", title: "Intern", url: nil), resume: nil, cover_letter: nil)
+        let match = PageMatch(tab: BrowserTabRef(url: URL(string: "https://jobs.example.com/7")!, bundleID: "", browser: "Chrome"), info: info)
+        app.useDraftsForTesting(match: match, report: AutofillReport(), drafts: [])
+        app.userSwitched(to: "chat")
+        #expect(app.claimDeclinedForTesting == 7)
+        app.userSwitched(to: "jobs")
+        #expect(app.claimDeclinedForTesting == nil, "picking Jobs yourself brings the claim back")
+    }
+}

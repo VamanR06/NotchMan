@@ -223,7 +223,28 @@ public final class JobsApp: NotchApp {
         Task { await checkPage() }
     }
 
-    public var claimsNotchOnOpen: Bool { opensOnJobPages && openedOverBrowser && pageMatch != nil }
+    public var claimsNotchOnOpen: Bool {
+        Self.claims(enabled: opensOnJobPages, overBrowser: openedOverBrowser, jobID: pageMatch?.job.id, declined: declinedClaimJobID)
+    }
+
+    /// Jobs opens on a tracked job's page, unless you moved the notch to another app while on that job: then it
+    /// stays where you left it until you're on a different job (or pick Jobs again yourself).
+    static func claims(enabled: Bool, overBrowser: Bool, jobID: Int?, declined: Int?) -> Bool {
+        guard enabled, overBrowser, let jobID else { return false }
+        return jobID != declined
+    }
+
+    /// The job whose page you moved away from Jobs on.
+    @ObservationIgnored private var declinedClaimJobID: Int?
+    var claimDeclinedForTesting: Int? { declinedClaimJobID }
+
+    public func userSwitched(to appID: String) {
+        if appID == id {
+            declinedClaimJobID = nil
+        } else if let jobID = pageMatch?.job.id {
+            declinedClaimJobID = jobID
+        }
+    }
 
     /// Works out which job the browser's page belongs to, in order:
     /// 1. JobManager recognizes it (the saved posting, its form, or the same ATS posting);

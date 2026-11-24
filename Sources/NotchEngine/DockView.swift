@@ -12,7 +12,7 @@ struct DockView: View {
             ForEach(dock.shown, id: \.id) { app in
                 DockItem(name: app.name, systemImage: app.iconSystemName, badge: app.dockBadge,
                          isSelected: app.id == model.selectedAppID && !model.isLauncherOpen) {
-                    model.select(app.id)
+                    model.userSelect(app.id)
                 }
             }
             if dock.overflow {
@@ -41,7 +41,7 @@ struct AppLauncher: View {
                 ForEach(Array(model.apps.enumerated()), id: \.element.id) { index, app in
                     LauncherTile(app: app, shortcut: index < 9 ? "⌘\(index + 1)" : nil,
                                  isSelected: app.id == model.selectedAppID) {
-                        model.select(app.id)
+                        model.userSelect(app.id)
                     }
                 }
             }

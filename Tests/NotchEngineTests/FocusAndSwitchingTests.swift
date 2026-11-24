@@ -38,6 +38,8 @@ private final class ClaimingApp: NotchApp {
     func makeExpandedView() -> AnyView { AnyView(EmptyView()) }
     func notchWillOpen() { willOpenCalls += 1 }
     var claimsNotchOnOpen: Bool { claims }
+    var switchedTo: [String] = []
+    func userSwitched(to appID: String) { switchedTo.append(appID) }
 }
 
 @MainActor @Suite(.serialized) struct FocusAndSwitchingTests {
@@ -153,6 +155,16 @@ private final class ClaimingApp: NotchApp {
         jobs.claims = true
         try await Task.sleep(for: .seconds(1.3))
         #expect(model.selectedAppID == "music")
+    }
+
+    @Test func onlyYourOwnSwitchesAreReportedToApps() {
+        let jobs = ClaimingApp("jobs")
+        let model = NotchViewModel(apps: [SizedApp("chat", width: 620), jobs], geometry: geometry)
+        model.expand()
+        model.select("jobs")  // NotchMan's doing (a claim, a notification)
+        #expect(jobs.switchedTo.isEmpty)
+        model.userSelect("chat")  // the dock, ⌘-number, a command
+        #expect(jobs.switchedTo == ["chat"] && model.selectedAppID == "chat")
     }
 
     @Test func openingsTheUserDidNotAskForLeaveTheKeyboardAlone() {
