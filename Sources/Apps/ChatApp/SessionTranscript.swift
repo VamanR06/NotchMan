@@ -346,6 +346,9 @@ final class SessionTranscript {
     }
 
     func readNew(directory: URL = UsageScanner.projectsDirectory) {
+        // Claude Code files the transcript under its working directory and moves it when that changes (entering
+        // or leaving a worktree). The moved file is the same one, so reading carries on from the same offset.
+        if let known = file, !FileManager.default.fileExists(atPath: known.path) { file = nil }
         if file == nil { file = Self.find(sessionID: sessionID, in: directory) }
         guard let file, let handle = try? FileHandle(forReadingFrom: file) else { return }
         defer { try? handle.close() }

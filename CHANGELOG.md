@@ -6,6 +6,17 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-11-24
+
+### Fixed
+- **Session view stopped updating** until you closed and reopened it. Claude Code moves a session's transcript to
+  another folder when the session's working directory changes (a background session entering or leaving a
+  worktree, which it does before every code change), and the view kept reading the old path. It now follows the
+  file to its new folder and carries on where it was.
+- **The notch jumped back to Jobs** on a job's page after you'd switched to another app (Chat, say): Jobs claimed
+  every opening there. Switching away yourself (dock, ⌘-number, a command) now stops that for the job you're on,
+  until you're on a different job or pick Jobs again.
+
 ## [1.6.0] — 2026-11-24
 
 ### Added

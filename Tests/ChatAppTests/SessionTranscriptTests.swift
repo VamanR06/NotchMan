@@ -89,6 +89,33 @@ import Testing
         #expect(transcript.entries.map(\.kind).last == .reply("Let me check."))
     }
 
+    /// Claude Code files a transcript under its working directory and moves it when that changes (a session
+    /// entering a worktree): the view must follow it to the new folder, not freeze on the old path.
+    @Test func followsTheFileWhenClaudeMovesItToAnotherProject() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "transcripts-\(UUID().uuidString)")
+        let main = folder.appending(path: "-Users-me-app")
+        let worktree = folder.appending(path: "-Users-me-app--claude-worktrees-fix")
+        try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let before = main.appending(path: "s1.jsonl")
+        try (lines[1] + "\n").write(to: before, atomically: true, encoding: .utf8)
+
+        let transcript = SessionTranscript(sessionID: "s1")
+        transcript.readNew(directory: folder)
+        #expect(transcript.entries.count == 1)
+
+        let after = worktree.appending(path: "s1.jsonl")
+        try FileManager.default.moveItem(at: before, to: after)
+        let handle = try FileHandle(forWritingTo: after)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((lines[4] + "\n").utf8))
+        try handle.close()
+        transcript.readNew(directory: folder)
+        #expect(transcript.entries.count == 2, "picked up where it left off, nothing read twice")
+        #expect(transcript.entries.map(\.kind).last == .reply("Let me check."))
+    }
+
     @Test func ignoresClaudeCodesOwnWrappers() {
         #expect(TranscriptParser.prompt("<command-name>/clear</command-name>") == nil)
         #expect(TranscriptParser.prompt("[Request interrupted by user]") == nil)
