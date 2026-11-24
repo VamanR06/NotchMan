@@ -231,6 +231,13 @@ public final class NotchEngine {
         panel.contentView = FirstMouseHostingView(rootView: root)
         panel.ignoresMouseEvents = true
         let notch = ScreenNotch(model: model, panel: panel)
+        // One notch, shown on every display: a new display's notch starts on what the others show, a change on
+        // any of them goes to all, and opening one closes the rest (only one is ever open).
+        if let other = notches.values.first?.model {
+            model.adopt(selectedAppID: other.selectedAppID, isPinned: other.isPinned)
+        }
+        model.onSharedChange = { [weak self] changed in self?.syncNotches(from: changed) }
+        model.onExpand = { [weak self] opened in self?.closeNotches(except: opened) }
         model.chooseOpening = { [weak self] current in await self?.chooseOpening(current: current) }
         // A nonactivating panel can take typing without making NotchMan the active app, so the app you were
         // in stays active and gets the keyboard back as soon as the notch closes. Hovering makes it key, as do a
@@ -270,6 +277,32 @@ public final class NotchEngine {
         return notch
     }
 
+    /// Copies the app shown and the pin from `changed` to every other display's notch.
+    private func syncNotches(from changed: NotchViewModel) {
+        Self.sync(notches.values.map(\.model), from: changed)
+    }
+
+    /// `opened` just opened: every other notch closes, so two can never be used at once.
+    private func closeNotches(except opened: NotchViewModel) {
+        for notch in notches.values where Self.close(notch.model, for: opened) {
+            notch.panel.ignoresMouseEvents = true
+        }
+    }
+
+    static func sync(_ models: [NotchViewModel], from changed: NotchViewModel) {
+        for model in models where model !== changed {
+            model.adopt(selectedAppID: changed.selectedAppID, isPinned: changed.isPinned)
+        }
+    }
+
+    /// Closes `model` if it's open and isn't `opened`; whether it did.
+    @discardableResult
+    static func close(_ model: NotchViewModel, for opened: NotchViewModel) -> Bool {
+        guard model !== opened, model.state == .expanded else { return false }
+        model.collapse()
+        return true
+    }
+
     /// Pins the (fixed-size, mostly transparent) panel to the top of its screen, centered on the notch.
     private func layout(_ notch: ScreenNotch) {
         notch.panel.setFrame(notch.model.geometry.rect(hanging: notch.model.windowSize), display: true)
@@ -277,7 +310,7 @@ public final class NotchEngine {
 
     /// Briefly shows `transient` on the notch the cursor is on (system HUDs, finished downloads, …).
     func showTransient(_ transient: NotchTransient) {
-        attentionTarget?.show(transient)
+        cursorNotch?.show(transient)
     }
 
     /// Switches the notch to `appID` first so its view is on screen (unless `reveal` is off), then hands it the
@@ -291,8 +324,14 @@ public final class NotchEngine {
         app.receive(message)
     }
 
-    /// Attention goes to the notch on the display the cursor is on, else the hardware notch.
+    /// Attention goes to the open notch if there is one (so it never opens a second), else the notch on the
+    /// display the cursor is on.
     private var attentionTarget: NotchViewModel? {
+        notches.values.map(\.model).first { $0.state == .expanded } ?? cursorNotch
+    }
+
+    /// The notch on the display the cursor is on, else the hardware notch.
+    private var cursorNotch: NotchViewModel? {
         let point = NSEvent.mouseLocation
         let models = notches.values.map(\.model)
         return models.first { $0.geometry.screenFrame.insetBy(dx: 0, dy: -1).contains(point) }

@@ -6,7 +6,14 @@ final class NotchViewModel {
     enum State { case collapsed, expanded }
 
     private(set) var state: State = .collapsed
-    var selectedAppID: String
+    var selectedAppID: String {
+        didSet { if selectedAppID != oldValue { onSharedChange?(self) } }
+    }
+    /// The app shown or the pin changed: the engine copies it to the notches on other displays, so every notch
+    /// shows the same thing.
+    @ObservationIgnored var onSharedChange: ((NotchViewModel) -> Void)?
+    /// It just opened: the engine closes the others.
+    @ObservationIgnored var onExpand: ((NotchViewModel) -> Void)?
     private(set) var pulsing = false
     var geometry: NotchGeometry
 
@@ -25,7 +32,9 @@ final class NotchViewModel {
     @ObservationIgnored var barOpenedNotch = false
 
     /// While pinned, the expanded notch stays open when the mouse leaves.
-    var isPinned = false
+    var isPinned = false {
+        didSet { if isPinned != oldValue { onSharedChange?(self) } }
+    }
     /// A menu (context menu, ✨, …) is open; the mouse is on it, outside the notch, so don't collapse.
     @ObservationIgnored var isMenuOpen = false
     /// Apps asking to stay open while selected (`NotchContext.holdOpen`).
@@ -399,7 +408,18 @@ final class NotchViewModel {
     func expand() {
         pendingCollapse?.cancel()
         pendingCollapse = nil
+        let opening = state == .collapsed
         withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) { state = .expanded }
+        if opening { onExpand?(self) }
+    }
+
+    /// Takes on another notch's shared state (the app shown and the pin) without echoing it back.
+    func adopt(selectedAppID: String, isPinned: Bool) {
+        let handler = onSharedChange
+        onSharedChange = nil
+        defer { onSharedChange = handler }
+        if apps.contains(where: { $0.id == selectedAppID }) { self.selectedAppID = selectedAppID }
+        self.isPinned = isPinned
     }
 
     func collapse() {
