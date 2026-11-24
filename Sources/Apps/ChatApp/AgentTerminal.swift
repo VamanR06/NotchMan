@@ -290,6 +290,7 @@ final class AgentTerminal: Identifiable {
     func sendToClaude(_ text: String) {
         guard isRunning else { return }
         claude.view.send(data: Self.input(for: text)[...])
+        transcript.expect(text)
         let probe = Self.submitProbe(for: text)
         submitting?.cancel()
         submitting = Task { [weak self] in
@@ -405,9 +406,18 @@ final class AgentTerminal: Identifiable {
     /// Claude's input box is on screen (its session view, not its agent list or a dialog).
     var isAtPrompt: Bool {
         guard isRunning else { return false }
-        let lines = claude.screenLines
-        return !Self.isClaudeAgentList(lines.joined(separator: "\n"))
-            && lines.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }
+        return Self.showsInputBox(claude.screenLines)
+    }
+
+    /// The `❯` input box, ruled off above, with no menu over it. A `❯` alone isn't enough: past prompts echoed in
+    /// the history and a menu's selected row start with one too, and text typed then would be lost or pick an option.
+    static func showsInputBox(_ lines: [String]) -> Bool {
+        let frame = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        guard !isClaudeAgentList(lines.joined(separator: "\n")), ClaudePrompt.parse(lines) == nil,
+              let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: frame).hasPrefix("❯") }), prompt > 0
+        else { return false }
+        let above = lines[prompt - 1].trimmingCharacters(in: .whitespaces)
+        return above.hasPrefix("─") || above.hasPrefix("╭")
     }
 
     /// The text as typed (several lines as one bracketed paste), without the Return that submits it.
