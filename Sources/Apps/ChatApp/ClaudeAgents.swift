@@ -278,8 +278,14 @@ final class ClaudeAgentsMonitor {
     @ObservationIgnored private var lastRun = Date.distantPast
     @ObservationIgnored private var workingSince: [String: Date] = [:]
 
+    /// Folders New Agent started agents in, newest first, so a new folder stays in the menu after its session ends.
+    private(set) var startedFolders: [String] {
+        didSet { defaults.set(startedFolders, forKey: "newAgentFolders") }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
+        startedFolders = defaults.stringArray(forKey: "newAgentFolders") ?? []
     }
 
     /// Explicit path to `claude` from settings; empty means auto-detect.
@@ -400,13 +406,13 @@ final class ClaudeAgentsMonitor {
         limitsFetchedAt = Date()
     }
 
-    /// Project folders seen in current sessions, most recent first (for "New agent"). A session in a worktree
-    /// counts as its repo's.
+    /// Project folders seen in current sessions, most recent first, then folders New Agent started agents in
+    /// before (for "New agent"). A session in a worktree counts as its repo's.
     var recentFolders: [String] {
         var seen = Set<String>()
-        return agents.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+        let live = agents.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
             .map { Self.projectFolder($0.cwd) }
-            .filter { seen.insert($0).inserted }
+        return (live + startedFolders).filter { seen.insert($0).inserted }
     }
 
     /// The repo a Claude Code worktree (`<repo>/.claude/worktrees/<name>`) belongs to; other folders as they are.
@@ -453,7 +459,10 @@ final class ClaudeAgentsMonitor {
     /// Starts a background agent in `folder` with `prompt`, in `mode`. Only ever called from an explicit user action.
     func dispatch(prompt: String, in folder: String, mode: AgentMode) async throws {
         guard let path = await claudePath() else { throw Shell.ShellError.failed("claude not found") }
+        // You picked this folder to work in, so Claude doesn't need to ask whether you trust it.
+        await Task.detached { ClaudeTrust.trust(folder) }.value
         _ = try await Shell.run(path, Self.dispatchArguments(prompt: prompt, mode: mode), in: folder)
+        startedFolders = Array(([folder] + startedFolders.filter { $0 != folder }).prefix(8))
         await refresh()
     }
 

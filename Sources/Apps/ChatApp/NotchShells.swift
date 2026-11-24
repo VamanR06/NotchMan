@@ -193,7 +193,7 @@ struct ShellScreen: View {
                 }
                 Divider()
                 Button("Choose Folder…") {
-                    if let path = ChatApp.chooseFolder(startingIn: folder) { app.openShell(in: path) }
+                    if let path = app.chooseFolder(startingIn: folder) { app.openShell(in: path) }
                 }
             } label: {
                 Image(systemName: "plus").font(.system(size: 10, weight: .bold))
@@ -294,13 +294,21 @@ struct CloneBanner: View {
 }
 
 extension ChatApp {
-    /// Asks for a folder, starting in `start`.
-    static func chooseFolder(startingIn start: String? = nil) -> String? {
+    /// Asks for a folder (or a new one, made in the picker), starting in `start`. The notch stays open behind the
+    /// picker, and the picker sits above the notch rather than under it.
+    func chooseFolder(startingIn start: String? = nil) -> String? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
         if let start { panel.directoryURL = URL(fileURLWithPath: start) }
+        // The notch floats at status bar + 1. The engine also raises dialogs once they're key, but this panel can
+        // show before it becomes key, so it starts above the notch.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+        context?.holdOpen(true)
+        defer { context?.holdOpen(false) }
         NSApp.activate()
         return panel.runModal() == .OK ? panel.url?.path : nil
     }

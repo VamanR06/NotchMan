@@ -28,8 +28,10 @@ public final class ChatApp: NotchApp {
     }
     /// The inline New Agent form is open on the Overview.
     var composingAgent = false
-    /// The folder the New Agent form switches to, from a folder's or session's right-click New Agent Here.
-    var newAgentFolder: String?
+    /// What the New Agent form holds. Kept here rather than in the form, so it survives the notch closing (behind
+    /// a folder picker, or when you move away) and opening again.
+    var agentDraftPrompt = ""
+    var agentDraftFolder = ""
     /// Filters the Overview's sessions by name or project.
     var agentQuery = ""
     /// Show every finished session, not just the most recent few.
@@ -1157,7 +1159,7 @@ public final class ChatApp: NotchApp {
 
     /// Opens the New Agent form (or keeps it open) with `folder` picked, so only the prompt is left to type.
     func composeAgent(in folder: String) {
-        newAgentFolder = folder
+        agentDraftFolder = folder
         composingAgent = true
     }
 

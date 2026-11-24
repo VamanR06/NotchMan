@@ -31,7 +31,7 @@ import Testing
         let app = ChatApp()
         app.composeAgent(in: "/r/NotchMan")
         #expect(app.composingAgent)
-        #expect(app.newAgentFolder == "/r/NotchMan")
+        #expect(app.agentDraftFolder == "/r/NotchMan")
     }
 
     @Test func remembersTheLastMode() {
