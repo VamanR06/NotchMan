@@ -8,7 +8,10 @@ public final class JobsApp: NotchApp {
     public let id = "jobs"
     public let name = "Jobs"
     public let iconSystemName = "briefcase"
-    public var expandedHeight: CGFloat { pageMatch != nil ? 250 : unlinkedPage != nil ? 230 : 190 }
+    public var expandedHeight: CGFloat {
+        guard pageMatch != nil else { return unlinkedPage != nil ? 230 : 190 }
+        return isDrafting || drafts.contains(where: { !$0.text.isEmpty }) ? 340 : 250
+    }
 
     private(set) var board = JobBoard.empty
     private(set) var isSignedIn = false
@@ -54,6 +57,8 @@ public final class JobsApp: NotchApp {
         BrowserTab.startTracking()
         opensOnJobPages = context.defaults.object(forKey: "opensOnJobPages") as? Bool ?? true
         marksAppliedOnSubmit = context.defaults.object(forKey: "marksAppliedOnSubmit") as? Bool ?? true
+        draftModel = context.defaults.string(forKey: "draftModel") ?? AnswerDrafter.defaultModel
+        draftKeepAlive = context.defaults.string(forKey: "draftKeepAlive").flatMap(DraftKeepAlive.init) ?? .minute
         loadLinks()
         client = JobManagerClient(keychain: context.keychain, defaults: context.defaults)
         isSignedIn = client.isSignedIn
@@ -165,7 +170,14 @@ public final class JobsApp: NotchApp {
 
     /// The tracked job the browser is showing (posting or application form), with its documents.
     private(set) var pageMatch: PageMatch?
-    private(set) var autofillReport: AutofillReport?
+    private(set) var autofillReport: AutofillReport? {
+        didSet {
+            guard autofillReport != oldValue else { return }
+            draftTask?.cancel()
+            drafts = autofillReport?.draftable ?? []
+            draftError = nil
+        }
+    }
     private(set) var isAutofilling = false
     @ObservationIgnored private var autofillTask: Task<Void, Never>?
     /// Hovering the notch open while the browser shows a tracked job opens Jobs.
@@ -459,10 +471,148 @@ public final class JobsApp: NotchApp {
             if plans.contains(where: { $0.source?.hasPrefix("work experience") == true }) {
                 report.workExperience = scripts.experience?.summary
             }
+            // Keep what Insert needs to type a draft into each open question later.
+            let wanted = Set(report.draftable.map(\.key))
+            var fields: [String: [String: Any]] = [:]
+            for field in scan.fields + again.fields {
+                if let key = field["key"] as? String, wanted.contains(key), fields[key] == nil { fields[key] = field }
+            }
+            draftForm = DraftForm(jobID: match.job.id, tab: current, fillScript: scripts.fill, fields: fields)
             return report
         } catch {
             return AutofillReport(problem: error.localizedDescription)
         }
+    }
+
+    // MARK: - Drafting open answers (Ollama on this Mac)
+
+    /// The last Autofill's open-ended questions, with their drafts.
+    private(set) var drafts: [DraftItem] = []
+    private(set) var isDrafting = false
+    private(set) var draftError: String?
+    /// Ollama model that writes drafts.
+    var draftModel = AnswerDrafter.defaultModel {
+        didSet { context?.defaults.set(draftModel, forKey: "draftModel") }
+    }
+    var draftKeepAlive = DraftKeepAlive.minute {
+        didSet { context?.defaults.set(draftKeepAlive.rawValue, forKey: "draftKeepAlive") }
+    }
+    @ObservationIgnored let drafter = AnswerDrafter()
+    @ObservationIgnored private var draftTask: Task<Void, Never>?
+    /// The job's posting and resume text, read once per job (and resume).
+    @ObservationIgnored private var draftContextCache: (key: String, context: DraftContext)?
+    @ObservationIgnored private var draftForm: DraftForm?
+
+    /// The form the last Autofill read: the tab, JobManager's filler, and the scanned open questions.
+    private struct DraftForm {
+        let jobID: Int
+        let tab: BrowserTab
+        let fillScript: String
+        let fields: [String: [String: Any]]
+    }
+
+    var draftSettings: DraftSettings {
+        let model = draftModel.trimmingCharacters(in: .whitespaces)
+        return DraftSettings(model: model.isEmpty ? AnswerDrafter.defaultModel : model, keepAlive: draftKeepAlive)
+    }
+
+    /// Drafts every open question in one request to Ollama. Runs only when asked: nothing is loaded before.
+    func draftAnswers() {
+        guard let match = pageMatch, !isDrafting, !drafts.isEmpty else { return }
+        isDrafting = true
+        draftError = nil
+        for i in drafts.indices {
+            drafts[i].text = ""
+            drafts[i].inserted = false
+        }
+        context?.holdOpen(true)
+        let questions = drafts
+        let settings = draftSettings
+        draftTask = Task {
+            defer {
+                isDrafting = false
+                context?.holdOpen(false)
+            }
+            do {
+                let job = await draftContext(for: match)
+                for try await answers in drafter.draft(questions: questions, context: job, settings: settings) {
+                    for i in drafts.indices {
+                        if let text = answers[drafts[i].key] { drafts[i].text = text }
+                    }
+                }
+            } catch {
+                if !Task.isCancelled && !(error is CancellationError) { draftError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// Stops the model mid-answer (what it wrote so far stays).
+    func stopDrafting() {
+        draftTask?.cancel()
+    }
+
+    func editDraft(_ key: String, text: String) {
+        guard let i = drafts.firstIndex(where: { $0.key == key }) else { return }
+        drafts[i].text = text
+        drafts[i].inserted = false
+    }
+
+    func copyDraft(_ key: String) {
+        guard let text = drafts.first(where: { $0.key == key })?.text else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Types a draft into its field on the page, with JobManager's filler (the same way Autofill types).
+    func insertDraft(_ key: String) {
+        guard let form = draftForm, form.jobID == pageMatch?.job.id, let field = form.fields[key],
+              let draft = drafts.first(where: { $0.key == key }) else {
+            draftError = "Autofill again, then Insert."
+            return
+        }
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        draftError = nil
+        Task {
+            do {
+                let current = try await BrowserTab.current()
+                guard current.url == form.tab.url else {
+                    draftError = "The browser is on a different page now. Go back to the form to insert."
+                    return
+                }
+                let results = try await PageForm.fill(in: current, script: form.fillScript,
+                                                      steps: [PageForm.step(for: field, answer: text)], files: [:])
+                if results.first?.status == "filled" {
+                    if let i = drafts.firstIndex(where: { $0.key == key }) { drafts[i].inserted = true }
+                } else {
+                    draftError = "\(draft.label): " + (results.first?.note ?? "the page didn't take it. Use Copy instead.")
+                }
+            } catch {
+                draftError = error.localizedDescription
+            }
+        }
+    }
+
+    /// For render tests: a matched page with an Autofill report and drafts in a given state.
+    func useDraftsForTesting(match: PageMatch, report: AutofillReport, drafts: [DraftItem], drafting: Bool = false) {
+        pageMatch = match
+        autofillReport = report
+        self.drafts = drafts
+        isDrafting = drafting
+        documentsLoadedAt = Date()  // no JobManager to ask
+    }
+
+    private func draftContext(for match: PageMatch) async -> DraftContext {
+        let key = "\(match.job.id)|\(match.resumeFile?.path ?? "")"
+        if let cached = draftContextCache, cached.key == key { return cached.context }
+        let posting = try? await client.posting(jobID: match.job.id)
+        let resume: String? = if let file = match.resumeFile {
+            await Task.detached(priority: .userInitiated) { DraftContext.resumeText(from: file) }.value
+        } else { nil }
+        let context = DraftContext(company: match.job.company, title: match.job.title, location: posting?.location,
+                                   posting: posting?.description, resume: resume)
+        draftContextCache = (key, context)
+        return context
     }
 
     // MARK: - Submitting

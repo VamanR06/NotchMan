@@ -102,6 +102,14 @@ struct FieldPlan: Decodable, Equatable {
     let note: String?
     /// Where the answer came from ("profile", "work experience 2 (Acme)", …).
     var source: String?
+    /// JobManager's kind of question: fact, eligibility, demographic, attestation, narrative, file, other.
+    var category: String?
+
+    /// An open-ended question nobody has answered yet ("Why us?"), which a model can draft.
+    var isDraftable: Bool {
+        guard status == "unknown", kind == "textarea" || kind == "text" else { return false }
+        return category.map { $0 == "narrative" } ?? (kind == "textarea")
+    }
 }
 
 /// What the in-page filler reports per field.
@@ -166,6 +174,8 @@ struct AutofillReport: Equatable {
     var embeddedForm: URL?
     /// Which Profile jobs went into the form's Work Experience sections, when it had any.
     var workExperience: String?
+    /// Open-ended questions that can be drafted.
+    var draftable: [DraftItem] = []
 
     var summary: String {
         if let problem { return problem }
@@ -194,6 +204,9 @@ struct AutofillReport: Equatable {
         report.needsYou = plans.filter { ($0.status == "unknown" || $0.status == "unsupported") }.map { plan in
             plan.note.map { "\(plan.label) — \($0)" } ?? plan.label
         }
+        var seen = Set<String>()
+        report.draftable = plans.filter { $0.isDraftable && seen.insert($0.key).inserted }
+            .map { DraftItem(key: $0.key, label: $0.label, required: $0.required) }
         return report
     }
 }
@@ -243,6 +256,19 @@ enum PageForm {
         let output = try await tab.runJavaScript("JSON.stringify((\(script))(\(stepsJSON), \(filesJSON)))")
         guard let results = try? JSONDecoder().decode([FillResult].self, from: Data(output.utf8)) else { throw FormError.unreadable }
         return results
+    }
+
+    /// One filler step that types `answer` into a scanned field (the shape of JobManager's `FillStep`).
+    static func step(for field: [String: Any], answer: String) -> [String: Any] {
+        [
+            "key": field["key"] ?? "",
+            "selector": field["selector"] ?? "",
+            "kind": field["kind"] ?? "textarea",
+            "inputType": field["inputType"] ?? "",
+            "answer": answer,
+            "upload": NSNull(),
+            "options": field["options"] ?? [],
+        ]
     }
 
     /// What the confirmation check found on the page.

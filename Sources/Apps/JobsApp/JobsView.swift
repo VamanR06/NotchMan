@@ -55,7 +55,7 @@ struct JobsView: View {
 }
 
 /// The tracked job open in the browser: its resume and cover letter to drag onto the page, and Autofill.
-private struct ThisPageCard: View {
+struct ThisPageCard: View {
     let app: JobsApp
     let match: PageMatch
     @State private var showDetails = false
@@ -139,10 +139,105 @@ private struct ThisPageCard: View {
                     .foregroundStyle(.white.opacity(0.7))
                     .lineLimit(1)
                 }
+                if !app.drafts.isEmpty {
+                    DraftsPanel(app: app)
+                }
             }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.07)))
+    }
+}
+
+/// The form's open questions ("Why us?"): drafted on request by a model in Ollama on this Mac, inserted one
+/// at a time. Nothing is typed into the page until you press Insert.
+private struct DraftsPanel: View {
+    let app: JobsApp
+    @State private var editing: String?
+
+    private var hasDrafts: Bool { app.drafts.contains { !$0.text.isEmpty } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble").foregroundStyle(.white.opacity(0.5))
+                Text("\(app.drafts.count) open question\(app.drafts.count == 1 ? "" : "s")")
+                    .foregroundStyle(.white.opacity(0.65))
+                Spacer(minLength: 4)
+                if app.isDrafting {
+                    NotchSpinner(size: 9, lineWidth: 1.4)
+                    Text("Drafting…").foregroundStyle(.white.opacity(0.65))
+                    Button("Stop", action: app.stopDrafting).buttonStyle(.plain).foregroundStyle(.orange)
+                } else {
+                    Button(hasDrafts ? "Redraft" : "Draft answers") {
+                        editing = nil
+                        app.draftAnswers()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .help("Writes drafts with \(app.draftSettings.model) in Ollama on this Mac, from the job description and the job's resume. Nothing goes into the page until you Insert.")
+                }
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            if let error = app.draftError {
+                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+            }
+            if hasDrafts || app.isDrafting {
+                // Most forms have one to three open questions: shown in full. More than that scroll.
+                if app.drafts.count > 3 {
+                    ScrollView { rows }.scrollIndicators(.never).frame(maxHeight: 140)
+                } else {
+                    rows
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(app.drafts) { draft in row(draft) }
+        }
+    }
+
+    private func row(_ draft: DraftItem) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(draft.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 4)
+                if draft.inserted {
+                    Image(systemName: "checkmark").foregroundStyle(.green).help("Inserted")
+                } else {
+                    Button("Insert") { app.insertDraft(draft.key) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .disabled(app.isDrafting || draft.text.isEmpty)
+                }
+                Button { app.copyDraft(draft.key) } label: { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .disabled(draft.text.isEmpty)
+                    .help("Copy")
+            }
+            .font(.system(size: 10, weight: .medium))
+            if editing == draft.key {
+                TextEditor(text: Binding(get: { draft.text }, set: { app.editDraft(draft.key, text: $0) }))
+                    .font(.system(size: 10.5))
+                    .scrollContentBackground(.hidden)
+                    .frame(height: 78)
+                    .padding(3)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.06)))
+            } else {
+                Text(draft.text.isEmpty ? (app.isDrafting ? "…" : "") : draft.text)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if !app.isDrafting && !draft.text.isEmpty { editing = draft.key } }
+                    .help("Click to edit")
+            }
+        }
     }
 }
 

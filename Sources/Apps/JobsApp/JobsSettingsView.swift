@@ -6,6 +6,7 @@ struct JobsSettingsView: View {
     @State private var password = ""
     @State private var signingIn = false
     @State private var signInError: String?
+    @State private var ollamaStatus: AnswerDrafter.Status?
 
     var body: some View {
         Form {
@@ -53,6 +54,32 @@ struct JobsSettingsView: View {
                 http://localhost:3000 and leave the password empty.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                TextField("Model", text: $app.draftModel, prompt: Text(AnswerDrafter.defaultModel))
+                Picker("Keep the model loaded", selection: $app.draftKeepAlive) {
+                    ForEach(DraftKeepAlive.allCases) { Text($0.label).tag($0) }
+                }
+                LabeledContent("Ollama") {
+                    switch ollamaStatus {
+                    case nil: ProgressView().controlSize(.small)
+                    case .ready?: Label("Running · \(app.draftSettings.model) ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .missingModel?: Text("Run `ollama pull \(app.draftSettings.model)` in Terminal").foregroundStyle(.orange)
+                    case .notRunning?: Text("Not running. Install it from ollama.com or `brew install ollama`").foregroundStyle(.orange)
+                    }
+                }
+            } header: {
+                Text("Answer drafts")
+            } footer: {
+                Text("After Autofill, a form's open questions (\"Why us?\") can be drafted by a model running in Ollama on this Mac, from the job description and the job's resume. Nothing leaves your Mac, and nothing goes into the page until you press Insert. The model only runs when you press Draft answers and unloads after the time above, so it uses no battery in between.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .task(id: app.draftSettings.model) {
+                ollamaStatus = nil
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                ollamaStatus = await app.drafter.status(model: app.draftSettings.model)
             }
 
             Section {

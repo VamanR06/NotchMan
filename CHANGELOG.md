@@ -6,6 +6,18 @@ finished each milestone; their `Info.plist` still says 0.1.0.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-11-24
+
+### Added
+- **Answer drafts (Jobs):** after Autofill, a form's open questions ("Why us?", "A project you're proud of")
+  get **Draft answers** on the This Page card. A model in Ollama on this Mac writes them from the job's saved
+  description and its resume (read locally with PDFKit), streaming in as it writes. Click a draft to edit it,
+  then **Insert** types it into its field or **Copy** copies it. Nothing goes into the page on its own, and nothing
+  leaves your Mac.
+- Light on battery: the model only runs when you press Draft, one request covers every question, the context and
+  answer lengths are capped, reasoning is off, and Ollama unloads the model a minute later (Settings → Jobs →
+  Answer drafts: model, default `gemma3:4b`, and how long to keep it loaded).
+
 ## [1.2.3] — 2026-11-23
 
 ### Changed

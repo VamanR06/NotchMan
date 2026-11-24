@@ -105,7 +105,11 @@ final class JobManagerClient {
 
     /// The saved posting snapshot for a job, or nil if none was saved.
     func posting(for job: TrackedJob) async throws -> JobPosting? {
-        let data = try await authorizedGet("api/jobs/\(job.id)/posting")
+        try await posting(jobID: job.id)
+    }
+
+    func posting(jobID: Int) async throws -> JobPosting? {
+        let data = try await authorizedGet("api/jobs/\(jobID)/posting")
         return try JSONDecoder().decode(JobPosting?.self, from: data)
     }
 
