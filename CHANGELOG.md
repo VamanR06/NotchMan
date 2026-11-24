@@ -13,7 +13,8 @@ finished each milestone; their `Info.plist` still says 0.1.0.
   get **Draft answers** on the This Page card. A model in Ollama on this Mac writes them from the job's saved
   description and its resume (read locally with PDFKit), streaming in as it writes. Click a draft to edit it,
   then **Insert** types it into its field or **Copy** copies it. Nothing goes into the page on its own, and nothing
-  leaves your Mac.
+  leaves your Mac. Drafts read like a person wrote them: the prompt bans dashes, semicolons and stock AI phrases
+  ("passionate", "leverage", "delve"…), and any em or en dash the model writes anyway becomes a comma.
 - Light on battery: the model only runs when you press Draft, one request covers every question, the context and
   answer lengths are capped, reasoning is off, and Ollama unloads the model a minute later (Settings → Jobs →
   Answer drafts: model, default `gemma3:4b`, and how long to keep it loaded).

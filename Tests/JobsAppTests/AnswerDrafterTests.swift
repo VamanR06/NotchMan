@@ -165,6 +165,16 @@ import Testing
         try png.write(to: dir.appending(path: "answer-drafts.png"))
     }
 
+    @Test func dashesBecomeNormalPunctuation() {
+        #expect(AnswerDrafter.humanized("I built tools — mostly parsers — for the team.") == "I built tools, mostly parsers, for the team.")
+        #expect(AnswerDrafter.humanized("Robots—especially pickers.") == "Robots, especially pickers.")
+        #expect(AnswerDrafter.humanized("From 2023 – 2024 I led it - and shipped.") == "From 2023-2024 I led it, and shipped.")
+        #expect(AnswerDrafter.humanized("pages 3–5 and a well-known co-op") == "pages 3-5 and a well-known co-op")
+        let streamed = AnswerDrafter.answers(in: #"{"q1":"Fast — and right"}"#, questions: questions)
+        #expect(streamed["question_123"] == "Fast, and right")
+        #expect(AnswerDrafter.systemPrompt.contains("Never use em dashes"))
+    }
+
     @Test func modelNamesAndErrors() {
         #expect(AnswerDrafter.has("gemma3:4b", in: ["gemma3:4b", "llama3.2:latest"]))
         #expect(AnswerDrafter.has("llama3.2", in: ["llama3.2:latest"]))

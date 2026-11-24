@@ -252,10 +252,40 @@ struct AnswerDrafter: Sendable {
         You draft answers to open-ended questions on a job application, written as the applicant in the first \
         person. Make each answer specific to this company and role, using the job description. Use only facts \
         from the resume: never invent employers, projects, numbers, or skills. If an answer needs a detail the \
-        resume doesn't give, leave a short [bracketed placeholder]. Write plainly and confidently, with no \
-        clichés ("I am thrilled", "passionate", "dynamic"), no headings, and no lists. Aim for 80 to 150 words \
-        per answer, or fewer when the question asks for less. Answer every question id in the JSON.
+        resume doesn't give, leave a short [bracketed placeholder].
+
+        Write the way a sharp student talks to a recruiter: plain, direct, concrete. Short sentences. Say what \
+        I did and why it matters here, then stop.
+        - Never use em dashes or en dashes. Use commas, periods, or "and" instead.
+        - No semicolons, no colons before a list, no exclamation marks, no rhetorical questions.
+        - Don't use these words or phrases: thrilled, excited to, passionate, passion, delve, leverage, \
+        utilize, foster, spearhead, synergy, dynamic, cutting-edge, innovative, robust, seamless, tapestry, \
+        testament, landscape, realm, journey, navigate, embark, resonate, align with, deeply, truly, \
+        I am confident, I believe I would be a great fit, unique opportunity, make an impact, \
+        drive meaningful change, at the intersection of, not only... but also, in today's world.
+        - Don't open by restating the question or the company's mission, and don't end with a summary line.
+        - No headings and no lists.
+        Aim for 80 to 150 words per answer, or fewer when the question asks for less. Answer every question id \
+        in the JSON.
         """
+
+    /// Small models use dashes anyway: turn them into the punctuation a person would type.
+    static func humanized(_ text: String) -> String {
+        // Ranges ("2023 – 2024", "3–5") keep a plain hyphen.
+        var s = text.replacingOccurrences(of: #"(\d)\s*[–—]\s*(\d)"#, with: "$1-$2", options: .regularExpression)
+        // "word — word", "word—word", "word – word" read as a pause: a comma.
+        for dash in ["\u{2014}", "\u{2013}"] {
+            s = s.replacingOccurrences(of: " \(dash) ", with: ", ")
+            s = s.replacingOccurrences(of: "\(dash) ", with: ", ")
+            s = s.replacingOccurrences(of: " \(dash)", with: ",")
+            s = s.replacingOccurrences(of: dash, with: dash == "\u{2013}" ? "-" : ", ")
+        }
+        // A spaced hyphen used as a dash.
+        s = s.replacingOccurrences(of: " - ", with: ", ")
+        s = s.replacingOccurrences(of: ",,", with: ",").replacingOccurrences(of: ", ,", with: ",")
+        s = s.replacingOccurrences(of: ",.", with: ".")
+        return s
+    }
 
     static func userPrompt(questions: [DraftItem], context: DraftContext) -> String {
         var parts = ["Role: \(context.title) at \(context.company)" + (context.location.map { " (\($0))" } ?? "")]
@@ -273,7 +303,9 @@ struct AnswerDrafter: Sendable {
     static func answers(in json: String, questions: [DraftItem]) -> [String: String] {
         var result: [String: String] = [:]
         for (id, question) in zip(ids(questions), questions) {
-            if let text = partialString(for: id, in: json) { result[question.key] = text.trimmingCharacters(in: .whitespaces) }
+            if let text = partialString(for: id, in: json) {
+                result[question.key] = humanized(text).trimmingCharacters(in: .whitespaces)
+            }
         }
         return result
     }
