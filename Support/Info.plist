@@ -2,29 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleIdentifier</key>
-	<string>com.notchman.NotchMan</string>
-	<key>CFBundleName</key>
-	<string>NotchMan</string>
 	<key>CFBundleDisplayName</key>
 	<string>NotchMan</string>
 	<key>CFBundleExecutable</key>
 	<string>NotchMan</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.notchman.NotchMan</string>
+	<key>CFBundleName</key>
+	<string>NotchMan</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.1</string>
+	<string>1.2.2</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>NotchMan shows a notch HUD when your headphones connect.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>NotchMan controls Spotify to show and control what's playing, and reads your browser's current page to add it as a job.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NotchMan shows a notch HUD when your headphones connect.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 </dict>
 </plist>
